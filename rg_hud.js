@@ -7,8 +7,8 @@
 // @match        https://rocketgoal.io/*
 // @grant        none
 // @run-at       document-start
-// @updateURL    https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/rocket-goal-hud.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/rocket-goal-hud.user.js
+// @updateURL    https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.js
+// @downloadURL  https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.js
 // ==/UserScript==
 
 (function () {
