@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      8.0
+// @version      8.1
 // @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -42,24 +42,57 @@
         `;
 
         hud.innerHTML = `
-            <div style="font-size:18px;font-weight:bold;color:#00bfff;cursor:move" id="rgDragHandle">
-                🚀 Rocket Goal HUD
+            <style>
+                #rgHUD .rgBtn {
+                    flex: 1;
+                    font-size: 11px;
+                    padding: 6px 2px;
+                    background: linear-gradient(180deg, #1c2b3a, #10181f);
+                    color: #d7f3ff;
+                    border: 1px solid #00bfff88;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+                }
+                #rgHUD .rgBtn:hover {
+                    background: linear-gradient(180deg, #26405a, #16222c);
+                    border-color: #00bfff;
+                }
+                #rgHUD .rgBtn:active {
+                    transform: scale(0.96);
+                }
+            </style>
+            <div style="display:flex;align-items:center;justify-content:space-between;cursor:move" id="rgDragHandle">
+                <span style="font-size:18px;font-weight:bold;color:#00bfff;">🚀 Rocket Goal HUD</span>
+                <button id="rgMinimize" title="Minimize" style="
+                    background:none;
+                    border:1px solid #00bfff88;
+                    color:#00bfff;
+                    border-radius:4px;
+                    width:22px;
+                    height:22px;
+                    font-size:14px;
+                    line-height:1;
+                    cursor:pointer;
+                    flex-shrink:0;
+                ">–</button>
             </div>
             <hr>
-            <div id="rgContent">Waiting for data...</div>
-            <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
-                <button id="rgToggle" style="flex:1;font-size:11px;padding:4px 2px;">Hide</button>
-                <button id="rgRename" style="flex:1;font-size:11px;padding:4px 2px;">✏️ Rename</button>
-                <button id="rgSub" style="flex:1;font-size:11px;padding:4px 2px;">📺 Sub</button>
-                <button id="rgLeaderboard" style="flex:1;font-size:11px;padding:4px 2px;">🏆 Board</button>
-                <button id="rgReportBug" style="flex:1;font-size:11px;padding:4px 2px;">🐛 Bug</button>
+            <div id="rgBody">
+                <div id="rgContent">Waiting for data...</div>
+                <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
+                    <button id="rgRename" class="rgBtn">✏️ Rename</button>
+                    <button id="rgSub" class="rgBtn">📺 Sub</button>
+                    <button id="rgLeaderboard" class="rgBtn">🏆 Board</button>
+                    <button id="rgReportBug" class="rgBtn">🐛 Bug</button>
+                </div>
             </div>
         `;
 
         document.body.appendChild(hud);
         dragElement(hud, document.getElementById("rgDragHandle"));
 
-        document.getElementById("rgToggle").onclick = () => manualToggle();
+        document.getElementById("rgMinimize").onclick = () => manualToggle();
         document.getElementById("rgSub").onclick = () => {
             window.open("https://www.youtube.com/@RootedEngineering", "_blank", "noopener");
         };
@@ -83,6 +116,7 @@
         let dx = 0, dy = 0;
 
         handle.onmousedown = e => {
+            if (e.target.closest("#rgMinimize")) return; // let the button handle its own click
             e.preventDefault();
             dx = e.clientX;
             dy = e.clientY;
@@ -106,10 +140,11 @@
     }
 
     function manualToggle() {
-        const content = document.getElementById("rgContent");
-        const visible = content.style.display !== "none";
-        content.style.display = visible ? "none" : "block";
-        document.getElementById("rgToggle").textContent = visible ? "Show" : "Hide";
+        const body = document.getElementById("rgBody");
+        const visible = body.style.display !== "none";
+        body.style.display = visible ? "none" : "block";
+        document.getElementById("rgMinimize").textContent = visible ? "+" : "–";
+        document.getElementById("rgMinimize").title = visible ? "Restore" : "Minimize";
     }
 
     function setAutoVisible(visible) {
