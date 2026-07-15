@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      6.0
+// @version      7.1
 // @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
-// @author       Dawson
+// @author       JesusDied4U
 // @match        https://rocketgoal.io/*
 // @grant        none
 // @run-at       document-start
