@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      8.1
+// @version      8.2
 // @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -27,7 +27,7 @@
 
         hud.style.cssText = `
             position:fixed;
-            top:110px;
+            top:102px;
             right:20px;
             width:220px;
             background:rgba(18,18,22,.88);
@@ -173,10 +173,14 @@
             3v3: <span style="color:#00ff66">${rating("Competitive3v3")}</span><br>
             2v2: <span style="color:#00ff66">${rating("Competitive2v2")}</span><br>
             1v1: <span style="color:#00ff66">${rating("Competitive1v1")}</span><br>
-            Casual: <span style="color:#00ff66">${rating("Casual")}</span><br>
+            Casual: <span style="color:#00ff66">${rating("Casual")}</span>
+
+            <hr style="border:none;border-top:1px solid #00bfff88;margin:10px 0;">
 
             Wins: <span style="color:#00ff66">${totalWins}</span><br>
-            Matches Played: <span style="color:#00ff66">${totalMatches}</span><br><br>
+            Matches Played: <span style="color:#00ff66">${totalMatches}</span>
+
+            <hr style="border:none;border-top:1px solid #00bfff88;margin:10px 0;">
 
             <b>📊 Win Rates</b><br>
             3v3 <span style="color:#00ff66">${wr("Competitive3v3")}%</span><br>
