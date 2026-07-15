@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      7.2
+// @version      7.3
 // @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -351,6 +351,12 @@
 
             try {
                 const existing = await fb.getDocs(q);
+                if (existing.size > 1) {
+                    console.warn(
+                        `[RG HUD] ⚠️ Found ${existing.size} leaderboard documents matching sourceUserId=${sourceUserId} playlist=${playlist}. ` +
+                        `Only the first one found will be updated; the rest will go stale. Delete the extras in Firestore.`
+                    );
+                }
                 if (!existing.empty) {
                     const docId = existing.docs[0].id;
                     await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, docId), fields, { merge: true });
