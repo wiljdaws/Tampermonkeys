@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      7.3
+// @version      8.0
 // @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -17,22 +17,6 @@
 
     let hud;
 
-    // skin id -> display name, confirmed against the in-game shop grid
-    const SKIN_NAMES = {
-        "body.0": "Vortex",
-        "body.1": "Overdrive",
-        "body.2": "Crimson",
-        "body.3": "Specter",
-        "body.4": "Frostbite",
-        "body.5": "Pulsewave",
-        "body.6": "Blaze",
-        "body.7": "Nitron",
-    };
-
-    function skinName(id) {
-        return SKIN_NAMES[id] || id;
-    }
-
     // ---------- HUD ----------
 
     function createHUD() {
@@ -43,15 +27,15 @@
 
         hud.style.cssText = `
             position:fixed;
-            top:20px;
+            top:110px;
             right:20px;
-            width:280px;
+            width:220px;
             background:rgba(18,18,22,.88);
             color:white;
             border:2px solid #00bfff;
             border-radius:12px;
             font-family:Arial,sans-serif;
-            padding:12px;
+            padding:10px;
             z-index:999999999;
             box-shadow:0 0 15px #00bfff55;
             user-select:none;
@@ -63,12 +47,12 @@
             </div>
             <hr>
             <div id="rgContent">Waiting for data...</div>
-            <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
-                <button id="rgToggle" style="flex:1;">Hide</button>
-                <button id="rgRename" style="flex:1;">✏️ Rename</button>
-                <button id="rgSub" style="flex:1;">📺 Sub</button>
-                <button id="rgLeaderboard" style="flex:1;">🏆 Board</button>
-                <button id="rgReportBug" style="flex:1;">🐛 Bug</button>
+            <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
+                <button id="rgToggle" style="flex:1;font-size:11px;padding:4px 2px;">Hide</button>
+                <button id="rgRename" style="flex:1;font-size:11px;padding:4px 2px;">✏️ Rename</button>
+                <button id="rgSub" style="flex:1;font-size:11px;padding:4px 2px;">📺 Sub</button>
+                <button id="rgLeaderboard" style="flex:1;font-size:11px;padding:4px 2px;">🏆 Board</button>
+                <button id="rgReportBug" style="flex:1;font-size:11px;padding:4px 2px;">🐛 Bug</button>
             </div>
         `;
 
@@ -150,25 +134,20 @@
         const totalMatches = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
         document.getElementById("rgContent").innerHTML = `
-            <b>XP</b> ${data.AccountXp ?? "—"}<br><br>
-
             <b>🏆 Ratings</b><br>
             3v3: <span style="color:#00ff66">${rating("Competitive3v3")}</span><br>
             2v2: <span style="color:#00ff66">${rating("Competitive2v2")}</span><br>
             1v1: <span style="color:#00ff66">${rating("Competitive1v1")}</span><br>
-            Casual: ${rating("Casual")}<br><br>
+            Casual: <span style="color:#00ff66">${rating("Casual")}</span><br>
 
-            Wins: ${totalWins}<br>
-            Matches Played: ${totalMatches}<br><br>
+            Wins: <span style="color:#00ff66">${totalWins}</span><br>
+            Matches Played: <span style="color:#00ff66">${totalMatches}</span><br><br>
 
             <b>📊 Win Rates</b><br>
-            3v3 ${wr("Competitive3v3")}%<br>
-            2v2 ${wr("Competitive2v2")}%<br>
-            1v1 ${wr("Competitive1v1")}%<br>
-            Casual ${wr("Casual")}%<br><br>
-
-            <b>🚗 Equipped</b><br>
-            ${skinName(data.EquippedSkinId)}
+            3v3 <span style="color:#00ff66">${wr("Competitive3v3")}%</span><br>
+            2v2 <span style="color:#00ff66">${wr("Competitive2v2")}%</span><br>
+            1v1 <span style="color:#00ff66">${wr("Competitive1v1")}%</span><br>
+            Casual <span style="color:#00ff66">${wr("Casual")}%</span>
         `;
     }
 
@@ -425,19 +404,11 @@
                 tryParseAndUpdate(text);
             } else if (url.includes("/v0304_player/equipSkin")) {
                 // response is just a bare quoted skin id, e.g. "body.2"
+                // No longer displayed in the HUD, but still tracked in case it's needed later.
                 try {
                     const skinId = JSON.parse(text);
                     if (lastKnownPlayerData) {
                         lastKnownPlayerData.EquippedSkinId = skinId;
-                        updateHUD(lastKnownPlayerData);
-                    } else {
-                        const el = document.getElementById("rgContent");
-                        if (el) {
-                            el.innerHTML = el.innerHTML.replace(
-                                /(<b>🚗 Equipped<\/b><br>\s*)[^<]*/,
-                                `$1${skinName(skinId)}`
-                            );
-                        }
                     }
                 } catch (e) {}
             }
