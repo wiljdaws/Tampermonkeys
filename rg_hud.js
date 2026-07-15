@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      7.1
+// @version      7.2
 // @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -9,6 +9,7 @@
 // @run-at       document-start
 // @updateURL    https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.js
 // @downloadURL  https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.js
+// @supportURL   https://github.com/wiljdaws/Tampermonkeys/issues
 // ==/UserScript==
 
 (function () {
@@ -67,6 +68,7 @@
                 <button id="rgRename" style="flex:1;">✏️ Rename</button>
                 <button id="rgSub" style="flex:1;">📺 Sub</button>
                 <button id="rgLeaderboard" style="flex:1;">🏆 Board</button>
+                <button id="rgReportBug" style="flex:1;">🐛 Bug</button>
             </div>
         `;
 
@@ -79,6 +81,9 @@
         };
         document.getElementById("rgLeaderboard").onclick = () => {
             window.open("https://abuarqob.github.io/rgleaderboard/", "_blank", "noopener");
+        };
+        document.getElementById("rgReportBug").onclick = () => {
+            window.open("https://github.com/wiljdaws/Tampermonkeys/issues/new", "_blank", "noopener");
         };
         document.getElementById("rgRename").onclick = () => {
             if (!lastKnownPlayerData) {
