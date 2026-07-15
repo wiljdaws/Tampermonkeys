@@ -52,7 +52,22 @@ That's it, the script is now installed.
 
 ---
 
-## Step 5: Turn on frequent auto-updates
+## Step 5: Allow the script to actually run on rocketgoal.io
+
+The first time you visit [rocketgoal.io](https://rocketgoal.io) after installing, your browser may show a small popup asking whether to allow Tampermonkey (or the script itself) to run on that site. If you don't approve this, the HUD will silently never appear, with no error message telling you why.
+
+- If you see a popup mentioning **rocketgoal.io** and asking to allow the extension, click **Allow**.
+- If you don't see a popup at all, you likely won't need to do anything, some browsers don't ask. Just move on to Step 6 and confirm it's working.
+
+If it still doesn't show up later, there's one more place to check:
+
+1. Right-click the Tampermonkey icon in your toolbar and choose **Manage Extension** (wording may vary slightly by browser).
+2. Look for a **Site access** section.
+3. Make sure it's set to **On all sites** or specifically includes `rocketgoal.io`, not **On click** or **Restricted**.
+
+---
+
+## Step 6: Turn on frequent auto-updates
 
 By default, Tampermonkey only checks for script updates about once a day. Let's turn that up so you always have the latest version without thinking about it.
 
@@ -71,7 +86,7 @@ If you ever want to check for an update right now instead of waiting:
 
 ---
 
-## Step 6: Confirm it's working
+## Step 7: Confirm it's working
 
 1. Go to [rocketgoal.io](https://rocketgoal.io) and log in.
 2. You should see a small box in the top-right corner labeled **🚀 Rocket Goal HUD**.
