@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      8.3
+// @version      8.4
 // @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -266,6 +266,40 @@
             .trim();
     }
 
+    // Not exhaustive, but catches a lot more than before. Word-boundary matching
+    // so it doesn't falsely flag innocent words that merely contain a bad word
+    // as a substring (e.g. "classic", "assassin", "Scunthorpe").
+    const PROFANITY_LIST = [
+        // common curses
+        "fuck", "fuk", "fvck", "fck", "shit", "sh1t", "shyt", "bitch", "b1tch",
+        "cunt", "asshole", "ass hole", "dick", "d1ck", "cock", "pussy", "pu55y",
+        "bastard", "damn", "piss", "twat", "wanker", "bollocks", "arse",
+        // slurs (racial / ethnic)
+        "nigger", "nigga", "n1gger", "n1gga", "chink", "spic", "wetback",
+        "gook", "kike", "beaner", "coon", "paki",
+        // slurs (homophobic / transphobic)
+        "faggot", "fag", "f4g", "dyke", "tranny", "shemale",
+        // slurs (ableist / other)
+        "retard", "retarded", "r3tard", "spastic", "cripple",
+        // sexual / degrading
+        "whore", "slut", "hoe", "rape", "rapist", "molest", "pedo", "pedophile",
+        // hate groups / extremist terms
+        "nazi", "hitler", "kkk",
+    ];
+    const PROFANITY_REGEX = new RegExp(`\\b(${PROFANITY_LIST.join("|")})\\b`, "i");
+
+    function containsProfanity(text) {
+        return PROFANITY_REGEX.test(text);
+    }
+
+    // Skip brand-new accounts that haven't played anything yet -- otherwise a
+    // fresh login before a single match creates a clutter entry with 0 wins,
+    // 0 matches, and whatever name they happened to type at the prompt.
+    function hasPlayedAnything(data) {
+        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+        return modes.some(m => (data.ModesData?.[m]?.matchesPlayed ?? 0) > 0);
+    }
+
     let forceRenamePrompt = false;
 
     // Serializes submitToLeaderboard per player, so if the game fires two
@@ -284,6 +318,8 @@
     }
 
     async function submitToLeaderboardInner(data) {
+        if (!hasPlayedAnything(data)) return; // brand new account, nothing to show yet
+
         const fb = await initFirebase();
         if (!fb) return; // disabled or failed to load, silently skip
 
@@ -307,7 +343,7 @@
         forceRenamePrompt = false;
 
         if (!displayName) {
-            const MAX_DISPLAY_NAME_LENGTH = 20;
+            const MAX_DISPLAY_NAME_LENGTH = 15;
             const suggestion = (existingDisplayName || cleanName(data.Nickname)).slice(0, MAX_DISPLAY_NAME_LENGTH) || "Player";
             const promptLabel = isRename
                 ? `Enter your new leaderboard name (max ${MAX_DISPLAY_NAME_LENGTH} characters):`
@@ -324,10 +360,17 @@
                 }
 
                 entered = entered.trim();
-                if (entered.length > 0 && entered.length <= MAX_DISPLAY_NAME_LENGTH) {
-                    break; // valid, stop asking
+
+                if (entered.length === 0 || entered.length > MAX_DISPLAY_NAME_LENGTH) {
+                    continue; // empty or too long, loop back and ask again
                 }
-                // else: empty or too long, loop back and ask again
+
+                if (containsProfanity(entered)) {
+                    alert("That name isn't allowed on the leaderboard. Please pick something else.");
+                    continue;
+                }
+
+                break; // valid, stop asking
             }
 
             displayName = entered || suggestion;
