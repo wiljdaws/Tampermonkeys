@@ -69,14 +69,18 @@ If it still doesn't show up later, there's one more place to check:
 
 ## Step 6: Turn on frequent auto-updates
 
-By default, Tampermonkey only checks for script updates about once a day. Let's turn that up so you always have the latest version without thinking about it.
+This makes sure you automatically get bug fixes and new features as soon as they're pushed, without having to reinstall anything yourself.
 
 1. Click the Tampermonkey icon in your toolbar.
 2. Click **Dashboard**.
 3. Click the **Settings** tab at the top.
-4. Scroll down to find **Update interval for userscripts** (sometimes just called **Check interval**).
-5. Set it to the shortest available option (often labeled something like "Every day" is default — pick a shorter one if offered, such as every few hours).
-6. Just below that, make sure **Check for userscript updates** (or a similarly named checkbox) is turned **on**.
+4. Scroll down to the **Userscript Update** section.
+5. Set **Check Interval** to **Every 6 Hours**.
+6. Check both boxes underneath it:
+   - **Automatic installation**
+   - **Update disabled scripts**
+
+That's it, Tampermonkey will now silently check every 6 hours and install any updates on its own.
 
 If you ever want to check for an update right now instead of waiting:
 
