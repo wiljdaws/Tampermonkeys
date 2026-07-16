@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      8.2
+// @version      8.3
 // @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -27,9 +27,9 @@
 
         hud.style.cssText = `
             position:fixed;
-            top:102px;
+            top:110px;
             right:20px;
-            width:220px;
+            width:250px;
             background:rgba(18,18,22,.88);
             color:white;
             border:2px solid #00bfff;
@@ -169,24 +169,28 @@
         const totalMatches = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
         document.getElementById("rgContent").innerHTML = `
-            <b>🏆 Ratings</b><br>
-            3v3: <span style="color:#00ff66">${rating("Competitive3v3")}</span><br>
-            2v2: <span style="color:#00ff66">${rating("Competitive2v2")}</span><br>
-            1v1: <span style="color:#00ff66">${rating("Competitive1v1")}</span><br>
-            Casual: <span style="color:#00ff66">${rating("Casual")}</span>
+            <div style="display:flex;">
+                <div style="flex:1;">
+                    <b>🏆 Ratings</b><br>
+                    3v3: <span style="color:#00ff66">${rating("Competitive3v3")}</span><br>
+                    2v2: <span style="color:#00ff66">${rating("Competitive2v2")}</span><br>
+                    1v1: <span style="color:#00ff66">${rating("Competitive1v1")}</span><br>
+                    Casual: <span style="color:#00ff66">${rating("Casual")}</span>
+                </div>
+                <div style="width:1px;background:#00bfff88;margin:0 8px;"></div>
+                <div style="flex:1;">
+                    <b>📊 Win Rates</b><br>
+                    3v3 <span style="color:#00ff66">${wr("Competitive3v3")}%</span><br>
+                    2v2 <span style="color:#00ff66">${wr("Competitive2v2")}%</span><br>
+                    1v1 <span style="color:#00ff66">${wr("Competitive1v1")}%</span><br>
+                    Casual <span style="color:#00ff66">${wr("Casual")}%</span>
+                </div>
+            </div>
 
             <hr style="border:none;border-top:1px solid #00bfff88;margin:10px 0;">
 
             Wins: <span style="color:#00ff66">${totalWins}</span><br>
             Matches Played: <span style="color:#00ff66">${totalMatches}</span>
-
-            <hr style="border:none;border-top:1px solid #00bfff88;margin:10px 0;">
-
-            <b>📊 Win Rates</b><br>
-            3v3 <span style="color:#00ff66">${wr("Competitive3v3")}%</span><br>
-            2v2 <span style="color:#00ff66">${wr("Competitive2v2")}%</span><br>
-            1v1 <span style="color:#00ff66">${wr("Competitive1v1")}%</span><br>
-            Casual <span style="color:#00ff66">${wr("Casual")}%</span>
         `;
     }
 
@@ -264,7 +268,22 @@
 
     let forceRenamePrompt = false;
 
+    // Serializes submitToLeaderboard per player, so if the game fires two
+    // login-ish events close together (happens on a fresh install/first run),
+    // the second call waits for the first to finish deciding on a display name
+    // (and saving it) instead of racing it and also concluding "no name yet" --
+    // which is what caused the rename prompt to pop up twice.
+    const submitLocks = new Map();
+
     async function submitToLeaderboard(data) {
+        const lockKey = data.Id;
+        const previous = submitLocks.get(lockKey) || Promise.resolve();
+        const current = previous.then(() => submitToLeaderboardInner(data));
+        submitLocks.set(lockKey, current);
+        await current;
+    }
+
+    async function submitToLeaderboardInner(data) {
         const fb = await initFirebase();
         if (!fb) return; // disabled or failed to load, silently skip
 
