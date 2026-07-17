@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      8.5
+// @version      8.6
 // @description  Live stats HUD for Rocket Goal - MMR ratings and win rates auto updates leaderboard
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -37,7 +37,7 @@
             font-family:Arial,sans-serif;
             padding:10px;
             z-index:999999999;
-            animation: rgGlowSpin 3s linear infinite;
+            animation: rgGlowSpin 5s linear infinite;
             user-select:none;
         `;
 
@@ -62,15 +62,15 @@
                     transform: scale(0.96);
                 }
                 @keyframes rgGlowSpin {
-                    0%    { box-shadow: 12px 0px 22px 6px #ff7a00, -12px 0px 22px 6px #00d4ff; }
-                    12.5% { box-shadow: 8.5px 8.5px 22px 6px #ff7a00, -8.5px -8.5px 22px 6px #00d4ff; }
-                    25%   { box-shadow: 0px 12px 22px 6px #ff7a00, 0px -12px 22px 6px #00d4ff; }
-                    37.5% { box-shadow: -8.5px 8.5px 22px 6px #ff7a00, 8.5px -8.5px 22px 6px #00d4ff; }
-                    50%   { box-shadow: -12px 0px 22px 6px #ff7a00, 12px 0px 22px 6px #00d4ff; }
-                    62.5% { box-shadow: -8.5px -8.5px 22px 6px #ff7a00, 8.5px 8.5px 22px 6px #00d4ff; }
-                    75%   { box-shadow: 0px -12px 22px 6px #ff7a00, 0px 12px 22px 6px #00d4ff; }
-                    87.5% { box-shadow: 8.5px -8.5px 22px 6px #ff7a00, -8.5px 8.5px 22px 6px #00d4ff; }
-                    100%  { box-shadow: 12px 0px 22px 6px #ff7a00, -12px 0px 22px 6px #00d4ff; }
+                    0%    { box-shadow: 8px 0px 14px 3px rgba(255,122,0,0.65), -8px 0px 14px 3px rgba(0,212,255,0.6); }
+                    12.5% { box-shadow: 5.7px 5.7px 14px 3px rgba(255,122,0,0.65), -5.7px -5.7px 14px 3px rgba(0,212,255,0.6); }
+                    25%   { box-shadow: 0px 8px 14px 3px rgba(255,122,0,0.65), 0px -8px 14px 3px rgba(0,212,255,0.6); }
+                    37.5% { box-shadow: -5.7px 5.7px 14px 3px rgba(255,122,0,0.65), 5.7px -5.7px 14px 3px rgba(0,212,255,0.6); }
+                    50%   { box-shadow: -8px 0px 14px 3px rgba(255,122,0,0.65), 8px 0px 14px 3px rgba(0,212,255,0.6); }
+                    62.5% { box-shadow: -5.7px -5.7px 14px 3px rgba(255,122,0,0.65), 5.7px 5.7px 14px 3px rgba(0,212,255,0.6); }
+                    75%   { box-shadow: 0px -8px 14px 3px rgba(255,122,0,0.65), 0px 8px 14px 3px rgba(0,212,255,0.6); }
+                    87.5% { box-shadow: 5.7px -5.7px 14px 3px rgba(255,122,0,0.65), -5.7px 5.7px 14px 3px rgba(0,212,255,0.6); }
+                    100%  { box-shadow: 8px 0px 14px 3px rgba(255,122,0,0.65), -8px 0px 14px 3px rgba(0,212,255,0.6); }
                 }
             </style>
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:move" id="rgDragHandle">
