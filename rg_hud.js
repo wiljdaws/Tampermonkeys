@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      8.4
-// @description  Live stats HUD for Rocket Goal - ratings, win rates, equipped car, hidden automatically during matches
+// @version      8.5
+// @description  Live stats HUD for Rocket Goal - MMR ratings and win rates auto updates leaderboard
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
 // @grant        none
@@ -37,7 +37,7 @@
             font-family:Arial,sans-serif;
             padding:10px;
             z-index:999999999;
-            box-shadow:0 0 15px #00bfff55;
+            animation: rgGlowSpin 3s linear infinite;
             user-select:none;
         `;
 
@@ -60,6 +60,17 @@
                 }
                 #rgHUD .rgBtn:active {
                     transform: scale(0.96);
+                }
+                @keyframes rgGlowSpin {
+                    0%    { box-shadow: 12px 0px 22px 6px #ff7a00, -12px 0px 22px 6px #00d4ff; }
+                    12.5% { box-shadow: 8.5px 8.5px 22px 6px #ff7a00, -8.5px -8.5px 22px 6px #00d4ff; }
+                    25%   { box-shadow: 0px 12px 22px 6px #ff7a00, 0px -12px 22px 6px #00d4ff; }
+                    37.5% { box-shadow: -8.5px 8.5px 22px 6px #ff7a00, 8.5px -8.5px 22px 6px #00d4ff; }
+                    50%   { box-shadow: -12px 0px 22px 6px #ff7a00, 12px 0px 22px 6px #00d4ff; }
+                    62.5% { box-shadow: -8.5px -8.5px 22px 6px #ff7a00, 8.5px 8.5px 22px 6px #00d4ff; }
+                    75%   { box-shadow: 0px -12px 22px 6px #ff7a00, 0px 12px 22px 6px #00d4ff; }
+                    87.5% { box-shadow: 8.5px -8.5px 22px 6px #ff7a00, -8.5px 8.5px 22px 6px #00d4ff; }
+                    100%  { box-shadow: 12px 0px 22px 6px #ff7a00, -12px 0px 22px 6px #00d4ff; }
                 }
             </style>
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:move" id="rgDragHandle">
@@ -317,6 +328,33 @@
         await current;
     }
 
+    // Simple running counter so you can actually see how many real Firestore
+    // writes are happening, instead of guessing. Check the console.
+    let firestoreWriteCount = 0;
+    function logWrite(label) {
+        firestoreWriteCount++;
+        console.log(`[RG HUD] Firestore write #${firestoreWriteCount} (${label})`);
+    }
+
+    // Caches the resolved display name per player so repeat calls in the same
+    // session skip the getDoc read entirely instead of re-fetching the same answer.
+    const cachedDisplayNames = new Map();
+
+    // Skip the whole Firebase round-trip if this player's data hasn't actually
+    // changed since the last time we synced -- login often reports the same
+    // stats as the matchEnd that just happened moments before.
+    const lastSyncSnapshot = new Map();
+
+    // Caches which real document belongs to a given player+mode after the first
+    // lookup, so repeat syncs in the same session skip the read entirely and
+    // go straight to a known document ID instead of re-querying every time.
+    const knownDocIds = new Map();
+
+    // Simple safety-net cooldown regardless of the above -- no player can
+    // trigger more than one real sync within this window.
+    const SYNC_COOLDOWN_MS = 20000;
+    const lastSyncTime = new Map();
+
     async function submitToLeaderboardInner(data) {
         if (!hasPlayedAnything(data)) return; // brand new account, nothing to show yet
 
@@ -328,14 +366,19 @@
         // Only ask for a display name once per player, ever -- unless the
         // Rename button forces it, in which case we always re-ask (but still
         // pre-fill their current name rather than starting from scratch).
-        let existingDisplayName = null;
-        try {
-            const existing = await fb.getDoc(docRef);
-            if (existing.exists() && existing.data().displayName) {
-                existingDisplayName = existing.data().displayName;
+        // Cached in memory after the first lookup so repeat calls this session
+        // don't need a fresh Firestore read just to find the same answer again.
+        let existingDisplayName = cachedDisplayNames.get(data.Id) ?? null;
+
+        if (!existingDisplayName || forceRenamePrompt) {
+            try {
+                const existing = await fb.getDoc(docRef);
+                if (existing.exists() && existing.data().displayName) {
+                    existingDisplayName = existing.data().displayName;
+                }
+            } catch (e) {
+                // couldn't read existing doc (e.g. rules deny read for some reason) -- fall through and ask anyway
             }
-        } catch (e) {
-            // couldn't read existing doc (e.g. rules deny read for some reason) -- fall through and ask anyway
         }
 
         let displayName = (!forceRenamePrompt && existingDisplayName) ? existingDisplayName : null;
@@ -376,6 +419,8 @@
             displayName = entered || suggestion;
         }
 
+        cachedDisplayNames.set(data.Id, displayName);
+
         const payload = {
             nickname: (data.Nickname ?? "").slice(0, 500),
             displayName,
@@ -396,7 +441,25 @@
             lastUpdated: new Date().toISOString(),
         };
 
+        // Skip the actual network writes if nothing worth syncing has changed,
+        // or if we synced very recently -- but never skip a deliberate Rename.
+        const snapshotKey = JSON.stringify({
+            displayName, ratings: payload.ratings, stats: payload.stats,
+            xp: payload.xp, equippedSkinId: payload.equippedSkinId,
+        });
+        const now = Date.now();
+        const unchanged = lastSyncSnapshot.get(data.Id) === snapshotKey;
+        const withinCooldown = (now - (lastSyncTime.get(data.Id) ?? 0)) < SYNC_COOLDOWN_MS;
+
+        if (!isRename && (unchanged || withinCooldown)) {
+            return;
+        }
+
+        lastSyncSnapshot.set(data.Id, snapshotKey);
+        lastSyncTime.set(data.Id, now);
+
         try {
+            logWrite("script_submissions");
             await fb.setDoc(docRef, payload, { merge: true });
         } catch (e) {
             console.error("[RG HUD] Leaderboard submission failed:", e);
@@ -423,13 +486,26 @@
         const previous = upsertLocks.get(lockKey) || Promise.resolve();
 
         const current = previous.then(async () => {
-            const q = fb.query(
-                fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                fb.where("sourceUserId", "==", sourceUserId),
-                fb.where("playlist", "==", playlist)
-            );
+            const cacheKey = `${sourceUserId}_${playlist}`;
+            const cachedId = knownDocIds.get(cacheKey);
 
             try {
+                if (cachedId) {
+                    // Already know which doc this is from earlier this session --
+                    // skip the query/read entirely and write straight to it.
+                    // If Pal happened to delete it since, setDoc just recreates
+                    // it fresh at that same ID, so this is safe either way.
+                    logWrite(`leaderboard/${playlist} (cached id)`);
+                    await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, cachedId), fields, { merge: true });
+                    return;
+                }
+
+                const q = fb.query(
+                    fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                    fb.where("sourceUserId", "==", sourceUserId),
+                    fb.where("playlist", "==", playlist)
+                );
+
                 const existing = await fb.getDocs(q);
                 if (existing.size > 1) {
                     console.warn(
@@ -439,13 +515,17 @@
                 }
                 if (!existing.empty) {
                     const docId = existing.docs[0].id;
+                    knownDocIds.set(cacheKey, docId);
+                    logWrite(`leaderboard/${playlist} (found via query)`);
                     await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, docId), fields, { merge: true });
                 } else {
-                    await fb.addDoc(fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION), {
+                    logWrite(`leaderboard/${playlist} (new doc)`);
+                    const newDoc = await fb.addDoc(fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION), {
                         ...fields,
                         sourceUserId,
                         playlist,
                     });
+                    knownDocIds.set(cacheKey, newDoc.id);
                 }
             } catch (e) {
                 console.error(`[RG HUD] Real leaderboard sync failed for ${playlist}:`, e);
