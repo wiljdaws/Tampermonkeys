@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      9.0
+// @version      9.1
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -180,7 +180,7 @@
                 #rgNameError { color: #ff6b6b; font-size: 11px; min-height: 14px; }
             </style>
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:4px;" id="rgDragHandle">
-                <span style="font-size:16px;font-weight:bold;color:#00bfff;">🚀 Rocket Goal HUD</span>
+                <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;">🚀 Rocket Goal HUD</span>
                 <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
                 <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
                 <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
@@ -379,6 +379,86 @@
         else color = "#9aa5ad";
 
         return ` <span style="color:${color};font-size:10px;font-weight:bold;">#${r}</span>`;
+    }
+
+    // ---------- Crown system ----------
+    // Title becomes KING while holding any #1; a coronation banner fires the
+    // moment a #1 is newly taken, and a dethroned alert fires when it's lost.
+
+    const prevRanks = new Map(); // playlist -> last known rank
+
+    function updateCrownState() {
+        const titleEl = document.getElementById("rgTitle");
+        if (!titleEl) return;
+
+        const holdingAnyFirst = [...cachedRanks.values()].some(r => r === 1);
+        titleEl.textContent = holdingAnyFirst ? "👑 Rocket Goal KING" : "🚀 Rocket Goal HUD";
+        titleEl.style.color = holdingAnyFirst ? "#ffd700" : "#00bfff";
+    }
+
+    let bannerTimeout = null;
+
+    function showBanner(text, color) {
+        createHUD();
+        let banner = document.getElementById("rgBanner");
+        if (!banner) {
+            banner = document.createElement("div");
+            banner.id = "rgBanner";
+            banner.style.cssText = `
+                position:absolute;
+                top:-38px;
+                left:0;
+                right:0;
+                text-align:center;
+                font-weight:bold;
+                font-size:13px;
+                padding:6px 8px;
+                border-radius:8px;
+                background:rgba(10,14,18,0.95);
+                border:1px solid;
+                opacity:0;
+                transition:opacity 0.4s ease, transform 0.4s ease;
+                transform:translateY(6px);
+                pointer-events:none;
+            `;
+            hud.appendChild(banner);
+        }
+
+        banner.textContent = text;
+        banner.style.color = color;
+        banner.style.borderColor = color;
+
+        requestAnimationFrame(() => {
+            banner.style.opacity = "1";
+            banner.style.transform = "translateY(0)";
+        });
+
+        clearTimeout(bannerTimeout);
+        bannerTimeout = setTimeout(() => {
+            banner.style.opacity = "0";
+            banner.style.transform = "translateY(6px)";
+        }, 3500);
+    }
+
+    function checkRankTransitions() {
+        for (const [playlist, rank] of cachedRanks) {
+            const prev = prevRanks.get(playlist);
+
+            // Coronation: newly took #1 (only if we knew a previous, non-#1 rank --
+            // avoids firing just because a session started while already on top)
+            if (rank === 1 && typeof prev === "number" && prev !== 1) {
+                showBanner(`👑 NEW #1 IN ${playlist.toUpperCase()}!`, "#ffd700");
+            }
+
+            // Dethroned: was #1, now isn't
+            if (prev === 1 && rank !== 1) {
+                showBanner(`⚔️ Dethroned in ${playlist.toUpperCase()}!`, "#ff6b6b");
+            }
+
+            prevRanks.set(playlist, rank);
+        }
+
+        updateCrownState();
     }
 
     // ---------- HUD content ----------
@@ -892,6 +972,8 @@
             ranksFetchedThisSession = true;
             lastRankRefresh = now;
 
+            checkRankTransitions();
+
             // Re-render with fresh ranks
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
         } catch (e) {
@@ -959,6 +1041,8 @@
             }
         }
     };
+
+    // ---------- Boot ----------
 
     // ---------- Boot ----------
 
