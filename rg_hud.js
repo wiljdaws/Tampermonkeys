@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      9.2
+// @version      9.3
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -180,12 +180,32 @@
                     -webkit-user-select: text;
                 }
                 #rgNameError { color: #ff6b6b; font-size: 11px; min-height: 14px; }
+                #rgTooltip {
+                    position: fixed;
+                    z-index: 9999999999;
+                    background: linear-gradient(180deg, #1c2b3a, #0d141b);
+                    color: #d7f3ff;
+                    border: 1px solid #00bfff;
+                    border-radius: 6px;
+                    padding: 5px 9px;
+                    font-family: Arial, sans-serif;
+                    font-size: 11px;
+                    font-weight: bold;
+                    white-space: nowrap;
+                    pointer-events: none;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+                    opacity: 0;
+                    transition: opacity 0.12s ease;
+                }
+                #rgHUD .rgHasTip { cursor: help; border-bottom: 1px dotted currentColor; }
             </style>
-            <div style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:4px;" id="rgDragHandle">
-                <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;">🚀 Rocket Goal HUD</span>
-                <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
-                <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
-                <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
+            <div style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:8px;" id="rgDragHandle">
+                <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🚀 Rocket Goal HUD</span>
+                <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
+                    <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
+                    <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
+                    <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
+                </div>
             </div>
             <hr>
             <div id="rgBody">
@@ -219,6 +239,37 @@
         document.body.appendChild(hud);
         dragElement(hud, document.getElementById("rgDragHandle"));
         applyGlowSettings();
+
+        // Custom themed tooltip (replaces native title= tooltips, which can't be
+        // styled and have a slow show delay). One shared element, positioned near
+        // the cursor whenever hovering anything with a data-tip.
+        let tooltipEl = document.getElementById("rgTooltip");
+        if (!tooltipEl) {
+            tooltipEl = document.createElement("div");
+            tooltipEl.id = "rgTooltip";
+            document.body.appendChild(tooltipEl);
+        }
+        hud.addEventListener("mouseover", e => {
+            const target = e.target.closest("[data-tip]");
+            if (!target) return;
+            tooltipEl.textContent = target.getAttribute("data-tip");
+            tooltipEl.style.opacity = "1";
+        });
+        hud.addEventListener("mousemove", e => {
+            if (tooltipEl.style.opacity !== "1") return;
+            // Position above-right of cursor, nudged to stay on screen.
+            const pad = 14;
+            let x = e.clientX + pad;
+            let y = e.clientY - tooltipEl.offsetHeight - 6;
+            if (x + tooltipEl.offsetWidth > window.innerWidth) x = e.clientX - tooltipEl.offsetWidth - pad;
+            if (y < 0) y = e.clientY + pad;
+            tooltipEl.style.left = x + "px";
+            tooltipEl.style.top = y + "px";
+        });
+        hud.addEventListener("mouseout", e => {
+            const target = e.target.closest("[data-tip]");
+            if (target) tooltipEl.style.opacity = "0";
+        });
 
         document.getElementById("rgMinimize").onclick = () => manualToggle();
         document.getElementById("rgSub").onclick = () => {
@@ -387,6 +438,8 @@
 
     // playlist -> rank number; refreshed after our own data changes.
     const cachedRanks = new Map();
+    // playlist -> mmr needed to pass the person one rank above you (null if #1).
+    const cachedMmrToNext = new Map();
 
     function rankBadge(playlist) {
         const r = cachedRanks.get(playlist);
@@ -399,7 +452,14 @@
         else if (r <= 25) color = "#00d4ff";
         else color = "#9aa5ad";
 
-        return ` <span style="color:${color};font-size:10px;font-weight:bold;">#${r}</span>`;
+        // Hover tooltip (custom-styled): how much MMR to pass the next rank up.
+        const gap = cachedMmrToNext.get(playlist);
+        let tip;
+        if (r === 1) tip = "You're #1! 👑";
+        else if (typeof gap === "number") tip = `+${gap} MMR to reach #${r - 1}`;
+        else tip = `Rank #${r}`;
+
+        return ` <span class="rgHasTip" data-tip="${tip}" style="color:${color};font-size:10px;font-weight:bold;">#${r}</span>`;
     }
 
     // ---------- Crown system ----------
@@ -661,13 +721,13 @@
 
         try {
             const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer } =
+            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
 
-            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer };
+            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit };
             return firestoreReady;
         } catch (e) {
             console.error("[RG HUD] Firebase init failed:", e);
@@ -1071,7 +1131,31 @@
                     fb.where("mmr", ">", mmr)
                 );
                 const snapshot = await fb.getCountFromServer(q);
-                cachedRanks.set(playlist, snapshot.data().count + 1);
+                const rank = snapshot.data().count + 1;
+                cachedRanks.set(playlist, rank);
+
+                // Gap to next rank up: fetch the lowest-MMR entry still above us
+                // (the one directly ahead). Skipped entirely when already #1.
+                if (rank > 1) {
+                    try {
+                        const nextQ = fb.query(
+                            fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                            fb.where("playlist", "==", playlist),
+                            fb.where("mmr", ">", mmr),
+                            fb.orderBy("mmr", "asc"),
+                            fb.limit(1)
+                        );
+                        const nextSnap = await fb.getDocs(nextQ);
+                        if (!nextSnap.empty) {
+                            const nextMmr = nextSnap.docs[0].data().mmr;
+                            cachedMmrToNext.set(playlist, Math.max(0, nextMmr - mmr + 1));
+                        }
+                    } catch (e) {
+                        // gap is a nice-to-have on top of rank -- ignore if it fails
+                    }
+                } else {
+                    cachedMmrToNext.delete(playlist);
+                }
             }
 
             ranksFetchedThisSession = true;
