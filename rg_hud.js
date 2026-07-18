@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      9.3
+// @version      9.4
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -103,7 +103,9 @@
             top:${pos.top};
             ${pos.left ? `left:${pos.left};` : ""}
             right:${pos.right};
-            width:250px;
+            width:max-content;
+            min-width:250px;
+            max-width:340px;
             background:rgba(18,18,22,.88);
             color:white;
             border:2px solid #00bfff;
@@ -650,16 +652,16 @@
         const totalMatches = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
         document.getElementById("rgContent").innerHTML = `
-            <div style="display:flex;">
-                <div style="flex:1.15;">
+            <div style="display:flex;gap:12px;">
+                <div style="white-space:nowrap;">
                     <b>🏆 Ratings</b><br>
                     3v3: <span style="color:#00ff66">${rating("Competitive3v3")}</span>${rankBadge("3v3")}${deltaBadge("Competitive3v3", ratingVal("Competitive3v3"))}<br>
                     2v2: <span style="color:#00ff66">${rating("Competitive2v2")}</span>${rankBadge("2v2")}${deltaBadge("Competitive2v2", ratingVal("Competitive2v2"))}<br>
                     1v1: <span style="color:#00ff66">${rating("Competitive1v1")}</span>${rankBadge("1v1")}${deltaBadge("Competitive1v1", ratingVal("Competitive1v1"))}<br>
                     Casual: <span style="color:#00ff66">${rating("Casual")}</span>${deltaBadge("Casual", ratingVal("Casual"))}
                 </div>
-                <div style="width:1px;background:#00bfff88;margin:0 8px;"></div>
-                <div style="flex:1;">
+                <div style="width:1px;background:#00bfff88;flex-shrink:0;"></div>
+                <div style="white-space:nowrap;">
                     <b>📊 Win Rates</b><br>
                     3v3 <span style="color:#00ff66">${wr("Competitive3v3")}%</span><br>
                     2v2 <span style="color:#00ff66">${wr("Competitive2v2")}%</span><br>
