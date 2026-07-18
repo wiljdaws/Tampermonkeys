@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      9.1
+// @version      9.2
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -59,9 +59,9 @@
             return;
         }
 
-        const c1 = hexToRgba(settings.glowColor1, settings.glowOpacity);
-        const c2 = hexToRgba(settings.glowColor2, settings.glowOpacity);
-        const R = 8, BLUR = 14, SPREAD = 3;
+        const c1 = hexToRgba(settings.glowColor1, Math.min(1, settings.glowOpacity * momentumGlow.intensity));
+        const c2 = hexToRgba(settings.glowColor2, Math.min(1, settings.glowOpacity * momentumGlow.intensity));
+        const R = 8, BLUR = 14 * momentumGlow.intensity, SPREAD = 3 * momentumGlow.intensity;
 
         let frames = "";
         for (let i = 0; i <= 8; i++) {
@@ -69,12 +69,14 @@
             const angle = (i / 8) * 2 * Math.PI;
             const x = (Math.cos(angle) * R).toFixed(1);
             const y = (Math.sin(angle) * R).toFixed(1);
-            frames += `${pct}% { box-shadow: ${x}px ${y}px ${BLUR}px ${SPREAD}px ${c1}, ${-x}px ${-y}px ${BLUR}px ${SPREAD}px ${c2}; }\n`;
+            frames += `${pct}% { box-shadow: ${x}px ${y}px ${BLUR.toFixed(1)}px ${SPREAD.toFixed(1)}px ${c1}, ${-x}px ${-y}px ${BLUR.toFixed(1)}px ${SPREAD.toFixed(1)}px ${c2}; }\n`;
         }
 
         styleEl.textContent = `@keyframes rgGlowSpin {\n${frames}}`;
         // Speed level 1-10 maps to rotation duration 20s (crawl) down to ~1.5s (fast).
-        const duration = 22 - (settings.glowSpeed * 2.05);
+        // Momentum applies a speed multiplier on top (on fire = faster, cold = slower).
+        const baseDuration = 22 - (settings.glowSpeed * 2.05);
+        const duration = baseDuration / momentumGlow.speedMult;
         hud.style.boxShadow = "";
         hud.style.animation = `rgGlowSpin ${duration.toFixed(2)}s linear infinite`;
     }
@@ -335,22 +337,41 @@
 
     // ---------- Session deltas ----------
 
-    // First-seen ratings this session, keyed by account ID -- switching accounts
-    // in the same tab starts a fresh baseline instead of comparing one account's
-    // rating against another's (which produced huge bogus deltas).
+    // A "session" is a continuous play run. It resets when: the account changes,
+    // OR there's been a gap of no activity longer than SESSION_IDLE_MS (e.g. you
+    // played last night, slept, and came back today). Stored in localStorage with
+    // a timestamp so a plain page refresh keeps the session, but a long break
+    // starts a fresh one -- which sessionStorage alone couldn't distinguish.
+    const SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2 hours
+
     let sessionStart = null;
-    try { sessionStart = JSON.parse(sessionStorage.getItem("rgHudSessionStart") ?? "null"); } catch (e) {}
+    try { sessionStart = JSON.parse(localStorage.getItem("rgHudSessionStart") ?? "null"); } catch (e) {}
 
     function captureSessionStart(data) {
-        if (sessionStart && sessionStart.accountId === data.Id) return;
+        const now = Date.now();
+        const sameAccount = sessionStart && sessionStart.accountId === data.Id;
+        const idledOut = sessionStart && (now - (sessionStart.lastSeen ?? 0)) > SESSION_IDLE_MS;
+
+        if (sameAccount && !idledOut) {
+            // Continuing the same session -- just refresh the activity timestamp.
+            sessionStart.lastSeen = now;
+            try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
+            return;
+        }
+
+        // New session: fresh baseline. Also clear the per-entry write cache and
+        // momentum so a new run doesn't inherit yesterday's state.
         sessionStart = {
             accountId: data.Id,
+            startedAt: now,
+            lastSeen: now,
             Competitive3v3: data.ModesGlicko?.Competitive3v3?.displayRating ?? null,
             Competitive2v2: data.ModesGlicko?.Competitive2v2?.displayRating ?? null,
             Competitive1v1: data.ModesGlicko?.Competitive1v1?.displayRating ?? null,
             Casual: data.ModesGlicko?.Casual?.displayRating ?? null,
         };
-        try { sessionStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
+        try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
+        currentMomentumState = "neutral";
     }
 
     function deltaBadge(mode, current) {
@@ -387,13 +408,96 @@
 
     const prevRanks = new Map(); // playlist -> last known rank
 
-    function updateCrownState() {
+    // ---------- Momentum system ----------
+    // Based on net MMR gained/lost across all modes this session. Changes the
+    // title and the glow speed/intensity (NOT the user's chosen colors).
+
+    const MOMENTUM_TIERS = {
+        onFire:    150,   // >= : "ON FIRE", fast + bright glow
+        heatingUp: 75,    // >= : "Heating Up", warmer/faster glow
+        cold:      -75,   // <= : "Ice Cold", slow + dim glow
+        shutEye:   -200,  // <= : easter egg
+    };
+
+    // Rotating easter-egg messages so a rough session doesn't repeat. Ribbing, not mean.
+    const SHUT_EYE_MESSAGES = [
+        "😴 Maybe it's time for some shut-eye?",
+        "😴 The ball will still be here tomorrow...",
+        "🛌 Consider: a strategic nap.",
+        "☕ Touch grass? Or at least grab a coffee.",
+        "😅 Rough one. Shake it off, champ.",
+    ];
+    let shutEyeMessage = SHUT_EYE_MESSAGES[Math.floor(Math.random() * SHUT_EYE_MESSAGES.length)];
+
+    // Read by applyGlowSettings; momentum only changes speed & intensity, not colors.
+    let momentumGlow = { speedMult: 1, intensity: 1 };
+    let currentMomentumState = "neutral";
+
+    function netSessionMMR() {
+        if (!sessionStart || !lastKnownPlayerData) return 0;
+        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+        let net = 0;
+        for (const m of modes) {
+            const cur = lastKnownPlayerData.ModesGlicko?.[m]?.displayRating;
+            const start = sessionStart[m];
+            if (typeof cur === "number" && typeof start === "number") net += cur - start;
+        }
+        return net;
+    }
+
+    function computeMomentumState(net) {
+        if (net <= MOMENTUM_TIERS.shutEye) return "shutEye";
+        if (net <= MOMENTUM_TIERS.cold) return "cold";
+        if (net >= MOMENTUM_TIERS.onFire) return "onFire";
+        if (net >= MOMENTUM_TIERS.heatingUp) return "heatingUp";
+        return "neutral";
+    }
+
+    // Title priority: crown (#1) beats momentum beats default.
+    function resolveTitle() {
+        const holdingAnyFirst = [...cachedRanks.values()].some(r => r === 1);
+        if (holdingAnyFirst) return { text: "👑 Rocket Goal KING", color: "#ffd700" };
+
+        switch (currentMomentumState) {
+            case "shutEye":   return { text: shutEyeMessage, color: "#9aa5ad" };
+            case "cold":      return { text: "❄️ Ice Cold", color: "#7ec8ff" };
+            case "onFire":    return { text: "🔥 ON FIRE", color: "#ff5b1f" };
+            case "heatingUp": return { text: "🔥 Heating Up", color: "#ff9a3c" };
+            default:          return { text: "🚀 Rocket Goal HUD", color: "#00bfff" };
+        }
+    }
+
+    function applyTitle() {
         const titleEl = document.getElementById("rgTitle");
         if (!titleEl) return;
+        const { text, color } = resolveTitle();
+        titleEl.textContent = text;
+        titleEl.style.color = color;
+    }
 
-        const holdingAnyFirst = [...cachedRanks.values()].some(r => r === 1);
-        titleEl.textContent = holdingAnyFirst ? "👑 Rocket Goal KING" : "🚀 Rocket Goal HUD";
-        titleEl.style.color = holdingAnyFirst ? "#ffd700" : "#00bfff";
+    function updateMomentum(forceState = null) {
+        const newState = forceState ?? computeMomentumState(netSessionMMR());
+        const changed = newState !== currentMomentumState;
+        currentMomentumState = newState;
+
+        switch (newState) {
+            case "onFire":    momentumGlow = { speedMult: 2.2, intensity: 1.5 }; break;
+            case "heatingUp": momentumGlow = { speedMult: 1.5, intensity: 1.2 }; break;
+            case "cold":      momentumGlow = { speedMult: 0.5, intensity: 0.7 }; break;
+            case "shutEye":   momentumGlow = { speedMult: 0.35, intensity: 0.55 }; break;
+            default:          momentumGlow = { speedMult: 1, intensity: 1 };
+        }
+
+        applyGlowSettings();
+        applyTitle();
+
+        if (changed) {
+            if (newState === "onFire") showBanner("🔥 YOU'RE ON FIRE!", "#ff5b1f");
+            else if (newState === "shutEye") {
+                shutEyeMessage = SHUT_EYE_MESSAGES[Math.floor(Math.random() * SHUT_EYE_MESSAGES.length)];
+                showBanner(shutEyeMessage, "#9aa5ad");
+            }
+        }
     }
 
     let bannerTimeout = null;
@@ -458,7 +562,7 @@
             prevRanks.set(playlist, rank);
         }
 
-        updateCrownState();
+        applyTitle(); // crown state may have changed
     }
 
     // ---------- HUD content ----------
@@ -467,6 +571,7 @@
         createHUD();
         lastKnownPlayerData = data;
         captureSessionStart(data);
+        updateMomentum();
 
         const ratingVal = mode => data.ModesGlicko?.[mode]?.displayRating;
         const rating = mode => {
