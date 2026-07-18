@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      8.6
-// @description  Live stats HUD for Rocket Goal - MMR ratings and win rates auto updates leaderboard
+// @version      8.7
+// @description  Live stats HUD for Rocket Goal - ratings, win rates, auto leaderboard sync, hidden automatically during matches
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
 // @grant        none
@@ -223,11 +223,10 @@
         } catch (e) {}
     }
 
-    // ---------- Leaderboard submission (optional) ----------
+    // ---------- Leaderboard submission ----------
 
-    // TODO: fill these in from Pal's Firebase project settings
-    // (Firebase Console -> Project Settings -> General -> "Your apps" -> Web app config)
-    // Leave FIREBASE_CONFIG as null to disable leaderboard submission entirely.
+    // Pal's Firebase web config -- this is the public client config, not a secret.
+    // Set to null to disable all leaderboard submission.
     const FIREBASE_CONFIG = {
         apiKey: "AIzaSyD29s2Jku_DZ42keIQAETgKg7HWt__QEwY",
         authDomain: "rgleaderboard.firebaseapp.com",
@@ -238,15 +237,13 @@
         measurementId: "G-JW3Q972P9T",
     };
 
-    // IMPORTANT: this is intentionally NOT "leaderboard" -- that collection is
-    // manually curated by Pal through his site's admin panel (one document per
-    // player per game mode, with hand-picked cosmetic fields like flag/glowColor
-    // that we have no way to generate). Writing into that collection with our
-    // own schema is what broke the site earlier. This writes to a separate
-    // collection instead; Pal can decide if/how to pull from it manually.
+    // Raw per-player data dump, separate from the "leaderboard" collection the
+    // site renders. Keeps the full stats snapshot (all modes, xp, raw nickname,
+    // chosen displayName) as a record, while syncToRealLeaderboard below pushes
+    // just the site-shaped entries into the real "leaderboard" collection.
     const LEADERBOARD_COLLECTION = "script_submissions";
 
-    let firestoreReady = null; // will hold { db, doc, setDoc } once loaded
+    let firestoreReady = null; // holds the loaded Firestore SDK handles once initialized
 
     async function initFirebase() {
         if (!FIREBASE_CONFIG) return null;
@@ -328,30 +325,27 @@
         await current;
     }
 
-    // Simple running counter so you can actually see how many real Firestore
-    // writes are happening, instead of guessing. Check the console.
+    // ---------- Write-reduction caches ----------
+    // Together these keep Firebase traffic to the minimum: nothing is read
+    // twice per session, and nothing is written unless it actually changed.
+
+    // Running counter logged to console for every real Firestore write.
     let firestoreWriteCount = 0;
     function logWrite(label) {
         firestoreWriteCount++;
         console.log(`[RG HUD] Firestore write #${firestoreWriteCount} (${label})`);
     }
 
-    // Caches the resolved display name per player so repeat calls in the same
-    // session skip the getDoc read entirely instead of re-fetching the same answer.
+    // Resolved display name per player (skips the getDoc re-read).
     const cachedDisplayNames = new Map();
 
-    // Skip the whole Firebase round-trip if this player's data hasn't actually
-    // changed since the last time we synced -- login often reports the same
-    // stats as the matchEnd that just happened moments before.
+    // Full payload snapshot per player (skips everything if nothing changed).
     const lastSyncSnapshot = new Map();
 
-    // Caches which real document belongs to a given player+mode after the first
-    // lookup, so repeat syncs in the same session skip the read entirely and
-    // go straight to a known document ID instead of re-querying every time.
+    // Real leaderboard doc ID per player+mode (skips the lookup query).
     const knownDocIds = new Map();
 
-    // Simple safety-net cooldown regardless of the above -- no player can
-    // trigger more than one real sync within this window.
+    // Safety-net cooldown: max one full sync per player per window.
     const SYNC_COOLDOWN_MS = 20000;
     const lastSyncTime = new Map();
 
@@ -536,6 +530,22 @@
         await current;
     }
 
+    // Last-written state per player+playlist. A 3v3 match only changes the 3v3
+    // and wins entries, so 1v1/2v2 skip their writes entirely. Backed by
+    // sessionStorage so a page refresh doesn't trigger a redundant full burst.
+    const lastEntryState = new Map(
+        (() => {
+            try { return JSON.parse(sessionStorage.getItem("rgHudEntryState") ?? "[]"); }
+            catch (e) { return []; }
+        })()
+    );
+
+    function saveEntryState() {
+        try {
+            sessionStorage.setItem("rgHudEntryState", JSON.stringify([...lastEntryState]));
+        } catch (e) {}
+    }
+
     async function syncToRealLeaderboard(fb, data, displayName) {
         const sourceUserId = data.Id;
         const modeToPlaylist = {
@@ -547,18 +557,31 @@
         for (const [mode, playlist] of Object.entries(modeToPlaylist)) {
             const mmr = data.ModesGlicko?.[mode]?.displayRating;
             if (typeof mmr !== "number") continue; // player hasn't played this mode -- skip it
-            await upsertPlaylistEntry(fb, sourceUserId, playlist, { name: displayName, mmr });
+            await upsertIfChanged(fb, sourceUserId, playlist, { name: displayName, mmr });
         }
 
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
         const totalWins = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.wins ?? 0), 0);
         const totalMatches = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
-        await upsertPlaylistEntry(fb, sourceUserId, "wins", {
+        await upsertIfChanged(fb, sourceUserId, "wins", {
             name: displayName,
             wins: totalWins,
             matches: totalMatches,
         });
+    }
+
+    async function upsertIfChanged(fb, sourceUserId, playlist, fields) {
+        const stateKey = `${sourceUserId}_${playlist}`;
+        const newState = JSON.stringify(fields);
+
+        if (lastEntryState.get(stateKey) === newState) {
+            return; // nothing about this entry changed -- skip the write entirely
+        }
+
+        await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
+        lastEntryState.set(stateKey, newState);
+        saveEntryState();
     }
 
     // ---------- Network capture ----------
@@ -621,11 +644,6 @@
             }
         }
     };
-
-    // Note: we no longer hook WebSocket at all. Photon opens the same kind of
-    // "/game/" room connection for both party lobbies and real matches, so it
-    // can't reliably distinguish the two -- the PlayerDataManager console line
-    // above and the matchEnd fetch below are both real, unambiguous signals instead.
 
     // ---------- Boot ----------
 
