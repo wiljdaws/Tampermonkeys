@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      9.4
+// @version      9.5
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -200,6 +200,7 @@
                     transition: opacity 0.12s ease;
                 }
                 #rgHUD .rgHasTip { cursor: help; border-bottom: 1px dotted currentColor; }
+                #rgHUD .rgNoUnderline { border-bottom: none; }
             </style>
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:8px;" id="rgDragHandle">
                 <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🚀 Rocket Goal HUD</span>
@@ -388,6 +389,73 @@
         if (dot) dot.style.display = "none";
     }
 
+    // ---------- Win/loss streak tracking ----------
+    // The game only gives cumulative totals, not per-match results. But by
+    // comparing this update's totals to the last, we can infer each match's
+    // outcome as it happens and chain them into a streak. Overall (any mode).
+    // A positive count = win streak (🔥), negative = loss streak (❄️). Persisted
+    // in localStorage keyed to the session so it survives refreshes but resets
+    // with the session / on account change.
+
+    let streakData = null;
+    try { streakData = JSON.parse(localStorage.getItem("rgHudStreak") ?? "null"); } catch (e) {}
+
+    function saveStreak() {
+        try { localStorage.setItem("rgHudStreak", JSON.stringify(streakData)); } catch (e) {}
+    }
+
+    function resetStreak(accountId, totalWins, totalMatches) {
+        streakData = { accountId, streak: 0, lastWins: totalWins, lastMatches: totalMatches };
+        saveStreak();
+    }
+
+    function updateStreak(data) {
+        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+        const totalWins = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
+        const totalMatches = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
+
+        // First observation this session (or account change) -- establish a
+        // baseline without counting anything, since we don't know prior outcomes.
+        if (!streakData || streakData.accountId !== data.Id) {
+            resetStreak(data.Id, totalWins, totalMatches);
+            return;
+        }
+
+        const matchDiff = totalMatches - streakData.lastMatches;
+        const winDiff = totalWins - streakData.lastWins;
+
+        if (matchDiff <= 0) return; // no new matches since last check
+
+        // Resolve each newly-played match in order. Usually just one, but if two
+        // came in between updates we still tally them (all wins or all losses in
+        // that gap -- we can't know the interleaving, so treat the block by net).
+        const losses = matchDiff - winDiff;
+        if (winDiff > 0 && losses === 0) {
+            // pure win block
+            streakData.streak = streakData.streak > 0 ? streakData.streak + winDiff : winDiff;
+        } else if (losses > 0 && winDiff === 0) {
+            // pure loss block
+            streakData.streak = streakData.streak < 0 ? streakData.streak - losses : -losses;
+        } else {
+            // mixed block in one gap -- end on whichever was more recent is unknown,
+            // so settle on the net sign, magnitude 1 (conservative).
+            streakData.streak = winDiff >= losses ? 1 : -1;
+        }
+
+        streakData.lastWins = totalWins;
+        streakData.lastMatches = totalMatches;
+        saveStreak();
+    }
+
+    function streakBadge() {
+        if (!streakData || streakData.streak === 0) return "";
+        const n = streakData.streak;
+        if (n > 0) {
+            return `<span class="rgHasTip rgNoUnderline" data-tip="${n}-win streak this session" style="color:#ff7a00;font-weight:bold;">🔥x${n}</span>`;
+        }
+        return `<span class="rgHasTip rgNoUnderline" data-tip="${-n}-loss streak this session" style="color:#7ec8ff;font-weight:bold;">❄️x${-n}</span>`;
+    }
+
     // ---------- Session deltas ----------
 
     // A "session" is a continuous play run. It resets when: the account changes,
@@ -425,6 +493,12 @@
         };
         try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
         currentMomentumState = "neutral";
+
+        // New session -> fresh streak baseline (don't count pre-session matches).
+        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+        const tw = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
+        const tm = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
+        resetStreak(data.Id, tw, tm);
     }
 
     function deltaBadge(mode, current) {
@@ -475,10 +549,11 @@
     // title and the glow speed/intensity (NOT the user's chosen colors).
 
     const MOMENTUM_TIERS = {
+        flowState: 250,   // >= : "Flow State", the top tier -- fastest + most intense
         onFire:    150,   // >= : "ON FIRE", fast + bright glow
         heatingUp: 75,    // >= : "Heating Up", warmer/faster glow
-        cold:      -75,   // <= : "Ice Cold", slow + dim glow
-        shutEye:   -200,  // <= : easter egg
+        cold:      -20,   // <= : "Ice Cold", slow + dim glow
+        shutEye:   -75,   // <= : easter egg
     };
 
     // Rotating easter-egg messages so a rough session doesn't repeat. Ribbing, not mean.
@@ -510,6 +585,7 @@
     function computeMomentumState(net) {
         if (net <= MOMENTUM_TIERS.shutEye) return "shutEye";
         if (net <= MOMENTUM_TIERS.cold) return "cold";
+        if (net >= MOMENTUM_TIERS.flowState) return "flowState";
         if (net >= MOMENTUM_TIERS.onFire) return "onFire";
         if (net >= MOMENTUM_TIERS.heatingUp) return "heatingUp";
         return "neutral";
@@ -523,6 +599,7 @@
         switch (currentMomentumState) {
             case "shutEye":   return { text: shutEyeMessage, color: "#9aa5ad" };
             case "cold":      return { text: "❄️ Ice Cold", color: "#7ec8ff" };
+            case "flowState": return { text: "🏄 Flow State", color: "#b14bff" };
             case "onFire":    return { text: "🔥 ON FIRE", color: "#ff5b1f" };
             case "heatingUp": return { text: "🔥 Heating Up", color: "#ff9a3c" };
             default:          return { text: "🚀 Rocket Goal HUD", color: "#00bfff" };
@@ -543,6 +620,7 @@
         currentMomentumState = newState;
 
         switch (newState) {
+            case "flowState": momentumGlow = { speedMult: 3.0, intensity: 1.8 }; break;
             case "onFire":    momentumGlow = { speedMult: 2.2, intensity: 1.5 }; break;
             case "heatingUp": momentumGlow = { speedMult: 1.5, intensity: 1.2 }; break;
             case "cold":      momentumGlow = { speedMult: 0.5, intensity: 0.7 }; break;
@@ -554,7 +632,8 @@
         applyTitle();
 
         if (changed) {
-            if (newState === "onFire") showBanner("🔥 YOU'RE ON FIRE!", "#ff5b1f");
+            if (newState === "flowState") showBanner("🏄 FLOW STATE ACHIEVED!", "#b14bff");
+            else if (newState === "onFire") showBanner("🔥 YOU'RE ON FIRE!", "#ff5b1f");
             else if (newState === "shutEye") {
                 shutEyeMessage = SHUT_EYE_MESSAGES[Math.floor(Math.random() * SHUT_EYE_MESSAGES.length)];
                 showBanner(shutEyeMessage, "#9aa5ad");
@@ -633,6 +712,7 @@
         createHUD();
         lastKnownPlayerData = data;
         captureSessionStart(data);
+        updateStreak(data);
         updateMomentum();
 
         const ratingVal = mode => data.ModesGlicko?.[mode]?.displayRating;
@@ -672,8 +752,13 @@
 
             <hr style="border:none;border-top:1px solid #00bfff88;margin:10px 0;">
 
-            Wins: <span style="color:#00ff66">${totalWins}</span><br>
-            Matches Played: <span style="color:#00ff66">${totalMatches}</span>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    Wins: <span style="color:#00ff66">${totalWins}</span><br>
+                    Matches Played: <span style="color:#00ff66">${totalMatches}</span>
+                </div>
+                <div style="font-size:15px;">${streakBadge()}</div>
+            </div>
         `;
     }
 
