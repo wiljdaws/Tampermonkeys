@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      8.7
-// @description  Live stats HUD for Rocket Goal - ratings, win rates, auto leaderboard sync, hidden automatically during matches
+// @version      9.0
+// @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
 // @grant        none
@@ -17,6 +17,68 @@
 
     let hud;
 
+    // ---------- Settings (persisted in localStorage) ----------
+
+    const DEFAULT_SETTINGS = {
+        glowEnabled: true,
+        glowSpeed: 5,        // speed level 1-10, higher = faster
+        glowOpacity: 0.6,    // vibrancy
+        glowColor1: "#ff7a00",
+        glowColor2: "#00d4ff",
+    };
+
+    let settings = { ...DEFAULT_SETTINGS };
+    try {
+        settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("rgHudSettings") ?? "{}") };
+    } catch (e) {}
+
+    function saveSettings() {
+        try { localStorage.setItem("rgHudSettings", JSON.stringify(settings)); } catch (e) {}
+    }
+
+    function hexToRgba(hex, alpha) {
+        const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        if (!m) return hex;
+        return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})`;
+    }
+
+    // Regenerates the glow keyframes from current settings and applies them.
+    function applyGlowSettings() {
+        if (!hud) return;
+        let styleEl = document.getElementById("rgGlowStyle");
+        if (!styleEl) {
+            styleEl = document.createElement("style");
+            styleEl.id = "rgGlowStyle";
+            document.head.appendChild(styleEl);
+        }
+
+        if (!settings.glowEnabled) {
+            styleEl.textContent = "";
+            hud.style.animation = "none";
+            hud.style.boxShadow = "0 0 15px #00bfff55";
+            return;
+        }
+
+        const c1 = hexToRgba(settings.glowColor1, settings.glowOpacity);
+        const c2 = hexToRgba(settings.glowColor2, settings.glowOpacity);
+        const R = 8, BLUR = 14, SPREAD = 3;
+
+        let frames = "";
+        for (let i = 0; i <= 8; i++) {
+            const pct = (i * 12.5).toFixed(1);
+            const angle = (i / 8) * 2 * Math.PI;
+            const x = (Math.cos(angle) * R).toFixed(1);
+            const y = (Math.sin(angle) * R).toFixed(1);
+            frames += `${pct}% { box-shadow: ${x}px ${y}px ${BLUR}px ${SPREAD}px ${c1}, ${-x}px ${-y}px ${BLUR}px ${SPREAD}px ${c2}; }\n`;
+        }
+
+        styleEl.textContent = `@keyframes rgGlowSpin {\n${frames}}`;
+        // Speed level 1-10 maps to rotation duration 20s (crawl) down to ~1.5s (fast).
+        const duration = 22 - (settings.glowSpeed * 2.05);
+        hud.style.boxShadow = "";
+        hud.style.animation = `rgGlowSpin ${duration.toFixed(2)}s linear infinite`;
+    }
+
     // ---------- HUD ----------
 
     function createHUD() {
@@ -25,10 +87,20 @@
         hud = document.createElement("div");
         hud.id = "rgHUD";
 
+        // Restore last dragged position if saved
+        let pos = { top: "110px", left: "", right: "20px" };
+        try {
+            const saved = JSON.parse(localStorage.getItem("rgHudPos") ?? "null");
+            if (saved && saved.top && saved.left) {
+                pos = { top: saved.top, left: saved.left, right: "auto" };
+            }
+        } catch (e) {}
+
         hud.style.cssText = `
             position:fixed;
-            top:110px;
-            right:20px;
+            top:${pos.top};
+            ${pos.left ? `left:${pos.left};` : ""}
+            right:${pos.right};
             width:250px;
             background:rgba(18,18,22,.88);
             color:white;
@@ -37,7 +109,6 @@
             font-family:Arial,sans-serif;
             padding:10px;
             z-index:999999999;
-            animation: rgGlowSpin 5s linear infinite;
             user-select:none;
         `;
 
@@ -58,39 +129,73 @@
                     background: linear-gradient(180deg, #26405a, #16222c);
                     border-color: #00bfff;
                 }
-                #rgHUD .rgBtn:active {
-                    transform: scale(0.96);
+                #rgHUD .rgBtn:active { transform: scale(0.96); }
+                #rgHUD .rgIconBtn {
+                    background: none;
+                    border: 1px solid #00bfff88;
+                    color: #00bfff;
+                    border-radius: 4px;
+                    width: 22px;
+                    height: 22px;
+                    font-size: 13px;
+                    line-height: 1;
+                    cursor: pointer;
+                    flex-shrink: 0;
                 }
-                @keyframes rgGlowSpin {
-                    0%    { box-shadow: 8px 0px 14px 3px rgba(255,122,0,0.65), -8px 0px 14px 3px rgba(0,212,255,0.6); }
-                    12.5% { box-shadow: 5.7px 5.7px 14px 3px rgba(255,122,0,0.65), -5.7px -5.7px 14px 3px rgba(0,212,255,0.6); }
-                    25%   { box-shadow: 0px 8px 14px 3px rgba(255,122,0,0.65), 0px -8px 14px 3px rgba(0,212,255,0.6); }
-                    37.5% { box-shadow: -5.7px 5.7px 14px 3px rgba(255,122,0,0.65), 5.7px -5.7px 14px 3px rgba(0,212,255,0.6); }
-                    50%   { box-shadow: -8px 0px 14px 3px rgba(255,122,0,0.65), 8px 0px 14px 3px rgba(0,212,255,0.6); }
-                    62.5% { box-shadow: -5.7px -5.7px 14px 3px rgba(255,122,0,0.65), 5.7px 5.7px 14px 3px rgba(0,212,255,0.6); }
-                    75%   { box-shadow: 0px -8px 14px 3px rgba(255,122,0,0.65), 0px 8px 14px 3px rgba(0,212,255,0.6); }
-                    87.5% { box-shadow: 5.7px -5.7px 14px 3px rgba(255,122,0,0.65), -5.7px 5.7px 14px 3px rgba(0,212,255,0.6); }
-                    100%  { box-shadow: 8px 0px 14px 3px rgba(255,122,0,0.65), -8px 0px 14px 3px rgba(0,212,255,0.6); }
+                #rgHUD .rgSettingRow {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 6px;
+                    margin: 5px 0;
+                    font-size: 12px;
                 }
+                #rgHUD input[type="range"] { width: 110px; }
+                #rgHUD input[type="color"] {
+                    width: 30px; height: 20px; padding: 0; border: none; background: none; cursor: pointer;
+                }
+                #rgNameModal {
+                    position: absolute;
+                    inset: 0;
+                    background: rgba(10,14,18,0.96);
+                    border-radius: 10px;
+                    display: none;
+                    flex-direction: column;
+                    justify-content: center;
+                    gap: 8px;
+                    padding: 14px;
+                    z-index: 10;
+                }
+                #rgNameModal input[type="text"] {
+                    background: #10181f;
+                    border: 1px solid #00bfff88;
+                    border-radius: 6px;
+                    color: #d7f3ff;
+                    padding: 6px 8px;
+                    font-size: 13px;
+                    outline: none;
+                    user-select: text;
+                    -webkit-user-select: text;
+                }
+                #rgNameError { color: #ff6b6b; font-size: 11px; min-height: 14px; }
             </style>
-            <div style="display:flex;align-items:center;justify-content:space-between;cursor:move" id="rgDragHandle">
-                <span style="font-size:18px;font-weight:bold;color:#00bfff;">🚀 Rocket Goal HUD</span>
-                <button id="rgMinimize" title="Minimize" style="
-                    background:none;
-                    border:1px solid #00bfff88;
-                    color:#00bfff;
-                    border-radius:4px;
-                    width:22px;
-                    height:22px;
-                    font-size:14px;
-                    line-height:1;
-                    cursor:pointer;
-                    flex-shrink:0;
-                ">–</button>
+            <div style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:4px;" id="rgDragHandle">
+                <span style="font-size:16px;font-weight:bold;color:#00bfff;">🚀 Rocket Goal HUD</span>
+                <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
+                <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
+                <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
             </div>
             <hr>
             <div id="rgBody">
                 <div id="rgContent">Waiting for data...</div>
+                <div id="rgSettingsPanel" style="display:none;border-top:1px solid #00bfff44;margin-top:8px;padding-top:6px;">
+                    <div class="rgSettingRow"><span>Glow</span><input type="checkbox" id="rgSetGlow"></div>
+                    <div class="rgSettingRow"><span>Speed</span><input type="range" id="rgSetSpeed" min="1" max="10" step="0.5"></div>
+                    <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
+                    <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
+                    <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
+                    <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
+                </div>
                 <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
                     <button id="rgRename" class="rgBtn">✏️ Rename</button>
                     <button id="rgSub" class="rgBtn">📺 Sub</button>
@@ -98,10 +203,20 @@
                     <button id="rgReportBug" class="rgBtn">🐛 Bug</button>
                 </div>
             </div>
+            <div id="rgNameModal">
+                <div id="rgNameTitle" style="font-size:13px;font-weight:bold;color:#00bfff;"></div>
+                <input type="text" id="rgNameInput" maxlength="15">
+                <div id="rgNameError"></div>
+                <div style="display:flex;gap:6px;">
+                    <button id="rgNameSave" class="rgBtn">Save</button>
+                    <button id="rgNameCancel" class="rgBtn">Cancel</button>
+                </div>
+            </div>
         `;
 
         document.body.appendChild(hud);
         dragElement(hud, document.getElementById("rgDragHandle"));
+        applyGlowSettings();
 
         document.getElementById("rgMinimize").onclick = () => manualToggle();
         document.getElementById("rgSub").onclick = () => {
@@ -115,11 +230,45 @@
         };
         document.getElementById("rgRename").onclick = () => {
             if (!lastKnownPlayerData) {
-                alert("Play a match or log in first, then you can set your leaderboard name.");
+                showNameModal("Play a match or log in first!", "", false, () => {});
+                hideNameModalSoon();
                 return;
             }
             forceRenamePrompt = true;
             submitToLeaderboard(lastKnownPlayerData);
+        };
+
+        // Settings panel wiring
+        const panel = document.getElementById("rgSettingsPanel");
+        document.getElementById("rgSettingsBtn").onclick = () => {
+            panel.style.display = panel.style.display === "none" ? "block" : "none";
+        };
+
+        const setGlow = document.getElementById("rgSetGlow");
+        const setSpeed = document.getElementById("rgSetSpeed");
+        const setOpacity = document.getElementById("rgSetOpacity");
+        const setColor1 = document.getElementById("rgSetColor1");
+        const setColor2 = document.getElementById("rgSetColor2");
+
+        function syncSettingInputs() {
+            setGlow.checked = settings.glowEnabled;
+            setSpeed.value = settings.glowSpeed;
+            setOpacity.value = settings.glowOpacity;
+            setColor1.value = settings.glowColor1;
+            setColor2.value = settings.glowColor2;
+        }
+        syncSettingInputs();
+
+        setGlow.onchange = () => { settings.glowEnabled = setGlow.checked; saveSettings(); applyGlowSettings(); };
+        setSpeed.oninput = () => { settings.glowSpeed = parseFloat(setSpeed.value); saveSettings(); applyGlowSettings(); };
+        setOpacity.oninput = () => { settings.glowOpacity = parseFloat(setOpacity.value); saveSettings(); applyGlowSettings(); };
+        setColor1.oninput = () => { settings.glowColor1 = setColor1.value; saveSettings(); applyGlowSettings(); };
+        setColor2.oninput = () => { settings.glowColor2 = setColor2.value; saveSettings(); applyGlowSettings(); };
+        document.getElementById("rgSetReset").onclick = () => {
+            settings = { ...DEFAULT_SETTINGS };
+            saveSettings();
+            syncSettingInputs();
+            applyGlowSettings();
         };
     }
 
@@ -127,7 +276,7 @@
         let dx = 0, dy = 0;
 
         handle.onmousedown = e => {
-            if (e.target.closest("#rgMinimize")) return; // let the button handle its own click
+            if (e.target.closest(".rgIconBtn")) return; // buttons handle their own clicks
             e.preventDefault();
             dx = e.clientX;
             dy = e.clientY;
@@ -135,6 +284,12 @@
             document.onmouseup = () => {
                 document.onmousemove = null;
                 document.onmouseup = null;
+                try {
+                    localStorage.setItem("rgHudPos", JSON.stringify({
+                        top: el.style.top,
+                        left: el.style.left,
+                    }));
+                } catch (err) {}
             };
         };
 
@@ -163,11 +318,81 @@
         hud.style.display = visible ? "block" : "none";
     }
 
+    // ---------- Error indicator ----------
+
+    function showError(message) {
+        const dot = document.getElementById("rgErrDot");
+        if (dot) {
+            dot.style.display = "inline";
+            dot.title = message;
+        }
+    }
+
+    function clearError() {
+        const dot = document.getElementById("rgErrDot");
+        if (dot) dot.style.display = "none";
+    }
+
+    // ---------- Session deltas ----------
+
+    // First-seen ratings this session, keyed by account ID -- switching accounts
+    // in the same tab starts a fresh baseline instead of comparing one account's
+    // rating against another's (which produced huge bogus deltas).
+    let sessionStart = null;
+    try { sessionStart = JSON.parse(sessionStorage.getItem("rgHudSessionStart") ?? "null"); } catch (e) {}
+
+    function captureSessionStart(data) {
+        if (sessionStart && sessionStart.accountId === data.Id) return;
+        sessionStart = {
+            accountId: data.Id,
+            Competitive3v3: data.ModesGlicko?.Competitive3v3?.displayRating ?? null,
+            Competitive2v2: data.ModesGlicko?.Competitive2v2?.displayRating ?? null,
+            Competitive1v1: data.ModesGlicko?.Competitive1v1?.displayRating ?? null,
+            Casual: data.ModesGlicko?.Casual?.displayRating ?? null,
+        };
+        try { sessionStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
+    }
+
+    function deltaBadge(mode, current) {
+        if (!sessionStart || typeof current !== "number" || typeof sessionStart[mode] !== "number") return "";
+        const diff = current - sessionStart[mode];
+        if (diff === 0) return "";
+        const color = diff > 0 ? "#00ff66" : "#ff6b6b";
+        const sign = diff > 0 ? "+" : "";
+        return ` <span style="color:${color};font-size:10px;">(${sign}${diff})</span>`;
+    }
+
+    // ---------- Ranks ----------
+
+    // playlist -> rank number; refreshed after our own data changes.
+    const cachedRanks = new Map();
+
+    function rankBadge(playlist) {
+        const r = cachedRanks.get(playlist);
+        if (!r) return "";
+
+        // Tiered colors: gold for top 3, purple for top 10, cyan for top 25, gray beyond
+        let color;
+        if (r <= 3) color = "#ffd700";
+        else if (r <= 10) color = "#c77dff";
+        else if (r <= 25) color = "#00d4ff";
+        else color = "#9aa5ad";
+
+        return ` <span style="color:${color};font-size:10px;font-weight:bold;">#${r}</span>`;
+    }
+
+    // ---------- HUD content ----------
+
     function updateHUD(data) {
         createHUD();
         lastKnownPlayerData = data;
+        captureSessionStart(data);
 
-        const rating = mode => data.ModesGlicko?.[mode]?.displayRating ?? "—";
+        const ratingVal = mode => data.ModesGlicko?.[mode]?.displayRating;
+        const rating = mode => {
+            const v = ratingVal(mode);
+            return typeof v === "number" ? v : "—";
+        };
 
         const wr = mode => {
             const d = data.ModesData?.[mode];
@@ -181,12 +406,12 @@
 
         document.getElementById("rgContent").innerHTML = `
             <div style="display:flex;">
-                <div style="flex:1;">
+                <div style="flex:1.15;">
                     <b>🏆 Ratings</b><br>
-                    3v3: <span style="color:#00ff66">${rating("Competitive3v3")}</span><br>
-                    2v2: <span style="color:#00ff66">${rating("Competitive2v2")}</span><br>
-                    1v1: <span style="color:#00ff66">${rating("Competitive1v1")}</span><br>
-                    Casual: <span style="color:#00ff66">${rating("Casual")}</span>
+                    3v3: <span style="color:#00ff66">${rating("Competitive3v3")}</span>${rankBadge("3v3")}${deltaBadge("Competitive3v3", ratingVal("Competitive3v3"))}<br>
+                    2v2: <span style="color:#00ff66">${rating("Competitive2v2")}</span>${rankBadge("2v2")}${deltaBadge("Competitive2v2", ratingVal("Competitive2v2"))}<br>
+                    1v1: <span style="color:#00ff66">${rating("Competitive1v1")}</span>${rankBadge("1v1")}${deltaBadge("Competitive1v1", ratingVal("Competitive1v1"))}<br>
+                    Casual: <span style="color:#00ff66">${rating("Casual")}</span>${deltaBadge("Casual", ratingVal("Casual"))}
                 </div>
                 <div style="width:1px;background:#00bfff88;margin:0 8px;"></div>
                 <div style="flex:1;">
@@ -251,16 +476,17 @@
 
         try {
             const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc } =
+            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
 
-            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc };
+            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer };
             return firestoreReady;
         } catch (e) {
             console.error("[RG HUD] Firebase init failed:", e);
+            showError("Firebase failed to load");
             return null;
         }
     }
@@ -274,9 +500,8 @@
             .trim();
     }
 
-    // Not exhaustive, but catches a lot more than before. Word-boundary matching
-    // so it doesn't falsely flag innocent words that merely contain a bad word
-    // as a substring (e.g. "classic", "assassin", "Scunthorpe").
+    // Not exhaustive, but catches common attempts. Word-boundary matching so it
+    // doesn't falsely flag innocent words (e.g. "classic", "assassin").
     const PROFANITY_LIST = [
         // common curses
         "fuck", "fuk", "fvck", "fck", "shit", "sh1t", "shyt", "bitch", "b1tch",
@@ -300,29 +525,91 @@
         return PROFANITY_REGEX.test(text);
     }
 
-    // Skip brand-new accounts that haven't played anything yet -- otherwise a
-    // fresh login before a single match creates a clutter entry with 0 wins,
-    // 0 matches, and whatever name they happened to type at the prompt.
+    // Skip brand-new accounts that haven't played anything yet.
     function hasPlayedAnything(data) {
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
         return modes.some(m => (data.ModesData?.[m]?.matchesPlayed ?? 0) > 0);
     }
 
-    let forceRenamePrompt = false;
+    // ---------- In-HUD name modal (replaces window.prompt) ----------
 
-    // Serializes submitToLeaderboard per player, so if the game fires two
-    // login-ish events close together (happens on a fresh install/first run),
-    // the second call waits for the first to finish deciding on a display name
-    // (and saving it) instead of racing it and also concluding "no name yet" --
-    // which is what caused the rename prompt to pop up twice.
-    const submitLocks = new Map();
+    let nameModalResolve = null;
 
-    async function submitToLeaderboard(data) {
-        const lockKey = data.Id;
-        const previous = submitLocks.get(lockKey) || Promise.resolve();
-        const current = previous.then(() => submitToLeaderboardInner(data));
-        submitLocks.set(lockKey, current);
-        await current;
+    function showNameModal(title, defaultValue, isRealPrompt, resolve) {
+        createHUD();
+        const modal = document.getElementById("rgNameModal");
+        const input = document.getElementById("rgNameInput");
+        document.getElementById("rgNameTitle").textContent = title;
+        document.getElementById("rgNameError").textContent = "";
+        input.value = defaultValue;
+        modal.style.display = "flex";
+        nameModalResolve = isRealPrompt ? resolve : null;
+        if (isRealPrompt) {
+            setTimeout(() => input.focus(), 50);
+        }
+    }
+
+    function hideNameModal() {
+        const modal = document.getElementById("rgNameModal");
+        if (modal) modal.style.display = "none";
+        nameModalResolve = null;
+    }
+
+    function hideNameModalSoon() {
+        setTimeout(hideNameModal, 1600);
+    }
+
+    // Unity captures keyboard events at the window level (capture phase) and
+    // preventDefaults printable characters, which kills typing in our input
+    // before the event ever reaches it. Intercept one step earlier: while our
+    // input is focused, stop the game from seeing keys at all.
+    ["keydown", "keyup", "keypress"].forEach(type => {
+        window.addEventListener(type, e => {
+            const input = document.getElementById("rgNameInput");
+            if (input && document.activeElement === input) {
+                e.stopImmediatePropagation();
+                // Enter still saves
+                if (type === "keydown" && e.key === "Enter") {
+                    const saveBtn = document.getElementById("rgNameSave");
+                    if (saveBtn) saveBtn.click();
+                }
+            }
+        }, true); // capture phase -- runs before the game's own listeners
+    });
+
+    // Returns a promise that resolves with the chosen (validated) name.
+    function askDisplayName(suggestion, isRename) {
+        return new Promise(resolve => {
+            const title = isRename
+                ? "Enter your new leaderboard name:"
+                : "First stats submission! Pick your leaderboard name:";
+            showNameModal(title, suggestion, true, resolve);
+
+            const input = document.getElementById("rgNameInput");
+            const errEl = document.getElementById("rgNameError");
+
+            document.getElementById("rgNameSave").onclick = () => {
+                const entered = input.value.trim();
+                if (entered.length === 0 || entered.length > 15) {
+                    errEl.textContent = "Name must be 1-15 characters.";
+                    return;
+                }
+                if (containsProfanity(entered)) {
+                    errEl.textContent = "That name isn't allowed. Pick something else.";
+                    return;
+                }
+                hideNameModal();
+                resolve(entered);
+            };
+
+            document.getElementById("rgNameCancel").onclick = () => {
+                hideNameModal();
+                resolve(suggestion); // cancelled -> fall back to suggestion, don't nag
+            };
+
+            // Key handling (including Enter-to-save) happens in the window-level
+            // capture listener above, which runs before the game's own handlers.
+        });
     }
 
     // ---------- Write-reduction caches ----------
@@ -349,6 +636,20 @@
     const SYNC_COOLDOWN_MS = 20000;
     const lastSyncTime = new Map();
 
+    let forceRenamePrompt = false;
+
+    // Serializes submitToLeaderboard per player so near-simultaneous events
+    // can't race each other into double prompts or duplicate writes.
+    const submitLocks = new Map();
+
+    async function submitToLeaderboard(data) {
+        const lockKey = data.Id;
+        const previous = submitLocks.get(lockKey) || Promise.resolve();
+        const current = previous.then(() => submitToLeaderboardInner(data));
+        submitLocks.set(lockKey, current);
+        await current;
+    }
+
     async function submitToLeaderboardInner(data) {
         if (!hasPlayedAnything(data)) return; // brand new account, nothing to show yet
 
@@ -357,11 +658,8 @@
 
         const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, data.Id);
 
-        // Only ask for a display name once per player, ever -- unless the
-        // Rename button forces it, in which case we always re-ask (but still
-        // pre-fill their current name rather than starting from scratch).
-        // Cached in memory after the first lookup so repeat calls this session
-        // don't need a fresh Firestore read just to find the same answer again.
+        // Only ask for a display name once per player, ever -- unless Rename
+        // forces it. Cached in memory so repeat calls skip the Firestore read.
         let existingDisplayName = cachedDisplayNames.get(data.Id) ?? null;
 
         if (!existingDisplayName || forceRenamePrompt) {
@@ -371,7 +669,7 @@
                     existingDisplayName = existing.data().displayName;
                 }
             } catch (e) {
-                // couldn't read existing doc (e.g. rules deny read for some reason) -- fall through and ask anyway
+                // couldn't read existing doc -- fall through and ask
             }
         }
 
@@ -380,37 +678,8 @@
         forceRenamePrompt = false;
 
         if (!displayName) {
-            const MAX_DISPLAY_NAME_LENGTH = 15;
-            const suggestion = (existingDisplayName || cleanName(data.Nickname)).slice(0, MAX_DISPLAY_NAME_LENGTH) || "Player";
-            const promptLabel = isRename
-                ? `Enter your new leaderboard name (max ${MAX_DISPLAY_NAME_LENGTH} characters):`
-                : `First time submitting your stats! What name should show up on the leaderboard? (max ${MAX_DISPLAY_NAME_LENGTH} characters)`;
-
-            let entered = null;
-            while (true) {
-                entered = window.prompt(promptLabel, suggestion);
-
-                if (entered === null) {
-                    // they cancelled -- just use the suggestion, don't nag them
-                    entered = suggestion;
-                    break;
-                }
-
-                entered = entered.trim();
-
-                if (entered.length === 0 || entered.length > MAX_DISPLAY_NAME_LENGTH) {
-                    continue; // empty or too long, loop back and ask again
-                }
-
-                if (containsProfanity(entered)) {
-                    alert("That name isn't allowed on the leaderboard. Please pick something else.");
-                    continue;
-                }
-
-                break; // valid, stop asking
-            }
-
-            displayName = entered || suggestion;
+            const suggestion = (existingDisplayName || cleanName(data.Nickname)).slice(0, 15) || "Player";
+            displayName = await askDisplayName(suggestion, isRename);
         }
 
         cachedDisplayNames.set(data.Id, displayName);
@@ -435,8 +704,8 @@
             lastUpdated: new Date().toISOString(),
         };
 
-        // Skip the actual network writes if nothing worth syncing has changed,
-        // or if we synced very recently -- but never skip a deliberate Rename.
+        // Skip the actual network writes if nothing changed or synced very
+        // recently -- but never skip a deliberate Rename.
         const snapshotKey = JSON.stringify({
             displayName, ratings: payload.ratings, stats: payload.stats,
             xp: payload.xp, equippedSkinId: payload.equippedSkinId,
@@ -446,6 +715,8 @@
         const withinCooldown = (now - (lastSyncTime.get(data.Id) ?? 0)) < SYNC_COOLDOWN_MS;
 
         if (!isRename && (unchanged || withinCooldown)) {
+            // Still refresh ranks once per session even if the write is skipped.
+            refreshRanks(fb, data);
             return;
         }
 
@@ -455,26 +726,26 @@
         try {
             logWrite("script_submissions");
             await fb.setDoc(docRef, payload, { merge: true });
+            clearError();
         } catch (e) {
             console.error("[RG HUD] Leaderboard submission failed:", e);
+            showError("Stats submission failed -- check console");
         }
 
         await syncToRealLeaderboard(fb, data, displayName);
+        refreshRanks(fb, data, true);
     }
 
     const REAL_LEADERBOARD_COLLECTION = "leaderboard";
 
     // Serializes calls per player+mode so two near-simultaneous writes for the
-    // same key can never race each other into creating two documents -- the
-    // second call always waits for the first to fully finish before it even
-    // starts its own "does this already exist" check.
+    // same key can never race each other into creating two documents.
     const upsertLocks = new Map();
 
     // Finds this player's entry for one playlist by sourceUserId and updates it,
-    // whether that entry was created by the script OR is a pre-existing
-    // manually-curated one that Pal tagged with a matching sourceUserId field.
-    // Either way, merge:true means flag/icons/glowColor/glowStrength Pal set
-    // by hand are never touched. If nothing matches, creates a fresh entry.
+    // whether created by the script OR a pre-existing manually-curated entry Pal
+    // tagged with a matching sourceUserId. merge:true means hand-set fields like
+    // flag/icons/glowColor are never touched. Creates a fresh entry if none match.
     async function upsertPlaylistEntry(fb, sourceUserId, playlist, fields) {
         const lockKey = `${sourceUserId}_${playlist}`;
         const previous = upsertLocks.get(lockKey) || Promise.resolve();
@@ -485,12 +756,9 @@
 
             try {
                 if (cachedId) {
-                    // Already know which doc this is from earlier this session --
-                    // skip the query/read entirely and write straight to it.
-                    // If Pal happened to delete it since, setDoc just recreates
-                    // it fresh at that same ID, so this is safe either way.
                     logWrite(`leaderboard/${playlist} (cached id)`);
                     await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, cachedId), fields, { merge: true });
+                    clearError();
                     return;
                 }
 
@@ -521,8 +789,10 @@
                     });
                     knownDocIds.set(cacheKey, newDoc.id);
                 }
+                clearError();
             } catch (e) {
                 console.error(`[RG HUD] Real leaderboard sync failed for ${playlist}:`, e);
+                showError(`Leaderboard sync failed for ${playlist} -- check console`);
             }
         });
 
@@ -584,9 +854,55 @@
         saveEntryState();
     }
 
+    // ---------- Rank lookup ----------
+    // Uses Firestore count aggregation: "how many entries in this playlist have
+    // a higher mmr than mine" is a single cheap server-side count, not a full
+    // collection download. Refreshed after our own data changes (force=true),
+    // plus once per session as a baseline; cached in between.
+
+    let ranksFetchedThisSession = false;
+    let lastRankRefresh = 0;
+    const RANK_REFRESH_COOLDOWN_MS = 60000;
+
+    async function refreshRanks(fb, data, force = false) {
+        const now = Date.now();
+        if (!force && ranksFetchedThisSession) return;
+        if (now - lastRankRefresh < RANK_REFRESH_COOLDOWN_MS && ranksFetchedThisSession) return;
+
+        const modeToPlaylist = {
+            Competitive1v1: "1v1",
+            Competitive2v2: "2v2",
+            Competitive3v3: "3v3",
+        };
+
+        try {
+            for (const [mode, playlist] of Object.entries(modeToPlaylist)) {
+                const mmr = data.ModesGlicko?.[mode]?.displayRating;
+                if (typeof mmr !== "number") continue;
+
+                const q = fb.query(
+                    fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                    fb.where("playlist", "==", playlist),
+                    fb.where("mmr", ">", mmr)
+                );
+                const snapshot = await fb.getCountFromServer(q);
+                cachedRanks.set(playlist, snapshot.data().count + 1);
+            }
+
+            ranksFetchedThisSession = true;
+            lastRankRefresh = now;
+
+            // Re-render with fresh ranks
+            if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
+        } catch (e) {
+            // Rank display is nice-to-have -- never let it break anything else.
+            console.warn("[RG HUD] Rank lookup failed:", e);
+        }
+    }
+
     // ---------- Network capture ----------
 
-    // Track the currently equipped skin so partial-response endpoints (equipSkin) can update the HUD
+    // Track the currently equipped skin so partial-response endpoints (equipSkin) can update it
     let lastKnownPlayerData = null;
 
     const API_HOST_FRAGMENT = "us-central1-rocketball-23c12.cloudfunctions.net";
@@ -608,7 +924,6 @@
                 tryParseAndUpdate(text);
             } else if (url.includes("/v0304_player/equipSkin")) {
                 // response is just a bare quoted skin id, e.g. "body.2"
-                // No longer displayed in the HUD, but still tracked in case it's needed later.
                 try {
                     const skinId = JSON.parse(text);
                     if (lastKnownPlayerData) {
@@ -631,14 +946,14 @@
                 tryParseAndUpdate(json);
             }
 
-            // This only fires when a real match with real teams is forming --
-            // it never fires for an empty party or just sitting in a lobby.
+            // Only fires when a real match with real teams is forming --
+            // never for an empty party or just sitting in a lobby.
             if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
                 setAutoVisible(false);
             }
 
-            // Being back in a party/lobby room means you're not mid-match anymore.
-            // This catches early-quit cases where matchEnd never fires.
+            // Back in a party/lobby room means not mid-match anymore.
+            // Catches early-quit cases where matchEnd never fires.
             if (arg.includes("OnJoinedRoom Party")) {
                 setAutoVisible(true);
             }
