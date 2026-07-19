@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      9.5
+// @version      9.6
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -903,24 +903,45 @@
                 // Enter still saves
                 if (type === "keydown" && e.key === "Enter") {
                     const saveBtn = document.getElementById("rgNameSave");
-                    if (saveBtn) saveBtn.click();
+                    if (saveBtn && !saveBtn.disabled) saveBtn.click();
                 }
             }
         }, true); // capture phase -- runs before the game's own listeners
     });
 
     // Returns a promise that resolves with the chosen (validated) name.
-    function askDisplayName(suggestion, isRename) {
+    // Checks whether a display name is already used by a DIFFERENT player.
+    // Best-effort: a Firestore read against existing leaderboard entries. Not
+    // race-proof (two people picking the same name simultaneously could both
+    // pass), but catches every normal collision.
+    async function isNameTaken(fb, name, ownSourceUserId) {
+        try {
+            const q = fb.query(
+                fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                fb.where("name", "==", name)
+            );
+            const snap = await fb.getDocs(q);
+            // Taken only if some matching entry belongs to a different player.
+            return snap.docs.some(d => d.data().sourceUserId !== ownSourceUserId);
+        } catch (e) {
+            // If the check itself fails, don't block the user -- let it through.
+            console.warn("[RG HUD] Name availability check failed:", e);
+            return false;
+        }
+    }
+
+    function askDisplayName(suggestion, isRename, fb, ownSourceUserId) {
         return new Promise(resolve => {
             const title = isRename
                 ? "Enter your new leaderboard name:"
-                : "First stats submission! Pick your leaderboard name:";
+                : "Pick your leaderboard name to appear on the board:";
             showNameModal(title, suggestion, true, resolve);
 
             const input = document.getElementById("rgNameInput");
             const errEl = document.getElementById("rgNameError");
+            const saveBtn = document.getElementById("rgNameSave");
 
-            document.getElementById("rgNameSave").onclick = () => {
+            saveBtn.onclick = async () => {
                 const entered = input.value.trim();
                 if (entered.length === 0 || entered.length > 15) {
                     errEl.textContent = "Name must be 1-15 characters.";
@@ -930,13 +951,32 @@
                     errEl.textContent = "That name isn't allowed. Pick something else.";
                     return;
                 }
+                if (entered.toLowerCase() === "player") {
+                    errEl.textContent = "\"Player\" is reserved. Pick a real name.";
+                    return;
+                }
+
+                // Name-taken check (async). Disable Save while checking.
+                errEl.style.color = "#7ec8ff";
+                errEl.textContent = "Checking availability...";
+                saveBtn.disabled = true;
+                const taken = fb ? await isNameTaken(fb, entered, ownSourceUserId) : false;
+                saveBtn.disabled = false;
+                errEl.style.color = "#ff6b6b";
+
+                if (taken) {
+                    errEl.textContent = "That name is already taken. Pick another.";
+                    return;
+                }
+
+                errEl.textContent = "";
                 hideNameModal();
                 resolve(entered);
             };
 
             document.getElementById("rgNameCancel").onclick = () => {
                 hideNameModal();
-                resolve(suggestion); // cancelled -> fall back to suggestion, don't nag
+                resolve(null); // no name chosen -> nothing gets submitted this time
             };
 
             // Key handling (including Enter-to-save) happens in the window-level
@@ -1010,8 +1050,13 @@
         forceRenamePrompt = false;
 
         if (!displayName) {
-            const suggestion = (existingDisplayName || cleanName(data.Nickname)).slice(0, 15) || "Player";
-            displayName = await askDisplayName(suggestion, isRename);
+            // No saved name yet -- prompt with a suggestion, but a real name is
+            // required. If they cancel without entering one, we submit nothing
+            // and will ask again next time (no gibberish/default on the board).
+            const cleaned = cleanName(data.Nickname).slice(0, 15);
+            const suggestion = (cleaned && cleaned.toLowerCase() !== "player") ? cleaned : "";
+            displayName = await askDisplayName(suggestion, isRename, fb, data.Id);
+            if (!displayName) return; // cancelled without picking a name -- skip this submission
         }
 
         cachedDisplayNames.set(data.Id, displayName);
