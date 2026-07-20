@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      9.7
+// @version      10.0
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -145,6 +145,11 @@
                     line-height: 1;
                     cursor: pointer;
                     flex-shrink: 0;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 0;
+                    text-align: center;
                 }
                 #rgHUD .rgSettingRow {
                     display: flex;
@@ -182,6 +187,40 @@
                     -webkit-user-select: text;
                 }
                 #rgNameError { color: #ff6b6b; font-size: 11px; min-height: 14px; }
+                #rgToast {
+                    position: absolute;
+                    left: 10px; right: 10px; bottom: 10px;
+                    background: linear-gradient(180deg, #1c2b3a, #0d141b);
+                    border: 1px solid #00bfff;
+                    border-radius: 8px;
+                    color: #d7f3ff;
+                    font-size: 12px;
+                    text-align: center;
+                    padding: 8px 10px;
+                    opacity: 0;
+                    transition: opacity 0.2s ease, transform 0.2s ease;
+                    transform: translateY(8px);
+                    pointer-events: none;
+                    z-index: 20;
+                }
+                #rgDialog {
+                    position: absolute;
+                    inset: 0;
+                    background: rgba(10,14,18,0.96);
+                    border-radius: 10px;
+                    display: none;
+                    flex-direction: column;
+                    justify-content: center;
+                    gap: 8px;
+                    padding: 14px;
+                    z-index: 30;
+                }
+                #rgDialog .rgDlgMsg { font-size: 13px; color: #d7f3ff; }
+                #rgDialog input[type="text"] {
+                    background: #10181f; border: 1px solid #00bfff88; border-radius: 6px;
+                    color: #d7f3ff; padding: 6px 8px; font-size: 13px; outline: none;
+                    user-select: text; -webkit-user-select: text;
+                }
                 #rgTooltip {
                     position: fixed;
                     z-index: 9999999999;
@@ -206,21 +245,25 @@
                 <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🚀 Rocket Goal HUD</span>
                 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
                     <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
+                    <button id="rgClanBtn" class="rgIconBtn" title="Clans">🛡️</button>
                     <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
                     <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
                 </div>
             </div>
             <hr>
             <div id="rgBody">
-                <div id="rgContent">Waiting for data...</div>
-                <div id="rgSettingsPanel" style="display:none;border-top:1px solid #00bfff44;margin-top:8px;padding-top:6px;">
-                    <div class="rgSettingRow"><span>Glow</span><input type="checkbox" id="rgSetGlow"></div>
-                    <div class="rgSettingRow"><span>Speed</span><input type="range" id="rgSetSpeed" min="1" max="10" step="0.5"></div>
-                    <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
-                    <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
-                    <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
-                    <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
+                <div id="rgStatsView">
+                    <div id="rgContent">Waiting for data...</div>
+                    <div id="rgSettingsPanel" style="display:none;border-top:1px solid #00bfff44;margin-top:8px;padding-top:6px;">
+                        <div class="rgSettingRow"><span>Glow</span><input type="checkbox" id="rgSetGlow"></div>
+                        <div class="rgSettingRow"><span>Speed</span><input type="range" id="rgSetSpeed" min="1" max="10" step="0.5"></div>
+                        <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
+                        <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
+                        <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
+                        <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
+                    </div>
                 </div>
+                <div id="rgClanView" style="display:none;">Loading clans...</div>
                 <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
                     <button id="rgRename" class="rgBtn">✏️ Rename</button>
                     <button id="rgSub" class="rgBtn">📺 Sub</button>
@@ -237,6 +280,15 @@
                     <button id="rgNameCancel" class="rgBtn">Cancel</button>
                 </div>
             </div>
+            <div id="rgDialog">
+                <div id="rgDialogMsg" class="rgDlgMsg"></div>
+                <input type="text" id="rgDialogInput" style="display:none;" maxlength="200">
+                <div style="display:flex;gap:6px;">
+                    <button id="rgDialogOk" class="rgBtn">OK</button>
+                    <button id="rgDialogCancel" class="rgBtn">Cancel</button>
+                </div>
+            </div>
+            <div id="rgToast"></div>
         `;
 
         document.body.appendChild(hud);
@@ -292,6 +344,21 @@
             }
             forceRenamePrompt = true;
             submitToLeaderboard(lastKnownPlayerData);
+        };
+
+        // Clan view toggle (shield icon) -- swaps stats view for clan view
+        const statsView = document.getElementById("rgStatsView");
+        const clanView = document.getElementById("rgClanView");
+        document.getElementById("rgClanBtn").onclick = () => {
+            const showingClan = clanView.style.display !== "none";
+            if (showingClan) {
+                clanView.style.display = "none";
+                statsView.style.display = "block";
+            } else {
+                statsView.style.display = "none";
+                clanView.style.display = "block";
+                renderClanView();
+            }
         };
 
         // Settings panel wiring
@@ -499,6 +566,17 @@
         const tw = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
         const tm = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
         resetStreak(data.Id, tw, tm);
+
+        // Account/session changed -> invalidate clan cache so it reloads for the
+        // new account, and refresh the clan view if it's currently open.
+        clanLoaded = false;
+        clanLoadedForAccount = null;
+        myClan = null;
+        checkClanNotices(); // show any pending notice (e.g. kicked) for this account
+        const clanView = document.getElementById("rgClanView");
+        if (clanView && clanView.style.display !== "none") {
+            renderClanView();
+        }
     }
 
     function deltaBadge(mode, current) {
@@ -808,13 +886,13 @@
 
         try {
             const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit } =
+            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
 
-            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit };
+            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc };
             return firestoreReady;
         } catch (e) {
             console.error("[RG HUD] Firebase init failed:", e);
@@ -857,9 +935,9 @@
         return PROFANITY_REGEX.test(text);
     }
 
-    // Rejects any name containing emoji / pictographic symbols. Uses Unicode
-    // property escapes (supported in all current browsers).
-    const EMOJI_REGEX = /\p{Extended_Pictographic}|\p{Emoji_Presentation}|[\u{1F1E6}-\u{1F1FF}]/u;
+    // Rejects any name containing emoji / pictographic symbols, including all
+    // flag forms (regional-indicator pairs and tag-sequence subdivision flags).
+    const EMOJI_REGEX = /\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Regional_Indicator}|[\u{1F1E6}-\u{1F1FF}\u{1F3F3}\u{1F3F4}\u{E0020}-\u{E007F}\u{200D}]/u;
     function containsEmoji(text) {
         return EMOJI_REGEX.test(text);
     }
@@ -902,13 +980,18 @@
     // preventDefaults printable characters, which kills typing in our input
     // before the event ever reaches it. Intercept one step earlier: while our
     // input is focused, stop the game from seeing keys at all.
+    // input is focused, stop the game from seeing keys at all. Applies to ANY
+    // text input inside the HUD (name modal, clan create form, etc.).
     ["keydown", "keyup", "keypress"].forEach(type => {
         window.addEventListener(type, e => {
-            const input = document.getElementById("rgNameInput");
-            if (input && document.activeElement === input) {
+            const active = document.activeElement;
+            const inHud = active && hud && hud.contains(active)
+                && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")
+                && active.type !== "checkbox" && active.type !== "range" && active.type !== "color";
+            if (inHud) {
                 e.stopImmediatePropagation();
-                // Enter still saves
-                if (type === "keydown" && e.key === "Enter") {
+                // Enter in the name modal saves it
+                if (type === "keydown" && e.key === "Enter" && active.id === "rgNameInput") {
                     const saveBtn = document.getElementById("rgNameSave");
                     if (saveBtn && !saveBtn.disabled) saveBtn.click();
                 }
@@ -1206,6 +1289,12 @@
 
     async function syncToRealLeaderboard(fb, data, displayName) {
         const sourceUserId = data.Id;
+
+        // Determine clan tag (if any) to prefix on the leaderboard name, and
+        // opportunistically keep the clan's stored MMR for this member current.
+        const clanInfo = await updateMyClanMMR(fb, data);
+        const shownName = clanInfo?.tag ? `[${clanInfo.tag}]${displayName}` : displayName;
+
         const modeToPlaylist = {
             Competitive1v1: "1v1",
             Competitive2v2: "2v2",
@@ -1215,7 +1304,7 @@
         for (const [mode, playlist] of Object.entries(modeToPlaylist)) {
             const mmr = data.ModesGlicko?.[mode]?.displayRating;
             if (typeof mmr !== "number") continue; // player hasn't played this mode -- skip it
-            await upsertIfChanged(fb, sourceUserId, playlist, { name: displayName, mmr });
+            await upsertIfChanged(fb, sourceUserId, playlist, { name: shownName, mmr });
         }
 
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
@@ -1223,10 +1312,46 @@
         const totalMatches = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
         await upsertIfChanged(fb, sourceUserId, "wins", {
-            name: displayName,
+            name: shownName,
             wins: totalWins,
             matches: totalMatches,
         });
+    }
+
+    // If this player is in a clan, refresh their stored ranked MMR within the
+    // clan's members array and recompute the clan total (one extra write, only
+    // for clan members, piggybacked on the match sync). Returns { tag } if in a
+    // clan so the caller can prefix the leaderboard name. Best-effort.
+    async function updateMyClanMMR(fb, data) {
+        const uid = data.Id;
+        try {
+            // Use cached directory to find my clan cheaply (no extra read if warm).
+            if (!clanLoaded || clanLoadedForAccount !== uid) await loadClanData(true);
+            if (!myClan) return null;
+
+            const g = data.ModesGlicko;
+            const rankedModes = ["Competitive3v3", "Competitive2v2", "Competitive1v1"];
+            const myMMR = rankedModes.reduce((s, m) =>
+                s + (typeof g?.[m]?.displayRating === "number" ? g[m].displayRating : 0), 0);
+
+            const members = (myClan.members ?? []).map(m =>
+                m.userId === uid ? { ...m, mmr: myMMR } : m
+            );
+            const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
+
+            // Only write if my stored MMR actually changed, to avoid needless writes.
+            const prevMine = (myClan.members ?? []).find(m => m.userId === uid)?.mmr;
+            if (prevMine !== myMMR) {
+                await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members, totalMMR }, { merge: true });
+                myClan.members = members;
+                myClan.totalMMR = totalMMR;
+                await refreshDirectory(fb);
+            }
+            return { tag: myClan.tag ?? "" };
+        } catch (e) {
+            console.warn("[RG HUD] Clan MMR update failed:", e);
+            return null;
+        }
     }
 
     async function upsertIfChanged(fb, sourceUserId, playlist, fields) {
@@ -1374,7 +1499,601 @@
         }
     };
 
-    // ---------- Boot ----------
+    // ---------- Clans (Stage 1: create / browse / request / approve) ----------
+
+    let myClan = null;          // the clan doc this player belongs to, or null
+    let clanDirectory = [];     // lightweight list of all clans for browsing
+    let clanLoaded = false;
+    let clanLoadedForAccount = null; // which account the above was loaded for
+
+    const CLAN_MAX_MEMBERS = 5;
+
+    function myUserId() { return lastKnownPlayerData?.Id ?? null; }
+    function myName() {
+        return cachedDisplayNames.get(myUserId()) || cleanName(lastKnownPlayerData?.Nickname) || "Unknown";
+    }
+
+    // Roles that can approve/reject join requests.
+    function canManageRequests(role) {
+        return role === "leader" || role === "coleader" || role === "elder";
+    }
+
+    async function loadClanData(force = false) {
+        const uid = myUserId();
+        if (!uid) return;
+
+        // Account changed since last load -> force a fresh load and clear stale state.
+        if (clanLoadedForAccount !== uid) {
+            force = true;
+            myClan = null;
+            clanDirectory = [];
+            clanLoaded = false;
+        }
+
+        if (clanLoaded && !force) return;
+        const fb = await initFirebase();
+        if (!fb) return;
+
+        try {
+            // Directory: one read for the browse list.
+            const dirSnap = await fb.getDoc(fb.doc(fb.db, "clans_directory", "index"));
+            clanDirectory = dirSnap.exists() ? (dirSnap.data().clans ?? []) : [];
+
+            // Find my clan (if any) by scanning the directory for my membership.
+            myClan = null;
+            const mine = clanDirectory.find(c => (c.memberIds ?? []).includes(uid));
+            if (mine) {
+                const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", mine.id));
+                if (clanSnap.exists()) myClan = { id: mine.id, ...clanSnap.data() };
+            }
+            clanLoaded = true;
+            clanLoadedForAccount = uid;
+        } catch (e) {
+            console.warn("[RG HUD] Clan load failed:", e);
+        }
+    }
+
+    // Rebuild the directory doc from scratch off current clans -- simple and
+    // safe for a small number of clans. Called after any membership change.
+    async function refreshDirectory(fb) {
+        try {
+            const snap = await fb.getDocs(fb.collection(fb.db, "clans"));
+            const clans = [];
+            snap.forEach(docSnap => {
+                const d = docSnap.data();
+                clans.push({
+                    id: docSnap.id,
+                    name: d.name,
+                    tag: d.tag ?? "",
+                    memberCount: (d.members ?? []).length,
+                    memberIds: (d.members ?? []).map(m => m.userId),
+                    totalMMR: d.totalMMR ?? 0,
+                });
+            });
+            await fb.setDoc(fb.doc(fb.db, "clans_directory", "index"), { clans });
+            clanDirectory = clans;
+        } catch (e) {
+            console.warn("[RG HUD] Directory refresh failed:", e);
+        }
+    }
+
+    // Sum of this player's 3v3+2v2+1v1 displayRatings (no casual).
+    function myRankedMMR() {
+        const g = lastKnownPlayerData?.ModesGlicko;
+        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1"];
+        return modes.reduce((s, m) => s + (typeof g?.[m]?.displayRating === "number" ? g[m].displayRating : 0), 0);
+    }
+
+    async function createClan(name, tag) {
+        const fb = await initFirebase();
+        if (!fb) return;
+        const uid = myUserId();
+        if (!uid) return;
+
+        // Uniqueness check against directory (best-effort).
+        if (clanDirectory.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+            showToast("A clan with that name already exists.");
+            return;
+        }
+
+        try {
+            const clan = {
+                name,
+                tag: tag || "",
+                leaderId: uid,
+                members: [{ userId: uid, name: myName(), role: "leader" }],
+                joinRequests: [],
+                totalMMR: myRankedMMR(),
+                createdAt: new Date().toISOString(),
+            };
+            const ref = await fb.addDoc(fb.collection(fb.db, "clans"), clan);
+            myClan = { id: ref.id, ...clan };
+            await refreshDirectory(fb);
+            renderClanView();
+        } catch (e) {
+            console.error("[RG HUD] Create clan failed:", e);
+            showToast("Couldn't create clan (see console).");
+        }
+    }
+
+    async function requestJoin(clanId) {
+        const fb = await initFirebase();
+        if (!fb) return;
+        const uid = myUserId();
+        if (!uid) return;
+
+        try {
+            const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", clanId));
+            if (!clanSnap.exists()) return;
+            const clan = clanSnap.data();
+
+            if ((clan.members ?? []).length >= CLAN_MAX_MEMBERS) {
+                showToast("That clan is full.");
+                return;
+            }
+            if ((clan.joinRequests ?? []).some(r => r.userId === uid)) {
+                showToast("You already requested to join.");
+                return;
+            }
+            const joinRequests = [...(clan.joinRequests ?? []), { userId: uid, name: myName() }];
+            await fb.setDoc(fb.doc(fb.db, "clans", clanId), { joinRequests }, { merge: true });
+            showToast("Join request sent!");
+            renderClanView();
+        } catch (e) {
+            console.error("[RG HUD] Request join failed:", e);
+        }
+    }
+
+    async function approveRequest(userId, approve) {
+        const fb = await initFirebase();
+        if (!fb || !myClan) return;
+
+        try {
+            const req = (myClan.joinRequests ?? []).find(r => r.userId === userId);
+            const joinRequests = (myClan.joinRequests ?? []).filter(r => r.userId !== userId);
+            let members = myClan.members ?? [];
+
+            if (approve && req && members.length < CLAN_MAX_MEMBERS
+                && !members.some(m => m.userId === userId)) {
+                members = [...members, { userId: req.userId, name: req.name, role: "member" }];
+            }
+
+            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { joinRequests, members }, { merge: true });
+            myClan.joinRequests = joinRequests;
+            myClan.members = members;
+            await refreshDirectory(fb);
+            renderClanView();
+        } catch (e) {
+            console.error("[RG HUD] Approve request failed:", e);
+        }
+    }
+
+    async function kickMember(userId, message) {
+        const fb = await initFirebase();
+        if (!fb || !myClan) return;
+        const myUid = myUserId();
+
+        try {
+            const target = (myClan.members ?? []).find(m => m.userId === userId);
+            if (!target || target.role === "leader") return; // never kick the leader
+            // Only leader/coleader may kick (defense in depth beyond the UI gating).
+            const me = (myClan.members ?? []).find(m => m.userId === myUid);
+            if (!me || (me.role !== "leader" && me.role !== "coleader")) return;
+
+            const members = (myClan.members ?? []).filter(m => m.userId !== userId);
+            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
+            myClan.members = members;
+
+            // Leave a one-time notice the kicked player's HUD will show + clear.
+            const notice = {
+                type: "kicked",
+                clanName: myClan.name,
+                message: (message ?? "").slice(0, 200),
+                at: new Date().toISOString(),
+            };
+            await fb.setDoc(fb.doc(fb.db, "clan_notices", userId), notice);
+
+            await refreshDirectory(fb);
+            renderClanView();
+        } catch (e) {
+            console.error("[RG HUD] Kick failed:", e);
+            showToast("Couldn't kick member (see console).");
+        }
+    }
+
+    // On load, check if this player has a pending clan notice (e.g. was kicked)
+    // and show it once, then clear it.
+    async function checkClanNotices() {
+        const fb = await initFirebase();
+        if (!fb) return;
+        const uid = myUserId();
+        if (!uid) return;
+        try {
+            const ref = fb.doc(fb.db, "clan_notices", uid);
+            const snap = await fb.getDoc(ref);
+            if (snap.exists()) {
+                const n = snap.data();
+                if (n.type === "kicked") {
+                    const extra = n.message ? `  Message: "${n.message}"` : "";
+                    showDialog({
+                        message: `You were removed from clan "${n.clanName}".${extra}`,
+                        okLabel: "OK",
+                        cancelLabel: "Dismiss",
+                    });
+                }
+                await fb.deleteDoc(ref);
+            }
+        } catch (e) {
+            // notices are best-effort
+        }
+    }
+
+    // ---------- Role management (Stage 2) ----------
+    // Hierarchy: leader > coleader > elder > member. Clash-style: multiple
+    // coleaders/elders allowed. Permission gating (who can change whom) is
+    // enforced here in-script (honor system).
+
+    const ROLE_RANK = { leader: 3, coleader: 2, elder: 1, member: 0 };
+
+    // Can `actorRole` set `targetCurrentRole` to `newRole`?
+    function canSetRole(actorRole, targetCurrentRole, newRole) {
+        const a = ROLE_RANK[actorRole] ?? -1;
+        // Only leader/coleader manage roles at all.
+        if (a < ROLE_RANK.coleader) return false;
+        // Can't touch someone at or above your own rank (coleader can't touch coleader/leader).
+        if ((ROLE_RANK[targetCurrentRole] ?? 0) >= a) return false;
+        // Can't promote someone to at/above your own rank.
+        if ((ROLE_RANK[newRole] ?? 0) >= a) return false;
+        // Nobody assigns "leader" via this path -- that's transferLeadership only.
+        if (newRole === "leader") return false;
+        return true;
+    }
+
+    async function setMemberRole(userId, newRole) {
+        const fb = await initFirebase();
+        if (!fb || !myClan) return;
+        const myUid = myUserId();
+        const me = (myClan.members ?? []).find(m => m.userId === myUid);
+        const target = (myClan.members ?? []).find(m => m.userId === userId);
+        if (!me || !target) return;
+
+        if (!canSetRole(me.role, target.role, newRole)) {
+            showToast("You can't change that member's role.");
+            return;
+        }
+
+        try {
+            const members = (myClan.members ?? []).map(m =>
+                m.userId === userId ? { ...m, role: newRole } : m
+            );
+            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
+            myClan.members = members;
+            await refreshDirectory(fb);
+            renderClanView();
+        } catch (e) {
+            console.error("[RG HUD] Set role failed:", e);
+            showToast("Couldn't change role (see console).");
+        }
+    }
+
+    async function transferLeadership(userId) {
+        const fb = await initFirebase();
+        if (!fb || !myClan) return;
+        const myUid = myUserId();
+        if (myClan.leaderId !== myUid) return; // only the leader can transfer
+
+        try {
+            const members = (myClan.members ?? []).map(m => {
+                if (m.userId === userId) return { ...m, role: "leader" };
+                if (m.userId === myUid) return { ...m, role: "coleader" }; // old leader -> coleader
+                return m;
+            });
+            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members, leaderId: userId }, { merge: true });
+            myClan.members = members;
+            myClan.leaderId = userId;
+            await refreshDirectory(fb);
+            renderClanView();
+        } catch (e) {
+            console.error("[RG HUD] Transfer leadership failed:", e);
+            showToast("Couldn't transfer leadership (see console).");
+        }
+    }
+
+    async function leaveClan() {
+        const fb = await initFirebase();
+        if (!fb || !myClan) return;
+        const uid = myUserId();
+
+        try {
+            const isLeader = myClan.leaderId === uid;
+            if (isLeader && (myClan.members ?? []).length > 1) {
+                showToast("Transfer leadership or remove others before leaving.");
+                return;
+            }
+            if (isLeader) {
+                // Last member & leader -> disband.
+                await fb.deleteDoc(fb.doc(fb.db, "clans", myClan.id));
+            } else {
+                const members = (myClan.members ?? []).filter(m => m.userId !== uid);
+                await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
+            }
+            myClan = null;
+            await refreshDirectory(fb);
+            renderClanView();
+        } catch (e) {
+            console.error("[RG HUD] Leave clan failed:", e);
+        }
+    }
+
+    // ---------- Clan view rendering ----------
+
+    async function renderClanView() {
+        const view = document.getElementById("rgClanView");
+        if (!view) return;
+
+        if (!lastKnownPlayerData) {
+            view.innerHTML = `<div style="opacity:.8;">Log in or play a match first to use clans.</div>`;
+            return;
+        }
+
+        view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
+        await loadClanData(true);
+
+        myClan ? renderMyClan(view) : renderNoClan(view);
+    }
+
+    function renderNoClan(view) {
+        const rows = clanDirectory
+            .slice()
+            .sort((a, b) => (b.totalMMR ?? 0) - (a.totalMMR ?? 0))
+            .map((c, i) => `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:3px 0;border-bottom:1px solid #ffffff11;">
+                    <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        <span style="color:#ffd700;">#${i + 1}</span>
+                        ${c.tag ? `<span style="opacity:.7;">[${c.tag}]</span>` : ""}
+                        <b>${escapeHtml(c.name)}</b>
+                        <span style="opacity:.6;font-size:10px;">(${c.memberCount}/${CLAN_MAX_MEMBERS})</span>
+                    </span>
+                    <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                        <span style="color:#00ff66;font-size:11px;">${c.totalMMR}</span>
+                        <button class="rgBtn rgJoinBtn" data-clan="${c.id}" style="padding:2px 6px;font-size:10px;" ${c.memberCount >= CLAN_MAX_MEMBERS ? "disabled" : ""}>Join</button>
+                    </span>
+                </div>`).join("");
+
+        view.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <b>🛡️ Clans</b>
+                <button id="rgCreateClanBtn" class="rgBtn" style="padding:3px 8px;font-size:11px;">+ Create</button>
+            </div>
+            <div style="max-height:200px;overflow-y:auto;">${rows || `<div style="opacity:.7;">No clans yet. Create the first one!</div>`}</div>
+        `;
+
+        document.getElementById("rgCreateClanBtn").onclick = showCreateClanForm;
+        view.querySelectorAll(".rgJoinBtn").forEach(btn => {
+            btn.onclick = () => requestJoin(btn.getAttribute("data-clan"));
+        });
+    }
+
+    function showCreateClanForm() {
+        const view = document.getElementById("rgClanView");
+        view.innerHTML = `
+            <b>Create a Clan</b>
+            <div style="margin-top:8px;">
+                <input type="text" id="rgClanName" placeholder="Clan name (max 24)" maxlength="24"
+                    style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;margin-bottom:6px;user-select:text;">
+                <input type="text" id="rgClanTag" placeholder="Tag (2-4 chars, required)" maxlength="4"
+                    style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;user-select:text;">
+                <div id="rgClanErr" style="color:#ff6b6b;font-size:11px;min-height:14px;margin:4px 0;"></div>
+                <div style="display:flex;gap:6px;">
+                    <button id="rgClanCreateGo" class="rgBtn" style="flex:1;">Create</button>
+                    <button id="rgClanCreateCancel" class="rgBtn" style="flex:1;">Cancel</button>
+                </div>
+            </div>`;
+
+        const nameEl = document.getElementById("rgClanName");
+        const tagEl = document.getElementById("rgClanTag");
+        const errEl = document.getElementById("rgClanErr");
+        [nameEl, tagEl].forEach(el => {
+            el.addEventListener("keydown", e => e.stopPropagation(), true);
+        });
+
+        document.getElementById("rgClanCreateGo").onclick = () => {
+            const name = nameEl.value.trim();
+            const tag = tagEl.value.trim();
+            if (name.length === 0 || name.length > 24) { errEl.textContent = "Name must be 1-24 characters."; return; }
+            if (tag.length < 2 || tag.length > 4) { errEl.textContent = "Tag is required (2-4 characters)."; return; }
+            if (containsProfanity(name) || containsEmoji(name)) { errEl.textContent = "That name isn't allowed."; return; }
+            if (containsProfanity(tag) || containsEmoji(tag)) { errEl.textContent = "That tag isn't allowed."; return; }
+            if (clanDirectory.some(c => (c.tag ?? "").toLowerCase() === tag.toLowerCase())) {
+                errEl.textContent = "That tag is already taken."; return;
+            }
+            createClan(name, tag);
+        };
+        document.getElementById("rgClanCreateCancel").onclick = renderClanView;
+    }
+
+    function renderMyClan(view) {
+        const uid = myUserId();
+        const me = (myClan.members ?? []).find(m => m.userId === uid);
+        const myRole = me?.role ?? "member";
+        const rank = [...clanDirectory].sort((a, b) => (b.totalMMR ?? 0) - (a.totalMMR ?? 0))
+            .findIndex(c => c.id === myClan.id) + 1;
+
+        // Leaders and co-leaders can kick + manage roles. Can't act on yourself or the leader.
+        const canManage = (myRole === "leader" || myRole === "coleader");
+        const memberRows = (myClan.members ?? [])
+            .slice()
+            .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))
+            .map(m => {
+                const actable = canManage && m.userId !== uid && m.role !== "leader"
+                    && (ROLE_RANK[m.role] ?? 0) < (ROLE_RANK[myRole] ?? 0);
+                return `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;gap:6px;">
+                    <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        ${escapeHtml(m.name)}
+                        ${typeof m.mmr === "number" ? `<span style="opacity:.5;font-size:10px;">${m.mmr}</span>` : ""}
+                    </span>
+                    <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                        <span style="opacity:.7;font-size:10px;text-transform:uppercase;">${m.role}</span>
+                        ${actable ? `<button class="rgBtn rgManage" data-uid="${m.userId}" data-name="${escapeHtml(m.name)}" data-role="${m.role}" style="padding:1px 6px;font-size:10px;">⋯</button>` : ""}
+                    </span>
+                </div>`;
+            }).join("");
+
+        let requestsSection = "";
+        if (canManageRequests(myRole) && (myClan.joinRequests ?? []).length > 0) {
+            const reqRows = myClan.joinRequests.map(r => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;gap:6px;">
+                    <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.name)}</span>
+                    <span style="display:flex;gap:4px;flex-shrink:0;">
+                        <button class="rgBtn rgApprove" data-uid="${r.userId}" style="padding:1px 6px;font-size:10px;">✓</button>
+                        <button class="rgBtn rgReject" data-uid="${r.userId}" style="padding:1px 6px;font-size:10px;">✗</button>
+                    </span>
+                </div>`).join("");
+            requestsSection = `
+                <hr style="border:none;border-top:1px solid #00bfff88;margin:8px 0;">
+                <b>Join Requests</b>
+                <div>${reqRows}</div>`;
+        }
+
+        view.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <b>${myClan.tag ? `[${escapeHtml(myClan.tag)}] ` : ""}${escapeHtml(myClan.name)}</b>
+                <span style="color:#ffd700;font-size:11px;">Rank #${rank || "-"}</span>
+            </div>
+            <div style="font-size:11px;opacity:.75;margin:2px 0 6px;">
+                Total MMR: <span style="color:#00ff66;">${myClan.totalMMR ?? 0}</span>
+                &nbsp;•&nbsp; ${(myClan.members ?? []).length}/${CLAN_MAX_MEMBERS} members
+            </div>
+            <b>Members</b>
+            <div>${memberRows}</div>
+            ${requestsSection}
+            <button id="rgLeaveClan" class="rgBtn" style="width:100%;margin-top:8px;">Leave Clan</button>
+        `;
+
+        view.querySelectorAll(".rgApprove").forEach(b => b.onclick = () => approveRequest(b.getAttribute("data-uid"), true));
+        view.querySelectorAll(".rgReject").forEach(b => b.onclick = () => approveRequest(b.getAttribute("data-uid"), false));
+        view.querySelectorAll(".rgManage").forEach(b => b.onclick = async () => {
+            const tUid = b.getAttribute("data-uid");
+            const tName = b.getAttribute("data-name");
+            const tRole = b.getAttribute("data-role");
+            await showManageMemberMenu(tUid, tName, tRole, myRole, myClan.leaderId === uid);
+        });
+        document.getElementById("rgLeaveClan").onclick = async () => {
+            const sure = await showDialog({ message: "Leave this clan?", okLabel: "Leave", cancelLabel: "Cancel" });
+            if (sure) leaveClan();
+        };
+    }
+
+    // Themed replacements for native alert/confirm/prompt.
+    let toastTimeout = null;
+    function showToast(msg) {
+        createHUD();
+        const t = document.getElementById("rgToast");
+        if (!t) return;
+        t.textContent = msg;
+        t.style.opacity = "1";
+        t.style.transform = "translateY(0)";
+        clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => {
+            t.style.opacity = "0";
+            t.style.transform = "translateY(8px)";
+        }, 2800);
+    }
+
+    // Themed confirm/prompt. Returns a promise:
+    //  - confirm mode -> resolves true/false
+    //  - prompt mode  -> resolves the string, or null if cancelled
+    function showDialog({ message, withInput = false, inputPlaceholder = "", okLabel = "OK", cancelLabel = "Cancel" }) {
+        return new Promise(resolve => {
+            createHUD();
+            const dlg = document.getElementById("rgDialog");
+            const msgEl = document.getElementById("rgDialogMsg");
+            const input = document.getElementById("rgDialogInput");
+            const okBtn = document.getElementById("rgDialogOk");
+            const cancelBtn = document.getElementById("rgDialogCancel");
+
+            msgEl.textContent = message;
+            okBtn.textContent = okLabel;
+            cancelBtn.textContent = cancelLabel;
+            input.style.display = withInput ? "block" : "none";
+            input.value = "";
+            input.placeholder = inputPlaceholder;
+            dlg.style.display = "flex";
+            if (withInput) setTimeout(() => input.focus(), 50);
+
+            const close = result => {
+                dlg.style.display = "none";
+                okBtn.onclick = null;
+                cancelBtn.onclick = null;
+                resolve(result);
+            };
+            okBtn.onclick = () => close(withInput ? input.value.trim() : true);
+            cancelBtn.onclick = () => close(withInput ? null : false);
+        });
+    }
+
+    // A small action menu for managing one member -- rendered into the clan view
+    // temporarily. Options depend on the actor's role and the target's role.
+    async function showManageMemberMenu(userId, name, targetRole, actorRole, actorIsLeader) {
+        const view = document.getElementById("rgClanView");
+        if (!view) return;
+
+        // Build the list of allowed actions.
+        const actions = [];
+        // Role changes: offer any role strictly below the actor that isn't the current one.
+        const assignable = ["coleader", "elder", "member"].filter(r =>
+            r !== targetRole && canSetRole(actorRole, targetRole, r)
+        );
+        for (const r of assignable) {
+            const verb = (ROLE_RANK[r] > ROLE_RANK[targetRole]) ? "Promote to" : "Demote to";
+            actions.push({ label: `${verb} ${r}`, run: () => setMemberRole(userId, r) });
+        }
+        // Transfer leadership: leader only.
+        if (actorIsLeader) {
+            actions.push({ label: "👑 Transfer leadership", danger: true, run: async () => {
+                const sure = await showDialog({
+                    message: `Make ${name} the clan leader? You'll become co-leader.`,
+                    okLabel: "Transfer", cancelLabel: "Cancel",
+                });
+                if (sure) transferLeadership(userId);
+            }});
+        }
+        // Kick.
+        actions.push({ label: "❌ Kick from clan", danger: true, run: async () => {
+            const sure = await showDialog({ message: `Kick ${name} from the clan?`, okLabel: "Kick", cancelLabel: "Cancel" });
+            if (!sure) { renderClanView(); return; }
+            const msg = await showDialog({
+                message: `Optional message to ${name} (leave blank to skip):`,
+                withInput: true, inputPlaceholder: "Message...", okLabel: "Send", cancelLabel: "No message",
+            });
+            kickMember(userId, msg || "");
+        }});
+
+        const btns = actions.map((a, i) =>
+            `<button class="rgBtn rgMgAction" data-i="${i}" style="width:100%;margin-bottom:4px;${a.danger ? "border-color:#ff6b6b88;" : ""}">${a.label}</button>`
+        ).join("");
+
+        view.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <b>Manage ${escapeHtml(name)}</b>
+                <span style="opacity:.6;font-size:10px;text-transform:uppercase;">${targetRole}</span>
+            </div>
+            ${btns}
+            <button id="rgMgBack" class="rgBtn" style="width:100%;margin-top:6px;">Back</button>
+        `;
+
+        view.querySelectorAll(".rgMgAction").forEach(btn => {
+            btn.onclick = () => actions[parseInt(btn.getAttribute("data-i"))].run();
+        });
+        document.getElementById("rgMgBack").onclick = renderClanView;
+    }
+
+    function escapeHtml(s) {
+        return String(s ?? "").replace(/[&<>"']/g, c => (
+            { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+        ));
+    }
 
     // ---------- Boot ----------
 
