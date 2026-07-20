@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      9.6
+// @version      9.7
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -857,6 +857,13 @@
         return PROFANITY_REGEX.test(text);
     }
 
+    // Rejects any name containing emoji / pictographic symbols. Uses Unicode
+    // property escapes (supported in all current browsers).
+    const EMOJI_REGEX = /\p{Extended_Pictographic}|\p{Emoji_Presentation}|[\u{1F1E6}-\u{1F1FF}]/u;
+    function containsEmoji(text) {
+        return EMOJI_REGEX.test(text);
+    }
+
     // Skip brand-new accounts that haven't played anything yet.
     function hasPlayedAnything(data) {
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
@@ -953,6 +960,10 @@
                 }
                 if (entered.toLowerCase() === "player") {
                     errEl.textContent = "\"Player\" is reserved. Pick a real name.";
+                    return;
+                }
+                if (containsEmoji(entered)) {
+                    errEl.textContent = "Names can't contain emojis.";
                     return;
                 }
 
