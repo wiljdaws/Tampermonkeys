@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      10.1
+// @version      10.2
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -127,6 +127,7 @@
                     border: 1px solid #00bfff88;
                     border-radius: 6px;
                     cursor: pointer;
+                    white-space: nowrap;
                     transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
                 }
                 #rgHUD .rgBtn:hover {
@@ -264,11 +265,10 @@
                     </div>
                 </div>
                 <div id="rgClanView" style="display:none;">Loading clans...</div>
-                <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
-                    <button id="rgRename" class="rgBtn">✏️ Rename</button>
-                    <button id="rgSub" class="rgBtn">📺 Sub</button>
-                    <button id="rgLeaderboard" class="rgBtn">🏆 Board</button>
-                    <button id="rgReportBug" class="rgBtn">🐛 Bug</button>
+                <div style="margin-top:6px;display:flex;gap:4px;">
+                    <button id="rgRename" class="rgBtn" style="flex:1;">✏️ Rename</button>
+                    <button id="rgSub" class="rgBtn" style="flex:1;">📺 Sub</button>
+                    <button id="rgLeaderboard" class="rgBtn" style="flex:2;">🏆 Leaderboard</button>
                 </div>
             </div>
             <div id="rgNameModal">
@@ -332,9 +332,6 @@
         };
         document.getElementById("rgLeaderboard").onclick = () => {
             window.open("https://abuarqob.github.io/rgleaderboard/", "_blank", "noopener");
-        };
-        document.getElementById("rgReportBug").onclick = () => {
-            window.open("https://github.com/wiljdaws/Tampermonkeys/issues/new", "_blank", "noopener");
         };
         document.getElementById("rgRename").onclick = () => {
             if (!lastKnownPlayerData) {
@@ -1295,7 +1292,7 @@
         // Determine clan tag (if any) to prefix on the leaderboard name, and
         // opportunistically keep the clan's stored MMR for this member current.
         const clanInfo = await updateMyClanMMR(fb, data);
-        const shownName = clanInfo?.tag ? `[${clanInfo.tag}]${displayName}` : displayName;
+        const shownName = clanInfo?.tag ? `[${clanInfo.tag}] ${displayName}` : displayName;
 
         const modeToPlaylist = {
             Competitive1v1: "1v1",
