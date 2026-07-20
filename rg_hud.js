@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      10.0
+// @version      10.1
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -1230,7 +1230,7 @@
                     logWrite(`leaderboard/${playlist} (cached id)`);
                     await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, cachedId), fields, { merge: true });
                     clearError();
-                    return;
+                    return true;
                 }
 
                 const q = fb.query(
@@ -1261,14 +1261,16 @@
                     knownDocIds.set(cacheKey, newDoc.id);
                 }
                 clearError();
+                return true;
             } catch (e) {
                 console.error(`[RG HUD] Real leaderboard sync failed for ${playlist}:`, e);
                 showError(`Leaderboard sync failed for ${playlist} -- check console`);
+                return false;
             }
         });
 
         upsertLocks.set(lockKey, current);
-        await current;
+        return current;
     }
 
     // Last-written state per player+playlist. A 3v3 match only changes the 3v3
@@ -1329,27 +1331,34 @@
             if (!clanLoaded || clanLoadedForAccount !== uid) await loadClanData(true);
             if (!myClan) return null;
 
+            // Capture the tag up front -- this is what the leaderboard name needs,
+            // and it must NOT depend on the MMR write below succeeding.
+            const tag = myClan.tag ?? "";
+
             const g = data.ModesGlicko;
             const rankedModes = ["Competitive3v3", "Competitive2v2", "Competitive1v1"];
             const myMMR = rankedModes.reduce((s, m) =>
                 s + (typeof g?.[m]?.displayRating === "number" ? g[m].displayRating : 0), 0);
 
-            const members = (myClan.members ?? []).map(m =>
-                m.userId === uid ? { ...m, mmr: myMMR } : m
-            );
-            const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
-
-            // Only write if my stored MMR actually changed, to avoid needless writes.
             const prevMine = (myClan.members ?? []).find(m => m.userId === uid)?.mmr;
             if (prevMine !== myMMR) {
-                await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members, totalMMR }, { merge: true });
-                myClan.members = members;
-                myClan.totalMMR = totalMMR;
-                await refreshDirectory(fb);
+                try {
+                    const members = (myClan.members ?? []).map(m =>
+                        m.userId === uid ? { ...m, mmr: myMMR } : m
+                    );
+                    const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
+                    await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members, totalMMR }, { merge: true });
+                    myClan.members = members;
+                    myClan.totalMMR = totalMMR;
+                    await refreshDirectory(fb);
+                } catch (writeErr) {
+                    // MMR sync is best-effort; a failure here must not strip the tag.
+                    console.warn("[RG HUD] Clan MMR write failed (tag still applies):", writeErr);
+                }
             }
-            return { tag: myClan.tag ?? "" };
+            return { tag };
         } catch (e) {
-            console.warn("[RG HUD] Clan MMR update failed:", e);
+            console.warn("[RG HUD] Clan lookup failed:", e);
             return null;
         }
     }
@@ -1362,9 +1371,14 @@
             return; // nothing about this entry changed -- skip the write entirely
         }
 
-        await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
-        lastEntryState.set(stateKey, newState);
-        saveEntryState();
+        const ok = await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
+        // Only remember this state if the write actually succeeded -- otherwise a
+        // failed write (e.g. rules rejection) would poison the cache and stop us
+        // ever retrying with the same data.
+        if (ok) {
+            lastEntryState.set(stateKey, newState);
+            saveEntryState();
+        }
     }
 
     // ---------- Rank lookup ----------
@@ -1776,6 +1790,59 @@
         }
     }
 
+    async function editClan(newName, newTag) {
+        const fb = await initFirebase();
+        if (!fb || !myClan) return;
+        if (myClan.leaderId !== myUserId()) return; // leader only
+
+        // Uniqueness (ignore our own clan).
+        const nameClash = clanDirectory.some(c => c.id !== myClan.id && (c.name ?? "").toLowerCase() === newName.toLowerCase());
+        const tagClash = clanDirectory.some(c => c.id !== myClan.id && (c.tag ?? "").toLowerCase() === newTag.toLowerCase());
+        if (nameClash) { showToast("A clan with that name already exists."); return; }
+        if (tagClash) { showToast("That tag is already taken."); return; }
+
+        try {
+            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { name: newName, tag: newTag }, { merge: true });
+            myClan.name = newName;
+            myClan.tag = newTag;
+            await refreshDirectory(fb);
+            showToast("Clan updated! Tag refreshes on members' next match.");
+            renderClanView();
+        } catch (e) {
+            console.error("[RG HUD] Edit clan failed:", e);
+            showToast("Couldn't update clan (see console).");
+        }
+    }
+
+    function showEditClanForm() {
+        const view = document.getElementById("rgClanView");
+        view.innerHTML = `
+            <b>Edit Clan</b>
+            <div style="margin-top:8px;">
+                <input type="text" id="rgEditName" maxlength="24" value="${escapeHtml(myClan.name ?? "")}"
+                    style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;margin-bottom:6px;user-select:text;">
+                <input type="text" id="rgEditTag" maxlength="4" value="${escapeHtml(myClan.tag ?? "")}"
+                    style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;user-select:text;">
+                <div id="rgEditErr" style="color:#ff6b6b;font-size:11px;min-height:14px;margin:4px 0;"></div>
+                <div style="display:flex;gap:6px;">
+                    <button id="rgEditGo" class="rgBtn" style="flex:1;">Save</button>
+                    <button id="rgEditCancel" class="rgBtn" style="flex:1;">Cancel</button>
+                </div>
+            </div>`;
+
+        const errEl = document.getElementById("rgEditErr");
+        document.getElementById("rgEditGo").onclick = () => {
+            const name = document.getElementById("rgEditName").value.trim();
+            const tag = document.getElementById("rgEditTag").value.trim();
+            if (name.length === 0 || name.length > 24) { errEl.textContent = "Name must be 1-24 characters."; return; }
+            if (tag.length < 2 || tag.length > 4) { errEl.textContent = "Tag must be 2-4 characters."; return; }
+            if (containsProfanity(name) || containsEmoji(name)) { errEl.textContent = "That name isn't allowed."; return; }
+            if (containsProfanity(tag) || containsEmoji(tag)) { errEl.textContent = "That tag isn't allowed."; return; }
+            editClan(name, tag);
+        };
+        document.getElementById("rgEditCancel").onclick = renderClanView;
+    }
+
     async function transferLeadership(userId) {
         const fb = await initFirebase();
         if (!fb || !myClan) return;
@@ -1956,10 +2023,14 @@
                 <div>${reqRows}</div>`;
         }
 
+        const isLeader = myClan.leaderId === uid;
         view.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;">
-                <b>${myClan.tag ? `[${escapeHtml(myClan.tag)}] ` : ""}${escapeHtml(myClan.name)}</b>
-                <span style="color:#ffd700;font-size:11px;">Rank #${rank || "-"}</span>
+                <b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${myClan.tag ? `[${escapeHtml(myClan.tag)}] ` : ""}${escapeHtml(myClan.name)}</b>
+                <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    ${isLeader ? `<button id="rgEditClan" class="rgBtn" style="padding:1px 6px;font-size:10px;">✏️</button>` : ""}
+                    <span style="color:#ffd700;font-size:11px;">Rank #${rank || "-"}</span>
+                </span>
             </div>
             <div style="font-size:11px;opacity:.75;margin:2px 0 6px;">
                 Total MMR: <span style="color:#00ff66;">${myClan.totalMMR ?? 0}</span>
@@ -1970,6 +2041,11 @@
             ${requestsSection}
             <button id="rgLeaveClan" class="rgBtn" style="width:100%;margin-top:8px;">Leave Clan</button>
         `;
+
+        if (isLeader) {
+            const editBtn = document.getElementById("rgEditClan");
+            if (editBtn) editBtn.onclick = showEditClanForm;
+        }
 
         view.querySelectorAll(".rgApprove").forEach(b => b.onclick = () => approveRequest(b.getAttribute("data-uid"), true));
         view.querySelectorAll(".rgReject").forEach(b => b.onclick = () => approveRequest(b.getAttribute("data-uid"), false));
