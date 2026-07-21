@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      10.2
+// @version      10.3
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -1172,11 +1172,22 @@
             lastUpdated: new Date().toISOString(),
         };
 
+        // Make sure clan membership is known before the change check below, so
+        // the clan tag can be part of the snapshot (otherwise a first-of-session
+        // sync wouldn't know the tag yet).
+        if (!clanLoaded || clanLoadedForAccount !== data.Id) {
+            await loadClanData(true);
+        }
+
         // Skip the actual network writes if nothing changed or synced very
-        // recently -- but never skip a deliberate Rename.
+        // recently -- but never skip a deliberate Rename. The clan tag is part
+        // of the snapshot so a clan/tag change (which doesn't touch MMR or stats)
+        // still forces a resync instead of being seen as "unchanged".
+        const currentClanTag = (clanLoadedForAccount === data.Id && myClan) ? (myClan.tag ?? "") : "";
         const snapshotKey = JSON.stringify({
             displayName, ratings: payload.ratings, stats: payload.stats,
             xp: payload.xp, equippedSkinId: payload.equippedSkinId,
+            clanTag: currentClanTag,
         });
         const now = Date.now();
         const unchanged = lastSyncSnapshot.get(data.Id) === snapshotKey;
