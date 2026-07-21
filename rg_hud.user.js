@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      10.5
+// @version      10.6
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -346,22 +346,31 @@
         // Clan view toggle (shield icon) -- swaps stats view for clan view
         const statsView = document.getElementById("rgStatsView");
         const clanView = document.getElementById("rgClanView");
+        const panel = document.getElementById("rgSettingsPanel");
         document.getElementById("rgClanBtn").onclick = () => {
             const showingClan = clanView.style.display !== "none";
             if (showingClan) {
                 clanView.style.display = "none";
                 statsView.style.display = "block";
             } else {
+                panel.style.display = "none"; // close settings if it was open
                 statsView.style.display = "none";
                 clanView.style.display = "block";
                 renderClanView();
             }
         };
 
-        // Settings panel wiring
-        const panel = document.getElementById("rgSettingsPanel");
+        // Settings panel wiring -- opening settings always returns to the stats
+        // view first, so the panel (which lives inside stats) is actually visible.
         document.getElementById("rgSettingsBtn").onclick = () => {
-            panel.style.display = panel.style.display === "none" ? "block" : "none";
+            const opening = panel.style.display === "none";
+            if (opening) {
+                clanView.style.display = "none";   // leave clan view if it was open
+                statsView.style.display = "block";
+                panel.style.display = "block";
+            } else {
+                panel.style.display = "none";
+            }
         };
 
         const setGlow = document.getElementById("rgSetGlow");
