@@ -44,7 +44,7 @@ Don't worry, this doesn't make your browser less safe. It just allows extensions
 
 ## Step 4: Install the Rocket Goal HUD script
 
-1. Click this link: **[Install Rocket Goal HUD](https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.js)**
+1. Click this link: **[Install Rocket Goal HUD](https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js)**
 2. Tampermonkey will open a new tab showing the script's code and an **Install** button.
 3. Click **Install**.
 
