@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      10.6
+// @version      10.7
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -892,13 +892,13 @@
 
         try {
             const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc } =
+            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
 
-            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc };
+            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp };
             return firestoreReady;
         } catch (e) {
             console.error("[RG HUD] Firebase init failed:", e);
@@ -1357,6 +1357,9 @@
             const myMMR = rankedModes.reduce((s, m) =>
                 s + (typeof g?.[m]?.displayRating === "number" ? g[m].displayRating : 0), 0);
 
+            // Load event config (cheap, cached) so we know if a Clan Clash is on.
+            await loadEventConfig(fb);
+
             const prevMine = (myClan.members ?? []).find(m => m.userId === uid)?.mmr;
             if (prevMine !== myMMR) {
                 try {
@@ -1364,15 +1367,31 @@
                         m.userId === uid ? { ...m, mmr: myMMR } : m
                     );
                     const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
-                    await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members, totalMMR }, { merge: true });
+                    // Stamp an unforgeable server time; we read it back to learn the
+                    // authoritative clock for event-window decisions.
+                    await fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
+                        { members, totalMMR, lastSyncAt: fb.serverTimestamp() }, { merge: true });
                     myClan.members = members;
                     myClan.totalMMR = totalMMR;
+
+                    // Read back the server time we just wrote, to calibrate serverNow().
+                    try {
+                        const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
+                        const ts = back.exists() ? back.data().lastSyncAt : null;
+                        if (ts?.toMillis) learnServerTime(ts.toMillis());
+                    } catch (e) {}
+
                     await refreshDirectory(fb);
                 } catch (writeErr) {
                     // MMR sync is best-effort; a failure here must not strip the tag.
                     console.warn("[RG HUD] Clan MMR write failed (tag still applies):", writeErr);
                 }
             }
+
+            // Event baseline: capture this member's starting MMR on their first
+            // sync during an active event (uses server-authoritative timing).
+            await maybeCaptureEventBaseline(fb, uid, myMMR);
+
             return { tag };
         } catch (e) {
             console.warn("[RG HUD] Clan lookup failed:", e);
@@ -1529,6 +1548,139 @@
             }
         }
     };
+
+    // ---------- Clan events (Clan Clash) ----------
+    // Event config lives in Firestore (events/current), editable by admin only,
+    // so events can be scheduled/rescheduled without a script update. Timing uses
+    // Firestore serverTimestamp() -- unforgeable, immune to device-clock spoofing.
+    // Each member's baseline MMR is captured on THEIR first sync after the event
+    // starts (fresh, not stale); event score = sum of (current - baseline) across
+    // members, which can go negative.
+
+    let eventConfig = null;       // { name, startTime(ms), endTime(ms) } or null
+    let eventConfigLoaded = false;
+    let serverNowOffset = null;   // (serverTime - deviceTime) learned from a write, ms
+
+    async function loadEventConfig(fb, force = false) {
+        if (eventConfigLoaded && !force) return eventConfig;
+        try {
+            const snap = await fb.getDoc(fb.doc(fb.db, "events", "current"));
+            if (snap.exists()) {
+                const d = snap.data();
+                eventConfig = {
+                    name: d.name ?? "Clan Event",
+                    startTime: d.startTime?.toMillis ? d.startTime.toMillis() : (d.startTime ?? 0),
+                    endTime: d.endTime?.toMillis ? d.endTime.toMillis() : (d.endTime ?? 0),
+                };
+            } else {
+                eventConfig = null;
+            }
+            eventConfigLoaded = true;
+        } catch (e) {
+            console.warn("[RG HUD] Event config load failed:", e);
+        }
+        return eventConfig;
+    }
+
+    // Best estimate of authoritative server time. We learn an offset from device
+    // time whenever a write round-trips a serverTimestamp; until then we fall back
+    // to device time (only affects the cosmetic countdown, never scoring).
+    function serverNow() {
+        return Date.now() + (serverNowOffset ?? 0);
+    }
+    function learnServerTime(serverMs) {
+        if (typeof serverMs === "number") serverNowOffset = serverMs - Date.now();
+    }
+
+    function eventPhase() {
+        if (!eventConfig) return "none";
+        const now = serverNow();
+        if (now < eventConfig.startTime) return "upcoming";
+        if (now > eventConfig.endTime) return "ended";
+        return "active";
+    }
+
+    // Capture this member's baseline the first time they sync during an active
+    // event. Stored on the clan doc: eventBaseline[userId] = mmrAtFirstSync.
+    async function maybeCaptureEventBaseline(fb, uid, currentMMR) {
+        if (!myClan || eventPhase() !== "active") return;
+        const baseline = myClan.eventBaseline ?? {};
+        if (baseline[uid] != null) return; // already captured
+        try {
+            baseline[uid] = currentMMR;
+            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
+                { eventBaseline: baseline, eventName: eventConfig.name }, { merge: true });
+            myClan.eventBaseline = baseline;
+        } catch (e) {
+            console.warn("[RG HUD] Event baseline capture failed:", e);
+        }
+    }
+
+    function computeClanEventScore(clan) {
+        if (!clan || !clan.eventBaseline) return 0;
+        return (clan.members ?? []).reduce((sum, m) => {
+            const base = clan.eventBaseline[m.userId];
+            if (base == null || typeof m.mmr !== "number") return sum;
+            return sum + (m.mmr - base);
+        }, 0);
+    }
+
+    function myEventContribution(clan, uid) {
+        if (!clan?.eventBaseline) return null;
+        const base = clan.eventBaseline[uid];
+        const me = (clan.members ?? []).find(m => m.userId === uid);
+        if (base == null || !me || typeof me.mmr !== "number") return null;
+        return me.mmr - base;
+    }
+
+    // Human-readable "2d 3h 14m" style countdown from now until target ms.
+    function formatCountdown(targetMs) {
+        let ms = targetMs - serverNow();
+        if (ms < 0) ms = 0;
+        const d = Math.floor(ms / 86400000);
+        const h = Math.floor((ms % 86400000) / 3600000);
+        const m = Math.floor((ms % 3600000) / 60000);
+        if (d > 0) return `${d}d ${h}h ${m}m`;
+        if (h > 0) return `${h}h ${m}m`;
+        return `${m}m`;
+    }
+
+    // Builds the event banner HTML for the clan tab. `clan` may be null (shown to
+    // clanless players too, minus the personal/score bits). Returns "" if no event.
+    function eventBannerHtml(clan, uid) {
+        const phase = eventPhase();
+        if (phase === "none") return "";
+
+        const gold = "#ffd700";
+        let inner = `<div style="font-weight:bold;color:${gold};">🏆 ${escapeHtml(eventConfig.name)}</div>`;
+
+        if (phase === "upcoming") {
+            inner += `<div style="font-size:11px;opacity:.85;">Starts in ${formatCountdown(eventConfig.startTime)}</div>`;
+            if (clan) inner += `<div style="font-size:10px;opacity:.7;">Play a match once it starts to lock your baseline.</div>`;
+        } else if (phase === "active") {
+            inner += `<div style="font-size:11px;opacity:.85;">Ends in ${formatCountdown(eventConfig.endTime)}</div>`;
+            if (clan) {
+                const score = computeClanEventScore(clan);
+                const mine = myEventContribution(clan, uid);
+                const scoreColor = score >= 0 ? "#00ff66" : "#ff6b6b";
+                inner += `<div style="font-size:11px;margin-top:2px;">Clan score: <span style="color:${scoreColor};font-weight:bold;">${score >= 0 ? "+" : ""}${score}</span></div>`;
+                if (mine == null) {
+                    inner += `<div style="font-size:10px;color:#ffcf5b;">⚠️ Play a match to lock in your starting MMR!</div>`;
+                } else {
+                    inner += `<div style="font-size:10px;opacity:.75;">Your contribution: ${mine >= 0 ? "+" : ""}${mine}</div>`;
+                }
+            }
+        } else if (phase === "ended") {
+            inner += `<div style="font-size:11px;opacity:.85;">Event ended</div>`;
+            if (clan) {
+                const score = computeClanEventScore(clan);
+                const scoreColor = score >= 0 ? "#00ff66" : "#ff6b6b";
+                inner += `<div style="font-size:11px;">Final clan score: <span style="color:${scoreColor};font-weight:bold;">${score >= 0 ? "+" : ""}${score}</span></div>`;
+            }
+        }
+
+        return `<div style="border:1px solid ${gold}55;background:${gold}11;border-radius:8px;padding:6px 8px;margin-bottom:8px;">${inner}</div>`;
+    }
 
     // ---------- Clans (Stage 1: create / browse / request / approve) ----------
 
@@ -1922,6 +2074,8 @@
 
         view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
         await loadClanData(true);
+        const fb = await initFirebase();
+        if (fb) await loadEventConfig(fb, true);
 
         myClan ? renderMyClan(view) : renderNoClan(view);
     }
@@ -1945,6 +2099,7 @@
                 </div>`).join("");
 
         view.innerHTML = `
+            ${eventBannerHtml(null, myUserId())}
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                 <b>🛡️ Clans</b>
                 <button id="rgCreateClanBtn" class="rgBtn" style="padding:3px 8px;font-size:11px;">+ Create</button>
@@ -2042,6 +2197,7 @@
 
         const isLeader = myClan.leaderId === uid;
         view.innerHTML = `
+            ${eventBannerHtml(myClan, uid)}
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${myClan.tag ? `[${escapeHtml(myClan.tag)}] ` : ""}${escapeHtml(myClan.name)}</b>
                 <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
