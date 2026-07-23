@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      10.8
+// @version      10.9
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -713,10 +713,11 @@
         return "neutral";
     }
 
-    // Title priority: crown (#1) beats momentum beats default.
+    // Title priority: individual #1 crown beats clan-clash lead beats momentum beats default.
     function resolveTitle() {
         const holdingAnyFirst = [...cachedRanks.values()].some(r => r === 1);
         if (holdingAnyFirst) return { text: "👑 Rocket Goal KING", color: "#ffd700" };
+        if (isMyClanLeadingClash()) return { text: "👑 Leading the Clash", color: "#ffd700" };
 
         switch (currentMomentumState) {
             case "shutEye":   return { text: shutEyeMessage, color: "#9aa5ad" };
@@ -1261,6 +1262,7 @@
         await syncToRealLeaderboard(fb, data, displayName);
         refreshRanks(fb, data, true);
         refreshClanViewIfOpen(); // live-update event score/contribution, no extra reads
+        applyTitle(); // clan-lead status may have flipped since updateMomentum ran
     }
 
     const REAL_LEADERBOARD_COLLECTION = "leaderboard";
@@ -1641,32 +1643,56 @@
 
     // Capture this member's baseline the first time they sync during an active
     // event. Stored on the clan doc: eventBaseline[userId] = mmrAtFirstSync.
+    // A stable id for the current event window, so baselines from a previous
+    // event are recognized as stale and re-captured rather than reused.
+    function currentEventId() {
+        return eventConfig ? String(eventConfig.startTime) : null;
+    }
+
     async function maybeCaptureEventBaseline(fb, uid, currentMMR) {
         if (!myClan || eventPhase() !== "active") return;
-        const baseline = myClan.eventBaseline ?? {};
-        if (baseline[uid] != null) return; // already captured
+        const evId = currentEventId();
+
+        // If the stored baseline belongs to a different (old) event, wipe it so
+        // this event starts fresh for everyone.
+        let baseline = myClan.eventBaseline ?? {};
+        if (myClan.eventId !== evId) {
+            baseline = {}; // stale from a previous event -- reset
+        }
+        if (baseline[uid] != null && myClan.eventId === evId) return; // already captured this event
+
         try {
             baseline[uid] = currentMMR;
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
-                { eventBaseline: baseline, eventName: eventConfig.name }, { merge: true });
+                { eventBaseline: baseline, eventId: evId, eventName: eventConfig.name }, { merge: true });
             myClan.eventBaseline = baseline;
+            myClan.eventId = evId;
         } catch (e) {
             console.warn("[RG HUD] Event baseline capture failed:", e);
         }
     }
 
+    // A clan's baseline only counts if it belongs to the current event.
+    function clanBaselineForCurrentEvent(clan) {
+        if (!clan || !clan.eventBaseline) return null;
+        if (clan.eventId !== currentEventId()) return null; // stale -> no score yet
+        return clan.eventBaseline;
+    }
+
     function computeClanEventScore(clan) {
-        if (!clan || !clan.eventBaseline) return 0;
+        const baseline = clanBaselineForCurrentEvent(clan);
+        if (!baseline) return 0;
         return (clan.members ?? []).reduce((sum, m) => {
-            const base = clan.eventBaseline[m.userId];
+            const base = baseline[m.userId];
             if (base == null || typeof m.mmr !== "number") return sum;
             return sum + (m.mmr - base);
         }, 0);
     }
 
     function myEventContribution(clan, uid) {
-        if (!clan?.eventBaseline) return null;
-        const base = clan.eventBaseline[uid];
+        const baseline = clanBaselineForCurrentEvent(clan);
+        if (!baseline) return null;
+        const base = baseline[uid];
         const me = (clan.members ?? []).find(m => m.userId === uid);
         if (base == null || !me || typeof me.mmr !== "number") return null;
         return me.mmr - base;
@@ -1684,41 +1710,164 @@
         return `${m}m`;
     }
 
+    // Standings for the current event, ranked by eventScore desc. Only clans
+    // whose baseline belongs to the current event count.
+    function eventStandings() {
+        const evId = currentEventId();
+        return clanDirectory
+            .filter(c => c.eventId === evId)
+            .slice()
+            .sort((a, b) => (b.eventScore ?? 0) - (a.eventScore ?? 0));
+    }
+
+    // True if there's an active event AND our clan is #1 in the current
+    // standings. Drives the "👑 Leading the Clash" HUD title, mirroring the
+    // "👑 Rocket Goal KING" treatment used for individual-mode #1s.
+    function isMyClanLeadingClash() {
+        if (eventPhase() !== "active") return false;
+        if (!myClan) return false;
+        const standings = eventStandings();
+        return standings.length > 0 && standings[0].id === myClan.id;
+    }
+
     // Builds the event banner HTML for the clan tab. `clan` may be null (shown to
     // clanless players too, minus the personal/score bits). Returns "" if no event.
+    // Layout: header row (title + countdown) then a two-column body during active
+    // phase. Left column = your clan's numbers, right column = leader or challenger.
     function eventBannerHtml(clan, uid) {
         const phase = eventPhase();
         if (phase === "none") return "";
 
         const gold = "#ffd700";
-        let inner = `<div style="font-weight:bold;color:${gold};">🏆 ${escapeHtml(eventConfig.name)}</div>`;
+        const standings = eventStandings();
+        const leader = standings[0];
+
+        // Header row: title left, countdown/status right -- one line, always.
+        let statusRight = "";
+        if (phase === "upcoming")   statusRight = `Starts in ${formatCountdown(eventConfig.startTime)}`;
+        else if (phase === "active") statusRight = `${formatCountdown(eventConfig.endTime)} left`;
+        else                         statusRight = `Ended`;
+
+        const header = `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <div style="font-weight:bold;color:${gold};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🏆 ${escapeHtml(eventConfig.name)}</div>
+                <div style="font-size:10px;opacity:.8;white-space:nowrap;flex-shrink:0;">${statusRight}</div>
+            </div>
+        `;
+
+        let body = "";
 
         if (phase === "upcoming") {
-            inner += `<div style="font-size:11px;opacity:.85;">Starts in ${formatCountdown(eventConfig.startTime)}</div>`;
-            if (clan) inner += `<div style="font-size:10px;opacity:.7;">Play a match once it starts to lock your baseline.</div>`;
+            if (clan) body = `<div style="font-size:10px;opacity:.7;margin-top:4px;">Play a match once it starts to lock your baseline.</div>`;
         } else if (phase === "active") {
-            inner += `<div style="font-size:11px;opacity:.85;">Ends in ${formatCountdown(eventConfig.endTime)}</div>`;
             if (clan) {
                 const score = computeClanEventScore(clan);
                 const mine = myEventContribution(clan, uid);
                 const scoreColor = score >= 0 ? "#00ff66" : "#ff6b6b";
-                inner += `<div style="font-size:11px;margin-top:2px;">Clan score: <span style="color:${scoreColor};font-weight:bold;">${score >= 0 ? "+" : ""}${score}</span></div>`;
-                if (mine == null) {
-                    inner += `<div style="font-size:10px;color:#ffcf5b;">⚠️ Play a match to lock in your starting MMR!</div>`;
-                } else {
-                    inner += `<div style="font-size:10px;opacity:.75;">Your contribution: ${mine >= 0 ? "+" : ""}${mine}</div>`;
+                const contribColor = (mine != null && mine >= 0) ? "#00ff66" : "#ff6b6b";
+                const myRank = standings.findIndex(c => c.id === clan.id) + 1;
+                const leaderIsMe = leader && leader.id === clan.id;
+
+                // Rank badge with hover tooltip -- mirrors the main-HUD rankBadge
+                // pattern but on clan-event standings. Tooltip shows event-score
+                // (MMR delta) needed to catch the clan directly above you.
+                let rankBadgeHtml = "";
+                if (myRank > 0) {
+                    let rankColor;
+                    if (myRank <= 3) rankColor = "#ffd700";
+                    else if (myRank <= 10) rankColor = "#c77dff";
+                    else if (myRank <= 25) rankColor = "#00d4ff";
+                    else rankColor = "#9aa5ad";
+                    let tip;
+                    if (myRank === 1) {
+                        tip = "You're #1! 👑";
+                    } else {
+                        const ahead = standings[myRank - 2];
+                        const gap = (ahead.eventScore ?? 0) - score;
+                        tip = `+${gap} MMR to reach #${myRank - 1}`;
+                    }
+                    // Show total ("of N") only when there's actually competition;
+                    // "#1/1" is meaningless clutter when you're alone in the event.
+                    const totalPart = standings.length > 1
+                        ? `<span style="opacity:.55;font-weight:normal;"> of ${standings.length}</span>`
+                        : "";
+                    rankBadgeHtml = `<span class="rgHasTip" data-tip="${tip}" style="color:${rankColor};font-weight:bold;font-size:11px;">#${myRank}${totalPart}</span>`;
                 }
+
+                // Left column: your clan's numbers.
+                const leftCol = `
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                        <span style="font-size:9px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;">Your Clan</span>
+                        ${rankBadgeHtml}
+                    </div>
+                    <div style="font-size:12px;margin-top:2px;">Score <span style="color:${scoreColor};font-weight:bold;">${score >= 0 ? "+" : ""}${score}</span></div>
+                    ${mine == null
+                        ? `<div style="font-size:12px;color:#ffcf5b;">Play a match to lock in!</div>`
+                        : `<div style="font-size:12px;">Contribution <span style="color:${contribColor};font-weight:bold;">${mine >= 0 ? "+" : ""}${mine}</span></div>`
+                    }
+                `;
+
+                // Right column: leader (if not you) or challenger (if you lead) or lonely-message.
+                let rightCol;
+                if (leaderIsMe && standings.length > 1) {
+                    const challenger = standings[1];
+                    const gap = score - (challenger.eventScore ?? 0);
+                    rightCol = `
+                        <div style="font-size:9px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;">Challenger</div>
+                        <div style="font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            ${challenger.tag ? `<span style="opacity:.7;">[${escapeHtml(challenger.tag)}]</span> ` : ""}<b>${escapeHtml(challenger.name)}</b>
+                        </div>
+                        <div style="font-size:11px;opacity:.75;"><span style="color:#00ff66;">${challenger.eventScore >= 0 ? "+" : ""}${challenger.eventScore}</span></div>
+                        <div style="font-size:10px;opacity:.6;">Lead by ${gap}</div>
+                    `;
+                } else if (leader && !leaderIsMe) {
+                    const gap = (leader.eventScore ?? 0) - score;
+                    rightCol = `
+                        <div style="font-size:9px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;">Leader</div>
+                        <div style="font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            ${leader.tag ? `<span style="opacity:.7;">[${escapeHtml(leader.tag)}]</span> ` : ""}<b>${escapeHtml(leader.name)}</b>
+                        </div>
+                        <div style="font-size:11px;opacity:.75;"><span style="color:#00ff66;">${leader.eventScore >= 0 ? "+" : ""}${leader.eventScore}</span></div>
+                        <div style="font-size:10px;opacity:.6;">+${gap} to catch</div>
+                    `;
+                } else {
+                    rightCol = `
+                        <div style="font-size:9px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;">Standings</div>
+                        <div style="font-size:11px;margin-top:4px;opacity:.7;line-height:1.3;">You're the only clan competing so far.</div>
+                    `;
+                }
+
+                body = `
+                    <div style="display:flex;gap:10px;margin-top:6px;align-items:flex-start;">
+                        <div style="flex:1;min-width:0;">${leftCol}</div>
+                        <div style="width:1px;background:${gold}44;align-self:stretch;flex-shrink:0;"></div>
+                        <div style="flex:1;min-width:0;">${rightCol}</div>
+                    </div>
+                `;
+            } else if (leader) {
+                // Clanless viewer: single line showing who's on top.
+                body = `
+                    <div style="font-size:11px;margin-top:4px;">
+                        👑 ${leader.tag ? `[${escapeHtml(leader.tag)}] ` : ""}<b>${escapeHtml(leader.name)}</b>
+                        <span style="color:#00ff66;">${leader.eventScore >= 0 ? "+" : ""}${leader.eventScore}</span>
+                    </div>
+                `;
             }
         } else if (phase === "ended") {
-            inner += `<div style="font-size:11px;opacity:.85;">Event ended</div>`;
             if (clan) {
                 const score = computeClanEventScore(clan);
                 const scoreColor = score >= 0 ? "#00ff66" : "#ff6b6b";
-                inner += `<div style="font-size:11px;">Final clan score: <span style="color:${scoreColor};font-weight:bold;">${score >= 0 ? "+" : ""}${score}</span></div>`;
+                const myRank = standings.findIndex(c => c.id === clan.id) + 1;
+                body = `
+                    <div style="font-size:11px;margin-top:4px;">
+                        Final <span style="color:${scoreColor};font-weight:bold;">${score >= 0 ? "+" : ""}${score}</span>
+                        ${myRank > 0 ? ` · #${myRank} of ${standings.length}` : ""}
+                    </div>
+                `;
             }
         }
 
-        return `<div style="border:1px solid ${gold}55;background:${gold}11;border-radius:8px;padding:6px 8px;margin-bottom:8px;">${inner}</div>`;
+        return `<div style="border:1px solid ${gold}55;background:${gold}11;border-radius:8px;padding:8px 10px;margin-bottom:8px;">${header}${body}</div>`;
     }
 
     // ---------- Clans (Stage 1: create / browse / request / approve) ----------
@@ -1790,6 +1939,10 @@
                     memberCount: (d.members ?? []).length,
                     memberIds: (d.members ?? []).map(m => m.userId),
                     totalMMR: d.totalMMR ?? 0,
+                    // Event score for the current event (0 if their baseline is
+                    // stale/absent), so standings can rank clans by event gain.
+                    eventScore: computeClanEventScore({ ...d, id: docSnap.id }),
+                    eventId: d.eventId ?? null,
                 });
             });
             await fb.setDoc(fb.doc(fb.db, "clans_directory", "index"), { clans });
@@ -1797,6 +1950,9 @@
         } catch (e) {
             console.warn("[RG HUD] Directory refresh failed:", e);
         }
+        // Directory drives the clan-lead HUD title; refresh it so any standings
+        // change flips the title in/out of "Leading the Clash" immediately.
+        applyTitle();
     }
 
     // Sum of this player's 3v3+2v2+1v1 displayRatings (no casual).
@@ -2266,8 +2422,11 @@
                 Total MMR: <span style="color:#00ff66;">${myClan.totalMMR ?? 0}</span>
                 &nbsp;•&nbsp; ${(myClan.members ?? []).length}/${CLAN_MAX_MEMBERS} members
             </div>
-            <b>Members</b>
-            <div>${memberRows}</div>
+            <div id="rgMembersHeader" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:2px 0;margin-top:2px;">
+                <span id="rgMembersArrow" style="font-size:9px;opacity:.7;width:8px;display:inline-block;">▶</span>
+                <b>Members</b>
+            </div>
+            <div id="rgMembersList" style="display:none;">${memberRows}</div>
             ${requestsSection}
             <button id="rgLeaveClan" class="rgBtn" style="width:100%;margin-top:8px;">Leave Clan</button>
         `;
@@ -2275,6 +2434,19 @@
         if (isLeader) {
             const editBtn = document.getElementById("rgEditClan");
             if (editBtn) editBtn.onclick = showEditClanForm;
+        }
+
+        // Members list is collapsed by default to reserve HUD vertical space;
+        // clicking the header (or the little arrow) toggles it.
+        const mHeader = document.getElementById("rgMembersHeader");
+        if (mHeader) {
+            mHeader.onclick = () => {
+                const list = document.getElementById("rgMembersList");
+                const arrow = document.getElementById("rgMembersArrow");
+                const open = list.style.display !== "none";
+                list.style.display = open ? "none" : "block";
+                arrow.textContent = open ? "▶" : "▼";
+            };
         }
 
         view.querySelectorAll(".rgApprove").forEach(b => b.onclick = () => approveRequest(b.getAttribute("data-uid"), true));
