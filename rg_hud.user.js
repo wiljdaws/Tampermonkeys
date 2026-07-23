@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      11.0
+// @version      11.1
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -80,6 +80,31 @@
         hud.style.boxShadow = "";
         hud.style.animation = `rgGlowSpin ${duration.toFixed(2)}s linear infinite`;
     }
+
+    // ---------- Device ID ----------
+    // Random per-installation UUID persisted in localStorage; sent with every
+    // Firestore write so cheaters can be blacklisted by device even after they
+    // burn through source user IDs. Not a real fingerprint -- clearing
+    // localStorage resets it, so it's friction, not a fortress. Paired with
+    // server-side rules in firestore.rules (admin/blacklist doc).
+
+    function getDeviceId() {
+        let id = null;
+        try { id = localStorage.getItem("rgHudDeviceId"); } catch (e) {}
+        if (!id) {
+            id = crypto.randomUUID?.()
+                || (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 12));
+            try { localStorage.setItem("rgHudDeviceId", id); } catch (e) {}
+        }
+        return id;
+    }
+
+    // Version string sent with every Firestore write. Server rules check it
+    // against admin/config.allowedVersions -- retiring a version there force-
+    // updates everyone still on it. Prefer Tampermonkey's own metadata so this
+    // can't drift from @version; the string literal is the fallback and MUST be
+    // bumped together with @version above.
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.0";
 
     // ---------- HUD ----------
 
@@ -952,6 +977,35 @@
         }
     }
 
+    // ---------- Force-update gate ----------
+    // admin/config in Firestore holds { allowedVersions: ["12.0", ...] }.
+    // If our version isn't in the list, server rules will reject every write
+    // anyway -- so instead of spamming failed writes, check once per session,
+    // tell the user to update, and skip submissions entirely until they do.
+    // HUD display features keep working; only Firestore sync pauses.
+
+    let updateRequiredChecked = false;
+    let updateRequired = false;
+
+    async function isUpdateRequired(fb) {
+        if (updateRequiredChecked) return updateRequired;
+        try {
+            const snap = await fb.getDoc(fb.doc(fb.db, "admin", "config"));
+            if (snap.exists()) {
+                const allowed = snap.data().allowedVersions;
+                if (Array.isArray(allowed) && allowed.length > 0 && !allowed.includes(SCRIPT_VERSION)) {
+                    updateRequired = true;
+                    showError(`HUD v${SCRIPT_VERSION} is outdated -- update via Tampermonkey to resume leaderboard sync`);
+                    showBanner("⬆️ HUD update required! Tampermonkey → Check for updates", "#ffcf5b");
+                }
+            }
+        } catch (e) {
+            // Config unreadable -- don't lock the user out over a transient error.
+        }
+        updateRequiredChecked = true;
+        return updateRequired;
+    }
+
     // Strips TextMeshPro rich-text tags (<#rrggbb>, <br>, <sub>, etc.) so a
     // decorated in-game nickname has a sane plain-text fallback to suggest.
     function cleanName(name) {
@@ -1172,6 +1226,7 @@
 
         const fb = await initFirebase();
         if (!fb) return; // disabled or failed to load, silently skip
+        if (await isUpdateRequired(fb)) return; // outdated version -- rules would reject anyway
 
         const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, data.Id);
 
@@ -1224,6 +1279,10 @@
             xp: data.AccountXp ?? 0,
             equippedSkinId: data.EquippedSkinId ?? null,
             lastUpdated: new Date().toISOString(),
+            sourceUserId: data.Id,
+            deviceId: getDeviceId(),
+            scriptVersion: SCRIPT_VERSION,
+            lastWriteAt: fb.serverTimestamp(),
         };
 
         // Make sure clan membership is known before the change check below, so
@@ -1253,12 +1312,15 @@
             return;
         }
 
-        lastSyncSnapshot.set(data.Id, snapshotKey);
         lastSyncTime.set(data.Id, now);
 
         try {
             logWrite("script_submissions");
             await fb.setDoc(docRef, payload, { merge: true });
+            // Cache the snapshot only AFTER a successful write -- otherwise a
+            // rules-rejected write would look "unchanged" next time and never
+            // be retried.
+            lastSyncSnapshot.set(data.Id, snapshotKey);
             clearError();
         } catch (e) {
             console.error("[RG HUD] Leaderboard submission failed:", e);
@@ -1289,10 +1351,21 @@
             const cacheKey = `${sourceUserId}_${playlist}`;
             const cachedId = knownDocIds.get(cacheKey);
 
+            // Include identifying fields on EVERY write (not just doc creation),
+            // so the rules blacklist check has something to check on merge writes.
+            const fullFields = {
+                ...fields,
+                sourceUserId,
+                playlist,
+                deviceId: getDeviceId(),
+                scriptVersion: SCRIPT_VERSION,
+                lastWriteAt: fb.serverTimestamp(),
+            };
+
             try {
                 if (cachedId) {
                     logWrite(`leaderboard/${playlist} (cached id)`);
-                    await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, cachedId), fields, { merge: true });
+                    await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, cachedId), fullFields, { merge: true });
                     clearError();
                     return true;
                 }
@@ -1314,14 +1387,10 @@
                     const docId = existing.docs[0].id;
                     knownDocIds.set(cacheKey, docId);
                     logWrite(`leaderboard/${playlist} (found via query)`);
-                    await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, docId), fields, { merge: true });
+                    await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, docId), fullFields, { merge: true });
                 } else {
                     logWrite(`leaderboard/${playlist} (new doc)`);
-                    const newDoc = await fb.addDoc(fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION), {
-                        ...fields,
-                        sourceUserId,
-                        playlist,
-                    });
+                    const newDoc = await fb.addDoc(fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION), fullFields);
                     knownDocIds.set(cacheKey, newDoc.id);
                 }
                 clearError();
