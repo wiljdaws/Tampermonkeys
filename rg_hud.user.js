@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      10.7
+// @version      10.8
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -292,6 +292,8 @@
         `;
 
         document.body.appendChild(hud);
+        clampHudOnScreen();
+        window.addEventListener("resize", clampHudOnScreen);
         dragElement(hud, document.getElementById("rgDragHandle"));
         applyGlowSettings();
 
@@ -399,6 +401,42 @@
             syncSettingInputs();
             applyGlowSettings();
         };
+    }
+
+    // Keeps the HUD reachable: if a saved/dragged position has pushed it (mostly)
+    // off-screen, pull it back so at least a good chunk of the title bar stays
+    // visible and grabbable. Prevents the "dragged off-screen and can't get it
+    // back because it reloads off-screen" trap.
+    function clampHudOnScreen() {
+        if (!hud) return;
+        const rect = hud.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const MARGIN = 40; // keep at least this many px of the HUD on each edge
+
+        let left = rect.left;
+        let top = rect.top;
+
+        // Horizontal: never fully off left/right.
+        if (left + rect.width < MARGIN) left = MARGIN - rect.width;   // too far left
+        if (left > vw - MARGIN) left = vw - MARGIN;                    // too far right
+        // Vertical: keep the title bar row on-screen (top can't go above 0 or
+        // below the viewport bottom minus a margin).
+        if (top < 0) top = 0;
+        if (top > vh - MARGIN) top = vh - MARGIN;
+
+        if (left !== rect.left || top !== rect.top) {
+            hud.style.left = left + "px";
+            hud.style.top = top + "px";
+            hud.style.right = "auto";
+            // Persist the corrected position so it stays fixed next load too.
+            try {
+                localStorage.setItem("rgHudPos", JSON.stringify({
+                    top: hud.style.top,
+                    left: hud.style.left,
+                }));
+            } catch (e) {}
+        }
     }
 
     function dragElement(el, handle) {
@@ -1222,6 +1260,7 @@
 
         await syncToRealLeaderboard(fb, data, displayName);
         refreshRanks(fb, data, true);
+        refreshClanViewIfOpen(); // live-update event score/contribution, no extra reads
     }
 
     const REAL_LEADERBOARD_COLLECTION = "leaderboard";
@@ -2077,7 +2116,25 @@
         const fb = await initFirebase();
         if (fb) await loadEventConfig(fb, true);
 
+        renderClanViewFromMemory();
+    }
+
+    // Re-renders the clan tab from whatever's already in myClan/clanDirectory --
+    // no Firestore reads. Called after a match sync (which already refreshed
+    // myClan in memory) so the event score updates live, piggybacking on data
+    // we already have instead of reading again.
+    function renderClanViewFromMemory() {
+        const view = document.getElementById("rgClanView");
+        if (!view) return;
         myClan ? renderMyClan(view) : renderNoClan(view);
+    }
+
+    // If the clan tab is currently open, refresh it in place (no reads).
+    function refreshClanViewIfOpen() {
+        const view = document.getElementById("rgClanView");
+        if (view && view.style.display !== "none") {
+            renderClanViewFromMemory();
+        }
     }
 
     function renderNoClan(view) {
