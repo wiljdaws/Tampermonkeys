@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      10.9
+// @version      11.0
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -401,6 +401,12 @@
             syncSettingInputs();
             applyGlowSettings();
         };
+
+        // Kick off the live countdown tick. Runs once for the lifetime of the
+        // HUD; the handler itself early-returns when no banner is on screen.
+        if (!countdownIntervalId) {
+            countdownIntervalId = setInterval(tickCountdown, 1000);
+        }
     }
 
     // Keeps the HUD reachable: if a saved/dragged position has pushed it (mostly)
@@ -1698,16 +1704,46 @@
         return me.mmr - base;
     }
 
-    // Human-readable "2d 3h 14m" style countdown from now until target ms.
+    // Human-readable countdown string. Always includes seconds so the 1s tick
+    // has something to change even during multi-day windows.
     function formatCountdown(targetMs) {
         let ms = targetMs - serverNow();
         if (ms < 0) ms = 0;
         const d = Math.floor(ms / 86400000);
         const h = Math.floor((ms % 86400000) / 3600000);
         const m = Math.floor((ms % 3600000) / 60000);
-        if (d > 0) return `${d}d ${h}h ${m}m`;
-        if (h > 0) return `${h}h ${m}m`;
-        return `${m}m`;
+        const s = Math.floor((ms % 60000) / 1000);
+        if (d > 0) return `${d}d ${h}h ${m}m ${s}s`;
+        if (h > 0) return `${h}h ${m}m ${s}s`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
+    // 1s tick: updates the countdown text in place and triggers a full banner
+    // re-render on phase transitions (upcoming -> active -> ended). Reads the
+    // target time and phase from data-* attrs on the countdown span, so it's a
+    // no-op when the span isn't in the DOM (clan view closed / no event).
+    let countdownIntervalId = null;
+    function tickCountdown() {
+        const el = document.getElementById("rgEventCountdown");
+        if (!el) return;
+
+        const targetMs = parseInt(el.getAttribute("data-target-ms"), 10);
+        if (!Number.isFinite(targetMs)) return;
+        const phase = el.getAttribute("data-phase");
+
+        // Crossed the phase boundary -- structure of the banner (and possibly
+        // the HUD title) needs to change, so trigger a full re-render.
+        if (serverNow() >= targetMs && (phase === "upcoming" || phase === "active")) {
+            refreshClanViewIfOpen();
+            applyTitle();
+            return;
+        }
+
+        const prefix = el.getAttribute("data-prefix") || "";
+        const suffix = el.getAttribute("data-suffix") || "";
+        const next = prefix + formatCountdown(targetMs) + suffix;
+        if (el.textContent !== next) el.textContent = next;
     }
 
     // Standings for the current event, ranked by eventScore desc. Only clans
@@ -1742,16 +1778,22 @@
         const standings = eventStandings();
         const leader = standings[0];
 
-        // Header row: title left, countdown/status right -- one line, always.
-        let statusRight = "";
-        if (phase === "upcoming")   statusRight = `Starts in ${formatCountdown(eventConfig.startTime)}`;
-        else if (phase === "active") statusRight = `${formatCountdown(eventConfig.endTime)} left`;
-        else                         statusRight = `Ended`;
+        // Header row: title left, live-ticking countdown right -- one line.
+        // The countdown span carries data-* attrs that tickCountdown reads to
+        // update the text every second (and to detect phase transitions).
+        let countdownSpan;
+        if (phase === "upcoming") {
+            countdownSpan = `<span id="rgEventCountdown" data-target-ms="${eventConfig.startTime}" data-phase="upcoming" data-prefix="Starts in " data-suffix="">Starts in ${formatCountdown(eventConfig.startTime)}</span>`;
+        } else if (phase === "active") {
+            countdownSpan = `<span id="rgEventCountdown" data-target-ms="${eventConfig.endTime}" data-phase="active" data-prefix="" data-suffix=" left">${formatCountdown(eventConfig.endTime)} left</span>`;
+        } else {
+            countdownSpan = `<span>Ended</span>`;
+        }
 
         const header = `
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
                 <div style="font-weight:bold;color:${gold};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🏆 ${escapeHtml(eventConfig.name)}</div>
-                <div style="font-size:10px;opacity:.8;white-space:nowrap;flex-shrink:0;">${statusRight}</div>
+                <div style="font-size:10px;opacity:.8;white-space:nowrap;flex-shrink:0;">${countdownSpan}</div>
             </div>
         `;
 
