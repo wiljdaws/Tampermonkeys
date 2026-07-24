@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      11.3
+// @version      11.4
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -106,7 +106,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -920,20 +920,38 @@
     }
 
     let lastProcessedText = null;
+    let lastProcessedKey = null;
 
     function tryParseAndUpdate(text) {
-        // The game's own code logs the exact same response text to console.log
-        // that our fetch hook also sees separately, so the identical event can
-        // reach here twice in a row. Skip the repeat instead of double-processing.
+        // Fast path: raw-string dedupe catches identical bodies from either
+        // hook cheaply.
         if (text === lastProcessedText) return;
 
         try {
             const data = JSON.parse(text);
-            if (data && data.ModesGlicko) {
-                lastProcessedText = text;
-                updateHUD(data);
-                submitToLeaderboard(data);
-            }
+            if (!(data && data.ModesGlicko)) return;
+
+            // Slow path: fetch and console hooks can produce byte-different
+            // strings for the same underlying event (whitespace, encoding).
+            // Build a stable identity key from the actual player state so both
+            // paths dedupe to the same fingerprint. Set BEFORE submit fires,
+            // not after -- otherwise the two paths race past the guard while
+            // the first submit is still awaiting Firestore.
+            const key = data.Id + "|"
+                + (data.ModesGlicko?.Competitive3v3?.displayRating ?? "") + "|"
+                + (data.ModesGlicko?.Competitive2v2?.displayRating ?? "") + "|"
+                + (data.ModesGlicko?.Competitive1v1?.displayRating ?? "") + "|"
+                + (data.ModesGlicko?.Casual?.displayRating ?? "") + "|"
+                + (data.ModesData?.Competitive3v3?.matchesPlayed ?? "") + "|"
+                + (data.ModesData?.Competitive2v2?.matchesPlayed ?? "") + "|"
+                + (data.ModesData?.Competitive1v1?.matchesPlayed ?? "") + "|"
+                + (data.ModesData?.Casual?.matchesPlayed ?? "");
+            if (key === lastProcessedKey) return;
+
+            lastProcessedText = text;
+            lastProcessedKey = key;
+            updateHUD(data);
+            submitToLeaderboard(data);
         } catch (e) {}
     }
 
@@ -1498,14 +1516,21 @@
                     myClan.members = members;
                     myClan.totalMMR = totalMMR;
 
-                    // Read back the server time we just wrote, to calibrate serverNow().
-                    try {
-                        const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
-                        const ts = back.exists() ? back.data().lastSyncAt : null;
-                        if (ts?.toMillis) learnServerTime(ts.toMillis());
-                    } catch (e) {}
+                    // Read back the server time we just wrote, to calibrate
+                    // serverNow(). The offset doesn't drift within a session,
+                    // so one calibration is enough -- skipping repeats saves a
+                    // read on every subsequent match.
+                    if (serverNowOffset === null) {
+                        try {
+                            const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
+                            const ts = back.exists() ? back.data().lastSyncAt : null;
+                            if (ts?.toMillis) learnServerTime(ts.toMillis());
+                        } catch (e) {}
+                    }
 
-                    await refreshDirectory(fb);
+                    // Routine MMR tick: throttled rebuild (patches my own view
+                    // in memory instantly, hits Firestore at most every 3 min).
+                    await refreshDirectoryThrottled(fb);
                 } catch (writeErr) {
                     // MMR sync is best-effort; a failure here must not strip the tag.
                     console.warn("[RG HUD] Clan MMR write failed (tag still applies):", writeErr);
@@ -1546,10 +1571,16 @@
     // a higher mmr than mine" is a single cheap server-side count, not a full
     // collection download. Refreshed after our own data changes (force=true),
     // plus once per session as a baseline; cached in between.
+    //
+    // Read-cost note: we only re-query the modes whose MMR actually CHANGED
+    // since last refresh. Your rank in a mode you didn't play can't move due
+    // to your own actions -- someone else's climb could shuffle it, but that
+    // rare drift isn't worth 4 reads/match. Cold session refreshes all modes.
 
     let ranksFetchedThisSession = false;
     let lastRankRefresh = 0;
     const RANK_REFRESH_COOLDOWN_MS = 60000;
+    const lastRankedMMR = new Map(); // playlist -> mmr at time of last rank query
 
     async function refreshRanks(fb, data, force = false) {
         const now = Date.now();
@@ -1567,6 +1598,12 @@
                 const mmr = data.ModesGlicko?.[mode]?.displayRating;
                 if (typeof mmr !== "number") continue;
 
+                // Skip modes whose MMR hasn't moved since we last queried them.
+                // On a match-triggered refresh this typically skips 2 of 3 modes
+                // (only the played mode's MMR changed), saving ~4 reads/match.
+                // Cold session (no prior MMR recorded) still refreshes everything.
+                if (ranksFetchedThisSession && lastRankedMMR.get(playlist) === mmr) continue;
+
                 const q = fb.query(
                     fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
                     fb.where("playlist", "==", playlist),
@@ -1575,6 +1612,7 @@
                 const snapshot = await fb.getCountFromServer(q);
                 const rank = snapshot.data().count + 1;
                 cachedRanks.set(playlist, rank);
+                lastRankedMMR.set(playlist, mmr);
 
                 // Gap to next rank up: fetch the lowest-MMR entry still above us
                 // (the one directly ahead). Skipped entirely when already #1.
@@ -2045,6 +2083,44 @@
 
     // Rebuild the directory doc from scratch off current clans -- simple and
     // safe for a small number of clans. Called after any membership change.
+    //
+    // COST NOTE: this reads EVERY clan doc + 1 write. Fine for structural
+    // changes (create/join/kick/leave -- rare), too expensive to run on every
+    // match's MMR tick. Routine MMR updates go through
+    // refreshDirectoryThrottled below instead.
+
+    // Patch only MY clan's entry in the in-memory directory: zero reads, keeps
+    // my own standings/title/event views instantly fresh between throttled
+    // Firestore rebuilds.
+    function patchMyClanInDirectory() {
+        if (!myClan) return;
+        const entry = clanDirectory.find(c => c.id === myClan.id);
+        if (!entry) return;
+        entry.name = myClan.name;
+        entry.tag = myClan.tag ?? "";
+        entry.memberCount = (myClan.members ?? []).length;
+        entry.memberIds = (myClan.members ?? []).map(m => m.userId);
+        entry.totalMMR = myClan.totalMMR ?? 0;
+        entry.eventScore = computeClanEventScore(myClan);
+        entry.eventId = myClan.eventId ?? null;
+        applyTitle(); // clan-lead status may have flipped
+    }
+
+    // Throttled directory rebuild for routine per-match MMR changes. Other
+    // players and Pal's site see standings at most DIR_REFRESH_THROTTLE_MS
+    // stale; my own HUD stays live via patchMyClanInDirectory. Structural
+    // changes still call refreshDirectory directly (immediate).
+    let lastDirRefreshAt = 0;
+    const DIR_REFRESH_THROTTLE_MS = 3 * 60 * 1000;
+
+    async function refreshDirectoryThrottled(fb) {
+        patchMyClanInDirectory();
+        const now = Date.now();
+        if (now - lastDirRefreshAt < DIR_REFRESH_THROTTLE_MS) return;
+        lastDirRefreshAt = now;
+        await refreshDirectory(fb);
+    }
+
     async function refreshDirectory(fb) {
         try {
             const snap = await fb.getDocs(fb.collection(fb.db, "clans"));
