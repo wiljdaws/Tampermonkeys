@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      11.2
+// @version      11.3
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -99,12 +99,15 @@
         return id;
     }
 
-    // Version string sent with every Firestore write. Server rules check it
-    // against admin/config.allowedVersions -- retiring a version there force-
-    // updates everyone still on it. Prefer Tampermonkey's own metadata so this
-    // can't drift from @version; the string literal is the fallback and MUST be
-    // bumped together with @version above.
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.1";
+    // Version sent with every Firestore write, two forms:
+    //  - SCRIPT_VERSION: the raw @version string (from Tampermonkey metadata,
+    //    so it can't drift from the header; the literal is only a fallback).
+    //  - SCRIPT_VERSION_NUM: parsed to a number so server rules can enforce
+    //    "minimum version X and everything after" with a plain >= compare.
+    //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
+    //    never 11.10 -- parseFloat("11.10") === 11.1).
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.3";
+    const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
 
@@ -990,12 +993,13 @@
     async function isUpdateRequired(fb) {
         if (updateRequiredChecked) return updateRequired;
         try {
-            // Version list lives on admin/blacklist (same doc the rules read,
-            // so server-side the version + blacklist checks cost one read).
+            // minVersion lives on admin/blacklist (same doc the rules read, so
+            // server-side the version + blacklist checks cost one read). Any
+            // script version >= minVersion is allowed -- "X and everything after".
             const snap = await fb.getDoc(fb.doc(fb.db, "admin", "blacklist"));
             if (snap.exists()) {
-                const allowed = snap.data().allowedVersions;
-                if (Array.isArray(allowed) && allowed.length > 0 && !allowed.includes(SCRIPT_VERSION)) {
+                const minV = snap.data().minVersion;
+                if (typeof minV === "number" && SCRIPT_VERSION_NUM < minV) {
                     updateRequired = true;
                     showError(`HUD v${SCRIPT_VERSION} is outdated -- update via Tampermonkey to resume leaderboard sync`);
                     showBanner("⬆️ HUD update required! Tampermonkey → Check for updates", "#ffcf5b");
@@ -1284,6 +1288,7 @@
             sourceUserId: data.Id,
             deviceId: getDeviceId(),
             scriptVersion: SCRIPT_VERSION,
+            versionNum: SCRIPT_VERSION_NUM,
             lastWriteAt: fb.serverTimestamp(),
         };
 
@@ -1361,6 +1366,7 @@
                 playlist,
                 deviceId: getDeviceId(),
                 scriptVersion: SCRIPT_VERSION,
+                versionNum: SCRIPT_VERSION_NUM,
                 lastWriteAt: fb.serverTimestamp(),
             };
 
