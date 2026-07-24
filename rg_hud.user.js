@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      11.1
+// @version      11.2
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -104,7 +104,7 @@
     // updates everyone still on it. Prefer Tampermonkey's own metadata so this
     // can't drift from @version; the string literal is the fallback and MUST be
     // bumped together with @version above.
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.1";
 
     // ---------- HUD ----------
 
@@ -990,7 +990,9 @@
     async function isUpdateRequired(fb) {
         if (updateRequiredChecked) return updateRequired;
         try {
-            const snap = await fb.getDoc(fb.doc(fb.db, "admin", "config"));
+            // Version list lives on admin/blacklist (same doc the rules read,
+            // so server-side the version + blacklist checks cost one read).
+            const snap = await fb.getDoc(fb.doc(fb.db, "admin", "blacklist"));
             if (snap.exists()) {
                 const allowed = snap.data().allowedVersions;
                 if (Array.isArray(allowed) && allowed.length > 0 && !allowed.includes(SCRIPT_VERSION)) {
