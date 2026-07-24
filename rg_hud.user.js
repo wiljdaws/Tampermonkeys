@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      11.5
+// @version      11.6
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -106,7 +106,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -443,6 +443,13 @@
     // back because it reloads off-screen" trap.
     function clampHudOnScreen() {
         if (!hud) return;
+        // CRITICAL GUARD: while the HUD is hidden (display:none during
+        // matches), getBoundingClientRect returns all zeros. Without this
+        // guard, a window resize mid-match makes the clamp read the phantom
+        // (0,0) rect as "off-screen", move the HUD to the top-left, and
+        // PERSIST that -- so the HUD reappears top-left after every match.
+        // Skip while hidden; setAutoVisible re-clamps on show with real dims.
+        if (hud.style.display === "none" || hud.offsetWidth === 0) return;
         const rect = hud.getBoundingClientRect();
         const vw = window.innerWidth;
         const vh = window.innerHeight;
@@ -517,6 +524,9 @@
     function setAutoVisible(visible) {
         if (!hud) return;
         hud.style.display = visible ? "block" : "none";
+        // Now that it's visible with real dimensions, make sure it's actually
+        // on-screen (covers the window having resized while it was hidden).
+        if (visible) clampHudOnScreen();
     }
 
     // ---------- Error indicator ----------
