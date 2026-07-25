@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      11.7
+// @version      11.8
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -106,7 +106,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -275,6 +275,7 @@
                 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
                     <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
                     <button id="rgClanBtn" class="rgIconBtn" title="Clans">🛡️</button>
+                    <button id="rgForgeBtn" class="rgIconBtn" title="Name Forge">🎨</button>
                     <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
                     <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
                 </div>
@@ -293,6 +294,7 @@
                     </div>
                 </div>
                 <div id="rgClanView" style="display:none;">Loading clans...</div>
+                <div id="rgForgeView" style="display:none;max-height:520px;overflow-y:auto;overflow-x:hidden;margin:0 -4px;"></div>
                 <div style="margin-top:6px;display:flex;gap:4px;">
                     <button id="rgRename" class="rgBtn" style="flex:1;">✏️ Rename</button>
                     <button id="rgSub" class="rgBtn" style="flex:1;">📺 Sub</button>
@@ -377,17 +379,28 @@
         const statsView = document.getElementById("rgStatsView");
         const clanView = document.getElementById("rgClanView");
         const panel = document.getElementById("rgSettingsPanel");
+        const forgeView = document.getElementById("rgForgeView");
+        function showStatsOnly() {
+            clanView.style.display = "none";
+            forgeView.style.display = "none";
+            panel.style.display = "none";
+            statsView.style.display = "block";
+        }
         document.getElementById("rgClanBtn").onclick = () => {
             const showingClan = clanView.style.display !== "none";
-            if (showingClan) {
-                clanView.style.display = "none";
-                statsView.style.display = "block";
-            } else {
-                panel.style.display = "none"; // close settings if it was open
-                statsView.style.display = "none";
-                clanView.style.display = "block";
-                renderClanView();
-            }
+            if (showingClan) { showStatsOnly(); return; }
+            showStatsOnly();
+            statsView.style.display = "none";
+            clanView.style.display = "block";
+            renderClanView();
+        };
+        document.getElementById("rgForgeBtn").onclick = () => {
+            const showingForge = forgeView.style.display !== "none";
+            if (showingForge) { showStatsOnly(); return; }
+            showStatsOnly();
+            statsView.style.display = "none";
+            forgeView.style.display = "block";
+            RGNF.mountIn(forgeView);
         };
 
         // Settings panel wiring -- opening settings always returns to the stats
@@ -1009,11 +1022,11 @@
     }
 
     // ---------- Force-update gate ----------
-    // admin/config in Firestore holds { allowedVersions: ["12.0", ...] }.
-    // If our version isn't in the list, server rules will reject every write
-    // anyway -- so instead of spamming failed writes, check once per session,
-    // tell the user to update, and skip submissions entirely until they do.
-    // HUD display features keep working; only Firestore sync pauses.
+    // admin/blacklist in Firestore holds { minVersion: 11.1 } (numeric).
+    // If our versionNum < minVersion, server rules reject every write anyway --
+    // so instead of spamming failed writes, check once per session, tell the
+    // user to update, and skip submissions entirely until they do. HUD display
+    // features keep working; only Firestore sync pauses.
 
     let updateRequiredChecked = false;
     let updateRequired = false;
@@ -2787,5 +2800,1232 @@
             console.log("[RG HUD] loaded and running, waiting for login/matchEnd data...");
         }
     }, 100);
+
+
+    // ==================================================================
+    // 🎨 NAME FORGE (integrated) -- gradient/rich-text in-game nickname
+    // builder. Lives in its own scope: it shares helper names (esc, el,
+    // render...) with the HUD, so the wrapper prevents collisions. Its
+    // draggable 🎨 bubble + Alt+N shortcut work as in the standalone;
+    // the HUD's "🎨 Name" button toggles the same panel. Presets/history
+    // use the same localStorage keys as the standalone, so users' saved
+    // work carries over automatically. NOTE: this edits the IN-GAME
+    // nickname (rich TMP text); the ✏️ Rename button edits the separate
+    // 15-char LEADERBOARD display name.
+    // ==================================================================
+    const RGNF = (function () {
+      let _rgnfFab = null, _rgnfPanel = null;
+
+  // ------------------------------------------------------------------
+  // Constants
+  // ------------------------------------------------------------------
+  const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
+  const STORE_KEY = 'rgNameForge.presets.v1';
+  const STATE_KEY = 'rgNameForge.lastState.v1';
+  const HISTORY_KEY = 'rgNameForge.history.v1';
+  const FABPOS_KEY = 'rgNameForge.fabPos.v1';
+  const PALETTES = [
+    { label: '🔥 Fire', stops: ['#FF4D00', '#FFB800', '#FF0000'] },
+    { label: '🌊 Ocean', stops: ['#00E5FF', '#0066FF', '#7C3AED'] },
+    { label: '🌈 Rainbow', stops: ['#FF0000', '#FFFF00', '#00FF00', '#00BFFF', '#8B00FF'] },
+    { label: '🌇 Sunset', stops: ['#FF6B6B', '#FFB347', '#8E44AD'] },
+    { label: '☢️ Toxic', stops: ['#39FF14', '#CCFF00', '#00FF9F'] },
+    { label: '❄️ Ice', stops: ['#E0FFFF', '#7DD3FC', '#2563EB'] },
+  ];
+  // Sprite atlas mapped from in-game screenshot (0-15, left to right)
+  const SPRITES = [
+    { n: 0,  e: '😊', label: 'Blush smile' },
+    { n: 1,  e: '😋', label: 'Tongue-savoring' },
+    { n: 2,  e: '😍', label: 'Heart eyes' },
+    { n: 3,  e: '😎', label: 'Sunglasses' },
+    { n: 4,  e: '😀', label: 'Grinning' },
+    { n: 5,  e: '😄', label: 'Smile eyes' },
+    { n: 6,  e: '😅', label: 'Sweat smile' },
+    { n: 7,  e: '😁', label: 'Beaming' },
+    { n: 8,  e: '😆', label: 'Big laugh' },
+    { n: 9,  e: '😂', label: 'Tears of joy' },
+    { n: 10, e: '😤', label: 'Frustrated' },
+    { n: 11, e: '🤪', label: 'Zany wink' },
+    { n: 12, e: '❓', label: 'Broken sprite (renders as ? box in-game)', broken: true },
+    { n: 13, e: '🤣', label: 'Rolling (renders tilted in-game)' },
+    { n: 14, e: '🙂', label: 'Slight smile' },
+    { n: 15, e: '😕', label: 'Confused' },
+  ];
+  const spriteEmoji = (n) => (SPRITES.find(s => s.n === n) || { e: '☺' }).e;
+
+  // ------------------------------------------------------------------
+  // State
+  // ------------------------------------------------------------------
+  const defaultState = () => ({
+    name: 'RootedEngineering',
+    colorMode: 'gradient',            // 'none' | 'solid' | 'gradient'
+    solidColor: '#22d3ee',
+    stops: ['#22d3ee', '#e94fff'],    // 2-5 gradient stops
+    skipSpaces: true,                 // don't waste tags coloring spaces
+    bold: false,
+    italic: false,
+    underline: false,
+    strike: false,
+    sizePct: 100,                     // <size=N%>
+    rotateDeg: 0,                     // <rotate=N>
+    waveOn: false,                    // per-letter alternating rotation
+    waveAmp: 12,                      // wave tilt degrees
+    markOn: false,
+    markColor: '#facc15',
+    markAlpha: 64,                    // 0-255 -> hex alpha appended to mark color
+    titleOn: false,
+    titleText: '',
+    titleColorMode: 'solid',          // 'inherit' | 'solid' | 'gradient'
+    titleColor: '#94a3b8',
+    titleSizePct: 60,
+    titleSub: true,                   // wrap title in <sub> for that low-set look
+    scoredMode: 'default',            // 'default' | 'hide' | 'tiny' | 'styled'
+    scoredColor: '#22d3ee',
+    scoredSizePct: 100,
+  });
+
+  let state = loadJSON(STATE_KEY, defaultState());
+  // backfill any new fields if an old state was saved
+  state = Object.assign(defaultState(), state);
+
+  // ------------------------------------------------------------------
+  // Utilities
+  // ------------------------------------------------------------------
+  function loadJSON(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function saveJSON(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ }
+  }
+
+  function hexToRgb(hex) {
+    const h = hex.replace('#', '');
+    return {
+      r: parseInt(h.substring(0, 2), 16),
+      g: parseInt(h.substring(2, 4), 16),
+      b: parseInt(h.substring(4, 6), 16),
+    };
+  }
+
+  function rgbToHex({ r, g, b }) {
+    const c = (n) => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, '0').toUpperCase();
+    return `#${c(r)}${c(g)}${c(b)}`;
+  }
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  function lerpColor(c1, c2, t) {
+    const a = hexToRgb(c1), b = hexToRgb(c2);
+    return rgbToHex({ r: lerp(a.r, b.r, t), g: lerp(a.g, b.g, t), b: lerp(a.b, b.b, t) });
+  }
+
+  // Multi-stop gradient sample at t in [0,1]
+  function gradientAt(stops, t) {
+    if (stops.length === 1) return stops[0].toUpperCase();
+    const seg = 1 / (stops.length - 1);
+    const idx = Math.min(Math.floor(t / seg), stops.length - 2);
+    const localT = (t - idx * seg) / seg;
+    return lerpColor(stops[idx], stops[idx + 1], localT);
+  }
+
+  function alphaHex(n) {
+    return Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, '0').toUpperCase();
+  }
+
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100;
+    const k = (n) => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    return rgbToHex({ r: f(0) * 255, g: f(8) * 255, b: f(4) * 255 });
+  }
+
+  function randomStops() {
+    const h = Math.floor(Math.random() * 360);
+    const spread = 80 + Math.floor(Math.random() * 160);
+    return [h, h + spread / 2, h + spread].map((x) => hslToHex(((x % 360) + 360) % 360, 95, 55));
+  }
+
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ------------------------------------------------------------------
+  // TMP code generation
+  // ------------------------------------------------------------------
+  function colorizeText(text, mode, solid, stops, skipSpaces, waveAmp = 0) {
+    const wave = waveAmp !== 0;
+
+    // Fast paths when no per-letter work is needed
+    if (!wave && mode === 'none') return text;
+    if (!wave && mode === 'solid') return `<${solid.toUpperCase()}>` + text;
+
+    const tokens = tokenize(text);
+    const paintable = tokens.filter(t => t.type === 'char' && !(skipSpaces && t.value === ' '));
+    const n = paintable.length;
+    if (n === 0) return mode === 'solid' ? `<${solid.toUpperCase()}>` + text : text;
+
+    let i = 0;
+    let lastColor = null;
+    let out = '';
+    if (mode === 'solid') out += `<${solid.toUpperCase()}>`;
+    for (const tok of tokens) {
+      if (tok.type === 'sprite') { out += tok.value; continue; }
+      if (skipSpaces && tok.value === ' ') { out += ' '; continue; }
+      if (wave) out += `<rotate=${i % 2 === 0 ? waveAmp : -waveAmp}>`;
+      if (mode === 'gradient') {
+        const t = n === 1 ? 0 : i / (n - 1);
+        const col = gradientAt(stops, t);
+        if (col !== lastColor) { out += `<${col}>`; lastColor = col; }
+      }
+      out += tok.value;
+      i++;
+    }
+    if (wave) out += '<rotate=0>'; // reset so trailing text (title/Scored!) sits level
+    return out;
+  }
+
+  // Split text into chars, but keep <sprite=N> tags intact as single tokens
+  function tokenize(text) {
+    const tokens = [];
+    const re = /<sprite=\d+>/g;
+    let lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      for (const ch of text.slice(lastIndex, m.index)) tokens.push({ type: 'char', value: ch });
+      tokens.push({ type: 'sprite', value: m[0] });
+      lastIndex = m.index + m[0].length;
+    }
+    for (const ch of text.slice(lastIndex)) tokens.push({ type: 'char', value: ch });
+    return tokens;
+  }
+
+  function buildCode(s) {
+    let open = '';
+    let close = '';
+
+    if (s.rotateDeg !== 0 && !s.waveOn) open += `<rotate=${s.rotateDeg}>`;
+    if (s.sizePct !== 100) open += `<size=${s.sizePct}%>`;
+    if (s.markOn) { open += `<mark=${s.markColor.toUpperCase()}${alphaHex(s.markAlpha)}>`; close = '</mark>' + close; }
+    if (s.bold) { open += '<b>'; close = '</b>' + close; }
+    if (s.italic) { open += '<i>'; close = '</i>' + close; }
+    if (s.underline) { open += '<u>'; close = '</u>' + close; }
+    if (s.strike) { open += '<s>'; close = '</s>' + close; }
+
+    const nameCode = colorizeText(s.name, s.colorMode, s.solidColor, s.stops, s.skipSpaces, s.waveOn ? s.waveAmp : 0);
+
+    let code = open + nameCode + close;
+
+    // Title line
+    if (s.titleOn && s.titleText.trim().length > 0) {
+      let t = s.titleText;
+      if (s.titleColorMode === 'solid') {
+        t = `<${s.titleColor.toUpperCase()}>` + t;
+      } else if (s.titleColorMode === 'gradient') {
+        t = colorizeText(t, 'gradient', s.titleColor, s.stops, s.skipSpaces);
+      }
+      let tOpen = '', tClose = '';
+      if (s.titleSizePct !== 100) tOpen += `<size=${s.titleSizePct}%>`;
+      if (s.titleSub) { tOpen += '<sub>'; tClose = '</sub>' + tClose; }
+      code += '<br>' + tOpen + t + tClose;
+    }
+
+    // Scored! treatment — trailing tags style whatever the game appends
+    switch (s.scoredMode) {
+      case 'hide': code += '<size=0>'; break;
+      case 'tiny': code += '<sub><size=25%>'; break;
+      case 'styled': code += `<size=${s.scoredSizePct}%><${s.scoredColor.toUpperCase()}>`; break;
+      default: break;
+    }
+
+    return code;
+  }
+
+  // ------------------------------------------------------------------
+  // Preview rendering (approximation of TMP output)
+  // ------------------------------------------------------------------
+  function renderPreview(s) {
+    const wrap = document.createElement('div');
+    wrap.className = 'rgnf-preview-inner';
+
+    const nameLine = document.createElement('div');
+    nameLine.className = 'rgnf-preview-name';
+
+    const styles = [];
+    if (s.bold) styles.push('font-weight:700');
+    if (s.italic) styles.push('font-style:italic');
+    // Per-letter decoration mirror: the in-game TMP tags wrap each character
+    // (<u>a</u><u>b</u>...) so we do the same in the preview. Setting
+    // text-decoration only on the parent nameLine gets visually overpowered
+    // when child spans set their own color, and breaks entirely for spans
+    // that use rotate transforms (each inline-block becomes its own
+    // decoration context). Applied per-span below via decoCSS.
+    if (s.sizePct !== 100) styles.push(`font-size:${Math.max(8, 18 * s.sizePct / 100)}px`);
+    if (s.markOn) styles.push(`background:${s.markColor}${alphaHex(s.markAlpha)}`);
+    nameLine.style.cssText = styles.join(';');
+
+    const decoParts = [];
+    if (s.underline) decoParts.push('underline');
+    if (s.strike) decoParts.push('line-through');
+    const decoCSS = decoParts.length ? decoParts.join(' ') : '';
+
+    const tokens = tokenize(s.name);
+    const paintable = tokens.filter(t => t.type === 'char' && !(s.skipSpaces && t.value === ' '));
+    const n = paintable.length;
+    let i = 0;
+    for (const tok of tokens) {
+      const span = document.createElement('span');
+      if (tok.type === 'sprite') {
+        const num = Number(tok.value.match(/\d+/)[0]);
+        span.textContent = spriteEmoji(num);
+        span.title = tok.value;
+      } else {
+        span.textContent = tok.value;
+        if (tok.value !== ' ' || !s.skipSpaces) {
+          if (s.colorMode === 'solid') span.style.color = s.solidColor;
+          else if (s.colorMode === 'gradient' && n > 0 && tok.value !== ' ') {
+            const t = n === 1 ? 0 : i / (n - 1);
+            span.style.color = gradientAt(s.stops, t);
+          }
+        }
+        // Per-span decoration: applied here (not on the parent) so it
+        // survives rotate transforms and inherits each glyph's own color.
+        if (decoCSS && tok.value !== ' ') {
+          span.style.textDecorationLine = decoCSS;
+          span.style.textDecorationColor = span.style.color || 'currentColor';
+          span.style.textDecorationThickness = 'from-font';
+        }
+        if (tok.value !== ' ') {
+          if (s.waveOn) {
+            span.style.display = 'inline-block';
+            span.style.transform = `rotate(${(i % 2 === 0 ? -1 : 1) * s.waveAmp}deg)`;
+          }
+          i++;
+        }
+      }
+      if (!s.waveOn && s.rotateDeg !== 0) {
+        span.style.display = 'inline-block';
+        span.style.transform = `rotate(${s.rotateDeg}deg)`;
+      }
+      nameLine.appendChild(span);
+    }
+    wrap.appendChild(nameLine);
+
+    if (s.titleOn && s.titleText.trim()) {
+      const titleLine = document.createElement('div');
+      titleLine.className = 'rgnf-preview-title';
+      titleLine.style.fontSize = `${Math.max(7, 18 * s.titleSizePct / 100)}px`;
+      if (s.titleSub) titleLine.style.verticalAlign = 'sub';
+      if (s.titleColorMode === 'solid') {
+        titleLine.textContent = s.titleText;
+        titleLine.style.color = s.titleColor;
+      } else if (s.titleColorMode === 'gradient') {
+        const chars = [...s.titleText];
+        const paint = chars.filter(c => c !== ' ').length;
+        let j = 0;
+        for (const c of chars) {
+          const sp = document.createElement('span');
+          sp.textContent = c;
+          if (c !== ' ') {
+            sp.style.color = gradientAt(s.stops, paint === 1 ? 0 : j / (paint - 1));
+            j++;
+          }
+          titleLine.appendChild(sp);
+        }
+      } else {
+        titleLine.textContent = s.titleText;
+      }
+      wrap.appendChild(titleLine);
+    }
+
+    // Simulated Scored! suffix
+    const scored = document.createElement('span');
+    scored.className = 'rgnf-preview-scored';
+    scored.textContent = ' Scored!';
+    switch (s.scoredMode) {
+      case 'hide': scored.style.display = 'none'; break;
+      case 'tiny': scored.style.fontSize = '6px'; scored.style.verticalAlign = 'sub'; break;
+      case 'styled':
+        scored.style.color = s.scoredColor;
+        scored.style.fontSize = `${Math.max(6, 14 * s.scoredSizePct / 100)}px`;
+        break;
+      default: scored.style.color = '#cbd5e1'; break;
+    }
+    nameLine.appendChild(scored);
+
+    return wrap;
+  }
+
+  // ------------------------------------------------------------------
+  // Auth: fresh Firebase ID token (SDK first, IndexedDB fallback + refresh)
+  // ------------------------------------------------------------------
+  async function getIdToken() {
+    // 1) Firebase SDK exposed on the page
+    try {
+      if (window.firebase && window.firebase.auth) {
+        const u = window.firebase.auth().currentUser;
+        if (u) return await u.getIdToken();
+      }
+    } catch (e) { /* fall through */ }
+
+    // 2) IndexedDB cache written by the Firebase JS SDK
+    const rec = await readAuthFromIDB();
+    if (!rec) throw new Error('No Firebase auth found. Are you logged in on this tab?');
+
+    const { apiKey, sts } = rec;
+    const expMs = Number(sts.expirationTime || 0);
+    if (Date.now() < expMs - 60_000 && sts.accessToken) return sts.accessToken;
+
+    // 3) Token expired — refresh it
+    const resp = await fetch(`https://securetoken.googleapis.com/v1/token?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: sts.refreshToken }),
+    });
+    if (!resp.ok) throw new Error(`Token refresh failed (${resp.status})`);
+    const j = await resp.json();
+    if (!j.access_token) throw new Error('Token refresh returned no access_token');
+    return j.access_token;
+  }
+
+  function readAuthFromIDB() {
+    return new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open('firebaseLocalStorageDb'); } catch (e) { return resolve(null); }
+      req.onerror = () => resolve(null);
+      req.onsuccess = () => {
+        const db = req.result;
+        try {
+          const tx = db.transaction('firebaseLocalStorage', 'readonly');
+          const store = tx.objectStore('firebaseLocalStorage');
+          const all = store.getAll();
+          all.onsuccess = () => {
+            const rows = all.result || [];
+            const row = rows.find(r => typeof r.fbase_key === 'string' && r.fbase_key.startsWith('firebase:authUser:'));
+            if (!row || !row.value || !row.value.stsTokenManager) return resolve(null);
+            const apiKey = row.fbase_key.split(':')[2];
+            resolve({ apiKey, sts: row.value.stsTokenManager });
+          };
+          all.onerror = () => resolve(null);
+        } catch (e) { resolve(null); }
+      };
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // API
+  // ------------------------------------------------------------------
+  async function applyNickname(code) {
+    const token = await getIdToken();
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': 'Bearer ' + token,
+      },
+      body: new URLSearchParams({ nickname: code }),
+    });
+    const body = await res.text();
+    return { ok: res.ok && body.trim() === 'true', status: res.status, body };
+  }
+
+  // ------------------------------------------------------------------
+  // UI
+  // ------------------------------------------------------------------
+  const css = `
+    :root {
+      --rgnf-bg: #0b0e1a;
+      --rgnf-panel: #10142a;
+      --rgnf-panel-2: #171c38;
+      --rgnf-line: #23294d;
+      --rgnf-text: #e2e8f0;
+      --rgnf-muted: #8b93b8;
+      --rgnf-accent: #22d3ee;
+      --rgnf-accent-2: #e94fff;
+    }
+    .rgnf-fab {
+      position: fixed; bottom: 90px; right: 18px; z-index: 999999;
+      width: 52px; height: 52px; border-radius: 14px; border: 1px solid var(--rgnf-line);
+      background: linear-gradient(135deg, var(--rgnf-panel) 0%, var(--rgnf-panel-2) 100%);
+      color: var(--rgnf-accent); font-size: 24px; cursor: pointer;
+      box-shadow: 0 6px 24px rgba(0,0,0,.5), 0 0 0 1px rgba(34,211,238,.15) inset;
+      transition: transform .15s ease;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: none; user-select: none;
+    }
+    .rgnf-fab:hover { transform: translateY(-2px) scale(1.04); }
+    .rgnf-fab:active { cursor: grabbing; }
+    .rgnf-panel {
+      position: fixed; bottom: 82px; right: 18px; z-index: 999999;
+      width: 360px; max-height: 78vh; overflow-y: auto;
+      background: var(--rgnf-bg); color: var(--rgnf-text);
+      border: 1px solid var(--rgnf-line); border-radius: 16px;
+      box-shadow: 0 16px 48px rgba(0,0,0,.6);
+      font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+      display: none;
+    }
+    .rgnf-panel.rgnf-open { display: block; }
+    .rgnf-head {
+      position: sticky; top: 0; z-index: 2;
+      padding: 14px 16px; cursor: grab;
+      background: linear-gradient(90deg, rgba(34,211,238,.12), rgba(233,79,255,.12)), var(--rgnf-bg);
+      border-bottom: 1px solid var(--rgnf-line);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .rgnf-head b {
+      font-size: 14px; letter-spacing: .08em; text-transform: uppercase;
+      background: linear-gradient(90deg, var(--rgnf-accent), var(--rgnf-accent-2));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .rgnf-x { background: none; border: none; color: var(--rgnf-muted); font-size: 16px; cursor: pointer; }
+    .rgnf-sec { padding: 12px 16px; border-bottom: 1px solid var(--rgnf-line); }
+    .rgnf-sec h4 {
+      margin: 0 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--rgnf-muted); font-weight: 600;
+    }
+    .rgnf-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+    .rgnf-row label { color: var(--rgnf-muted); min-width: 74px; }
+    .rgnf-panel input[type=text], .rgnf-panel select {
+      flex: 1; min-width: 0; background: var(--rgnf-panel); color: var(--rgnf-text);
+      border: 1px solid var(--rgnf-line); border-radius: 8px; padding: 7px 9px; font-size: 13px;
+    }
+    .rgnf-panel input[type=color] {
+      width: 34px; height: 28px; padding: 0; border: 1px solid var(--rgnf-line);
+      border-radius: 6px; background: none; cursor: pointer;
+    }
+    .rgnf-panel input[type=range] { flex: 1; accent-color: var(--rgnf-accent); }
+    .rgnf-val { min-width: 44px; text-align: right; color: var(--rgnf-accent); font-variant-numeric: tabular-nums; }
+    .rgnf-chip {
+      background: var(--rgnf-panel); border: 1px solid var(--rgnf-line); color: var(--rgnf-text);
+      border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px;
+    }
+    .rgnf-chip.rgnf-on { border-color: var(--rgnf-accent); color: var(--rgnf-accent); box-shadow: 0 0 0 1px rgba(34,211,238,.25) inset; }
+    .rgnf-stops { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .rgnf-stop { position: relative; }
+    .rgnf-stop button {
+      position: absolute; top: -7px; right: -7px; width: 15px; height: 15px; border-radius: 50%;
+      border: none; background: #ef4444; color: #fff; font-size: 9px; line-height: 1; cursor: pointer;
+    }
+    .rgnf-gradbar { height: 10px; border-radius: 6px; margin-top: 6px; border: 1px solid var(--rgnf-line); }
+    .rgnf-sprites { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+    .rgnf-sprites button {
+      background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
+      border-radius: 6px; padding: 3px 0; cursor: pointer; font-size: 15px; line-height: 1.2;
+    }
+    .rgnf-sprites button:hover { border-color: var(--rgnf-accent); transform: scale(1.1); }
+    .rgnf-sprites button.rgnf-sprite-broken { opacity: .45; filter: grayscale(.6); }
+    .rgnf-preview {
+      background: radial-gradient(120% 140% at 50% 0%, #101a3a 0%, #070a16 70%);
+      border: 1px solid var(--rgnf-line); border-radius: 12px; padding: 14px; text-align: center;
+      min-height: 56px; display: flex; align-items: center; justify-content: center;
+      /* Sticky: pins to the top of the scrolling tab container. Placed as a
+         direct child of the panel (not nested inside secPreview) so its
+         parent extent is the full scrollable body -- otherwise sticky would
+         unmoor the moment secPreview's shorter box scrolled past. */
+      position: sticky; top: 0; z-index: 5;
+      box-shadow: 0 6px 8px -6px rgba(0,0,0,0.6);
+      margin-bottom: 8px;
+    }
+    .rgnf-preview-name { font-size: 18px; font-weight: 400; word-break: break-word; }
+    .rgnf-preview-title { margin-top: 2px; }
+    .rgnf-code {
+      margin-top: 8px; background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
+      border-radius: 8px; padding: 8px; font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
+      color: #9fb3ff; word-break: break-all; max-height: 90px; overflow-y: auto; user-select: all;
+    }
+    .rgnf-meta { display: flex; justify-content: space-between; color: var(--rgnf-muted); font-size: 11px; margin-top: 4px; }
+    .rgnf-btn {
+      border: none; border-radius: 10px; padding: 9px 12px; font-weight: 700; cursor: pointer; font-size: 13px;
+    }
+    .rgnf-btn-apply {
+      flex: 1; color: #06121a;
+      background: linear-gradient(90deg, var(--rgnf-accent), var(--rgnf-accent-2));
+    }
+    .rgnf-btn-ghost { background: var(--rgnf-panel); color: var(--rgnf-text); border: 1px solid var(--rgnf-line); }
+    .rgnf-status { margin-top: 8px; font-size: 12px; min-height: 16px; }
+    .rgnf-status.ok { color: #34d399; }
+    .rgnf-status.err { color: #f87171; }
+    .rgnf-presets { display: flex; flex-direction: column; gap: 6px; }
+    .rgnf-preset { display: flex; align-items: center; gap: 6px; }
+    .rgnf-preset span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  `;
+
+  function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'text') node.textContent = v;
+      else if (k === 'html') node.innerHTML = v;
+      else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+      else node.setAttribute(k, v);
+    }
+    for (const c of children) node.appendChild(c);
+    return node;
+  }
+
+  function buildUI() {
+    const style = document.createElement('style');
+    style.textContent = css;
+    document.head.appendChild(style);
+
+    const fab = el('button', { class: 'rgnf-fab', title: 'Name Forge (Alt+N) — drag to move', text: '??' });
+    const panel = el('div', { class: 'rgnf-panel' });
+
+
+    // Restore saved FAB position (stored as left/top in px)
+    const savedPos = loadJSON(FABPOS_KEY, null);
+    if (savedPos && typeof savedPos.left === 'number' && typeof savedPos.top === 'number') {
+      applyFabPos(fab, savedPos.left, savedPos.top);
+    }
+
+    // Keep the FAB on-screen if the window was resized smaller since last visit
+    window.addEventListener('resize', () => clampFab(fab));
+
+    makeFabDraggable(fab, panel);
+
+    fab.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePanel(fab, panel); }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.altKey && e.code === 'KeyN' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        togglePanel(fab, panel);
+      }
+    });
+    document.body.appendChild(fab);
+    document.body.appendChild(panel);
+_rgnfFab = fab; _rgnfPanel = panel;
+    fab.style.display = 'none'; // header 🎨 button replaces the floating bubble
+    panel.style.display = 'none';
+    clampFab(fab);
+
+    render(panel);
+  }
+
+  // Position the panel next to the FAB, flipping sides/vertical as needed to stay on-screen
+  function positionPanel(fab, panel) {
+    const f = fab.getBoundingClientRect();
+    const gap = 12;
+    const pw = 360; // matches CSS width
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    // Horizontal: prefer left-aligned with FAB, flip left if it would overflow right edge
+    let left = f.left;
+    if (left + pw > window.innerWidth - 8) left = Math.max(8, f.right - pw);
+    // Vertical: prefer opening upward from the FAB; if not enough room, open downward
+    const ph = Math.min(window.innerHeight * 0.78, 640);
+    let top = f.top - gap - ph;
+    if (top < 8) top = Math.min(window.innerHeight - ph - 8, f.bottom + gap);
+    panel.style.left = Math.round(left) + 'px';
+    panel.style.top = Math.round(Math.max(8, top)) + 'px';
+  }
+
+  function togglePanel(fab, panel) {
+    const willOpen = !panel.classList.contains('rgnf-open');
+    if (willOpen) positionPanel(fab, panel);
+    panel.classList.toggle('rgnf-open');
+  }
+
+  function applyFabPos(fab, left, top) {
+    fab.style.right = 'auto';
+    fab.style.bottom = 'auto';
+    fab.style.left = left + 'px';
+    fab.style.top = top + 'px';
+  }
+
+  function clampFab(fab) {
+    const r = fab.getBoundingClientRect();
+    // If still anchored via right/bottom (never moved), leave it alone
+    if (fab.style.left === '' || fab.style.left === 'auto') return;
+    const maxLeft = window.innerWidth - r.width - 6;
+    const maxTop = window.innerHeight - r.height - 6;
+    const left = Math.max(6, Math.min(r.left, maxLeft));
+    const top = Math.max(6, Math.min(r.top, maxTop));
+    applyFabPos(fab, left, top);
+  }
+
+  function makeFabDraggable(fab, panel) {
+    let sx, sy, ox, oy, dragging = false, moved = false;
+    const DRAG_THRESHOLD = 4; // px before a press counts as a drag not a click
+
+    const onDown = (e) => {
+      const pt = e.touches ? e.touches[0] : e;
+      dragging = true; moved = false;
+      const rect = fab.getBoundingClientRect();
+      sx = pt.clientX; sy = pt.clientY; ox = rect.left; oy = rect.top;
+      applyFabPos(fab, ox, oy); // switch from right/bottom anchoring to left/top
+      fab.style.cursor = 'grabbing';
+      e.preventDefault();
+    };
+
+    const onMove = (e) => {
+      if (!dragging) return;
+      const pt = e.touches ? e.touches[0] : e;
+      const dx = pt.clientX - sx, dy = pt.clientY - sy;
+      if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) moved = true;
+      let left = ox + dx, top = oy + dy;
+      const r = fab.getBoundingClientRect();
+      left = Math.max(6, Math.min(left, window.innerWidth - r.width - 6));
+      top = Math.max(6, Math.min(top, window.innerHeight - r.height - 6));
+      applyFabPos(fab, left, top);
+    };
+
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      fab.style.cursor = 'pointer';
+      const r = fab.getBoundingClientRect();
+      if (moved) {
+        saveJSON(FABPOS_KEY, { left: Math.round(r.left), top: Math.round(r.top) });
+        // if the panel is open, keep it glued to the button's new spot
+        if (panel.classList.contains('rgnf-open')) positionPanel(fab, panel);
+      } else {
+        togglePanel(fab, panel); // treat as a click
+      }
+    };
+
+    fab.addEventListener('mousedown', onDown);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    fab.addEventListener('touchstart', onDown, { passive: false });
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+  }
+
+  function render(panel) {
+    panel.innerHTML = '';
+    saveJSON(STATE_KEY, state);
+
+    // ---- Header (draggable in fly-out mode; inert inside HUD tab) ----
+    // The ✕ close button was removed when Forge became a HUD tab: closing is
+    // now done by clicking the 🎨 header icon again, matching Clans/Settings.
+    const head = el('div', { class: 'rgnf-head' }, [
+      el('b', { text: 'Name Forge' }),
+    ]);
+    makeDraggable(panel, head);
+    panel.appendChild(head);
+
+    // ---- Preview + code ----
+    // The rendered preview BOX is appended directly to the panel (Forge's
+    // outer container) rather than nested inside secPreview, because CSS
+    // sticky only holds while the PARENT is in the viewport. Nested inside
+    // secPreview it would let go the moment the code block scrolled the
+    // section past. Appended directly to the panel, its parent is the entire
+    // scrollable tab -- so it stays pinned no matter how far you scroll.
+    // The section header/code/meta stay in secPreview and scroll normally.
+    const pv = el('div', { class: 'rgnf-preview' });
+    pv.appendChild(renderPreview(state));
+    panel.appendChild(pv);
+
+    const secPreview = el('div', { class: 'rgnf-sec rgnf-preview-sec' });
+    secPreview.appendChild(el('h4', { text: 'Preview' }));
+    const codeDiv = el('div', { class: 'rgnf-code', text: buildCode(state) });
+    secPreview.appendChild(codeDiv);
+    const charSpan = el('span', { text: '' });
+    const letterSpan = el('span', { text: '' });
+    secPreview.appendChild(el('div', { class: 'rgnf-meta' }, [charSpan, letterSpan]));
+    panel.appendChild(secPreview);
+
+    // Update just the preview/code/meta without rebuilding the panel,
+    // so the name field keeps focus and cursor position while typing.
+    const refreshPreview = () => {
+      const code = buildCode(state);
+      pv.replaceChildren(renderPreview(state));
+      codeDiv.textContent = code;
+      charSpan.textContent = `${code.length} chars`;
+      letterSpan.textContent = `${[...state.name].length} letters`;
+      saveJSON(STATE_KEY, state);
+    };
+    refreshPreview();
+
+    // ---- Name ----
+    const secName = el('div', { class: 'rgnf-sec' });
+    secName.appendChild(el('h4', { text: 'Name' }));
+    const nameInput = el('input', {
+      type: 'text', value: state.name,
+      placeholder: 'Type your name…',
+      oninput: (e) => { state.name = e.target.value; refreshPreview(); },
+    });
+    secName.appendChild(el('div', { class: 'rgnf-row' }, [
+      nameInput,
+      el('button', {
+        class: 'rgnf-chip', text: '✕ Clear', title: 'Clear the name field',
+        onclick: () => { state.name = ''; nameInput.value = ''; refreshPreview(); nameInput.focus(); },
+      }),
+    ]));
+
+    // sprite inserter
+    secName.appendChild(el('h4', { text: 'Insert emoji sprite (0–15)' }));
+    const spriteGrid = el('div', { class: 'rgnf-sprites' });
+    SPRITES.forEach((sp) => {
+      const btn = el('button', {
+        text: sp.e,
+        title: `${sp.n}: ${sp.label} — <sprite=${sp.n}>`,
+        onclick: () => {
+          const tag = `<sprite=${sp.n}>`;
+          const start = nameInput.selectionStart ?? state.name.length;
+          const end = nameInput.selectionEnd ?? state.name.length;
+          state.name = state.name.slice(0, start) + tag + state.name.slice(end);
+          nameInput.value = state.name;
+          const pos = start + tag.length;
+          nameInput.focus();
+          nameInput.setSelectionRange(pos, pos);
+          refreshPreview();
+        },
+      });
+      if (sp.broken) btn.classList.add('rgnf-sprite-broken');
+      spriteGrid.appendChild(btn);
+    });
+    secName.appendChild(spriteGrid);
+    panel.appendChild(secName);
+
+    // ---- Color ----
+    const secColor = el('div', { class: 'rgnf-sec' });
+    secColor.appendChild(el('h4', { text: 'Color' }));
+    const modeRow = el('div', { class: 'rgnf-row' });
+    ['none', 'solid', 'gradient'].forEach((m) => {
+      modeRow.appendChild(el('button', {
+        class: `rgnf-chip ${state.colorMode === m ? 'rgnf-on' : ''}`,
+        text: m[0].toUpperCase() + m.slice(1),
+        onclick: () => { state.colorMode = m; render(panel); },
+      }));
+    });
+    secColor.appendChild(modeRow);
+
+    if (state.colorMode === 'solid') {
+      secColor.appendChild(el('div', { class: 'rgnf-row' }, [
+        el('label', { text: 'Color' }),
+        el('input', { type: 'color', value: state.solidColor, oninput: (e) => { state.solidColor = e.target.value; render(panel); } }),
+      ]));
+    }
+
+    if (state.colorMode === 'gradient') {
+      const stopsWrap = el('div', { class: 'rgnf-stops' });
+      state.stops.forEach((c, idx) => {
+        const stop = el('div', { class: 'rgnf-stop' }, [
+          el('input', { type: 'color', value: c, oninput: (e) => { state.stops[idx] = e.target.value; render(panel); } }),
+        ]);
+        if (state.stops.length > 2) {
+          stop.appendChild(el('button', { text: '✕', onclick: () => { state.stops.splice(idx, 1); render(panel); } }));
+        }
+        stopsWrap.appendChild(stop);
+      });
+      if (state.stops.length < 5) {
+        stopsWrap.appendChild(el('button', {
+          class: 'rgnf-chip', text: '+ stop',
+          onclick: () => { state.stops.push(state.stops[state.stops.length - 1]); render(panel); },
+        }));
+      }
+      secColor.appendChild(stopsWrap);
+      const bar = el('div', { class: 'rgnf-gradbar' });
+      bar.style.background = `linear-gradient(90deg, ${state.stops.join(',')})`;
+      secColor.appendChild(bar);
+
+      // One-click palettes + tools
+      const palRow = el('div', { class: 'rgnf-row' });
+      PALETTES.forEach((p) => {
+        palRow.appendChild(el('button', {
+          class: 'rgnf-chip', text: p.label, title: p.stops.join(' → '),
+          onclick: () => { state.stops = [...p.stops]; render(panel); },
+        }));
+      });
+      palRow.appendChild(el('button', {
+        class: 'rgnf-chip', text: '⇄ Reverse', title: 'Flip gradient direction',
+        onclick: () => { state.stops.reverse(); render(panel); },
+      }));
+      palRow.appendChild(el('button', {
+        class: 'rgnf-chip', text: '🎲 Random', title: 'Roll a random vivid gradient',
+        onclick: () => { state.stops = randomStops(); render(panel); },
+      }));
+      secColor.appendChild(palRow);
+
+      secColor.appendChild(el('div', { class: 'rgnf-row' }, [
+        el('button', {
+          class: `rgnf-chip ${state.skipSpaces ? 'rgnf-on' : ''}`,
+          text: 'Skip spaces (fewer tags)',
+          onclick: () => { state.skipSpaces = !state.skipSpaces; render(panel); },
+        }),
+      ]));
+    }
+    panel.appendChild(secColor);
+
+    // ---- Styles ----
+    const secStyle = el('div', { class: 'rgnf-sec' });
+    secStyle.appendChild(el('h4', { text: 'Style' }));
+    const styleRow = el('div', { class: 'rgnf-row' });
+    const toggles = [['bold', 'B'], ['italic', 'I'], ['underline', 'U'], ['strike', 'S']];
+    toggles.forEach(([key, label]) => {
+      styleRow.appendChild(el('button', {
+        class: `rgnf-chip ${state[key] ? 'rgnf-on' : ''}`, text: label,
+        onclick: () => { state[key] = !state[key]; render(panel); },
+      }));
+    });
+    secStyle.appendChild(styleRow);
+
+    secStyle.appendChild(sliderRow(panel, 'Size', 'sizePct', 25, 200, '%'));
+    secStyle.appendChild(sliderRow(panel, 'Rotate', 'rotateDeg', -45, 45, '°'));
+
+    const waveRow = el('div', { class: 'rgnf-row' });
+    waveRow.appendChild(el('button', {
+      class: `rgnf-chip ${state.waveOn ? 'rgnf-on' : ''}`,
+      text: '〰 Wave letters',
+      title: 'Alternates each letter\'s tilt — overrides Rotate while on',
+      onclick: () => { state.waveOn = !state.waveOn; render(panel); },
+    }));
+    secStyle.appendChild(waveRow);
+    if (state.waveOn) {
+      secStyle.appendChild(sliderRow(panel, 'Tilt', 'waveAmp', 3, 35, '°'));
+    }
+
+    const markRow = el('div', { class: 'rgnf-row' });
+    markRow.appendChild(el('button', {
+      class: `rgnf-chip ${state.markOn ? 'rgnf-on' : ''}`, text: 'Highlight',
+      onclick: () => { state.markOn = !state.markOn; render(panel); },
+    }));
+    if (state.markOn) {
+      markRow.appendChild(el('input', { type: 'color', value: state.markColor, oninput: (e) => { state.markColor = e.target.value; render(panel); } }));
+      markRow.appendChild(el('input', {
+        type: 'range', min: 16, max: 255, value: state.markAlpha,
+        oninput: (e) => { state.markAlpha = Number(e.target.value); render(panel); },
+      }));
+    }
+    secStyle.appendChild(markRow);
+    panel.appendChild(secStyle);
+
+    // ---- Title ----
+    const secTitle = el('div', { class: 'rgnf-sec' });
+    secTitle.appendChild(el('h4', { text: 'Title (line under name)' }));
+    const tRow = el('div', { class: 'rgnf-row' });
+    tRow.appendChild(el('button', {
+      class: `rgnf-chip ${state.titleOn ? 'rgnf-on' : ''}`, text: state.titleOn ? 'On' : 'Off',
+      onclick: () => { state.titleOn = !state.titleOn; render(panel); },
+    }));
+    secTitle.appendChild(tRow);
+    if (state.titleOn) {
+      secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
+        el('input', { type: 'text', placeholder: 'e.g. Data Shepherd', value: state.titleText, oninput: (e) => { state.titleText = e.target.value; refreshPreview(); } }),
+      ]));
+      const tm = el('div', { class: 'rgnf-row' });
+      [['inherit', 'Inherit'], ['solid', 'Solid'], ['gradient', 'Gradient']].forEach(([v, label]) => {
+        tm.appendChild(el('button', {
+          class: `rgnf-chip ${state.titleColorMode === v ? 'rgnf-on' : ''}`, text: label,
+          onclick: () => { state.titleColorMode = v; render(panel); },
+        }));
+      });
+      if (state.titleColorMode === 'solid') {
+        tm.appendChild(el('input', { type: 'color', value: state.titleColor, oninput: (e) => { state.titleColor = e.target.value; render(panel); } }));
+      }
+      secTitle.appendChild(tm);
+      secTitle.appendChild(sliderRow(panel, 'Size', 'titleSizePct', 25, 100, '%'));
+      secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
+        el('button', {
+          class: `rgnf-chip ${state.titleSub ? 'rgnf-on' : ''}`, text: '<sub> style',
+          onclick: () => { state.titleSub = !state.titleSub; render(panel); },
+        }),
+      ]));
+    }
+    panel.appendChild(secTitle);
+
+    // ---- Scored! ----
+    const secScored = el('div', { class: 'rgnf-sec' });
+    secScored.appendChild(el('h4', { text: '"Scored!" text' }));
+    const sRow = el('div', { class: 'rgnf-row' });
+    [['default', 'Default'], ['hide', 'Hide'], ['tiny', 'Tiny'], ['styled', 'Styled']].forEach(([v, label]) => {
+      sRow.appendChild(el('button', {
+        class: `rgnf-chip ${state.scoredMode === v ? 'rgnf-on' : ''}`, text: label,
+        onclick: () => { state.scoredMode = v; render(panel); },
+      }));
+    });
+    secScored.appendChild(sRow);
+    if (state.scoredMode === 'styled') {
+      secScored.appendChild(el('div', { class: 'rgnf-row' }, [
+        el('label', { text: 'Color' }),
+        el('input', { type: 'color', value: state.scoredColor, oninput: (e) => { state.scoredColor = e.target.value; render(panel); } }),
+      ]));
+      secScored.appendChild(sliderRow(panel, 'Size', 'scoredSizePct', 25, 150, '%'));
+    }
+    panel.appendChild(secScored);
+
+    // ---- Presets ----
+    const secPresets = el('div', { class: 'rgnf-sec' });
+    secPresets.appendChild(el('h4', { text: 'Presets' }));
+    const presets = loadJSON(STORE_KEY, []);
+    const listWrap = el('div', { class: 'rgnf-presets' });
+    presets.forEach((p, idx) => {
+      listWrap.appendChild(el('div', { class: 'rgnf-preset' }, [
+        el('span', { text: p.label }),
+        el('button', { class: 'rgnf-chip', text: 'Load', onclick: () => { state = Object.assign(defaultState(), p.state); render(panel); } }),
+        el('button', {
+          class: 'rgnf-chip', text: '??',
+          onclick: () => { presets.splice(idx, 1); saveJSON(STORE_KEY, presets); render(panel); },
+        }),
+      ]));
+    });
+    listWrap.appendChild(el('button', {
+      class: 'rgnf-chip', text: '+ Save current as preset',
+      onclick: () => {
+        const label = prompt('Preset name:', state.name.replace(/<[^>]*>/g, '').slice(0, 30) || 'Preset');
+        if (!label) return;
+        presets.push({ label, state: JSON.parse(JSON.stringify(state)) });
+        saveJSON(STORE_KEY, presets);
+        render(panel);
+      },
+    }));
+    secPresets.appendChild(listWrap);
+
+    // Share presets with the squad
+    secPresets.appendChild(el('div', { class: 'rgnf-row' }, [
+      el('button', {
+        class: 'rgnf-chip', text: '📤 Export', title: 'Copy all presets as JSON to share',
+        onclick: async (e) => {
+          const b = e.currentTarget;
+          try {
+            await navigator.clipboard.writeText(JSON.stringify(presets));
+            b.textContent = 'Copied ✓';
+          } catch (err) { b.textContent = 'Failed'; }
+          setTimeout(() => { b.textContent = '📤 Export'; }, 1200);
+        },
+      }),
+      el('button', {
+        class: 'rgnf-chip', text: '📥 Import', title: 'Paste preset JSON from a friend',
+        onclick: () => {
+          const raw = prompt('Paste preset JSON:');
+          if (!raw) return;
+          try {
+            const incoming = JSON.parse(raw);
+            if (!Array.isArray(incoming)) throw new Error('not an array');
+            const merged = presets.concat(incoming.filter(p => p && p.label && p.state));
+            saveJSON(STORE_KEY, merged);
+            render(panel);
+          } catch (err) {
+            alert('That JSON was as valid as a screen-door submarine. Import failed.');
+          }
+        },
+      }),
+    ]));
+
+    // Recently applied history
+    const hist = loadJSON(HISTORY_KEY, []);
+    if (hist.length) {
+      secPresets.appendChild(el('h4', { text: 'Recently applied' }));
+      const histWrap = el('div', { class: 'rgnf-presets' });
+      hist.forEach((h) => {
+        histWrap.appendChild(el('div', { class: 'rgnf-preset' }, [
+          el('span', { text: h.plain, title: h.code }),
+          el('button', {
+            class: 'rgnf-chip', text: 'Re-apply',
+            onclick: async (e) => {
+              const b = e.currentTarget;
+              b.textContent = '…';
+              try {
+                const r = await applyNickname(h.code);
+                b.textContent = r.ok ? '✓' : '✗';
+              } catch (err) { b.textContent = '✗'; }
+              setTimeout(() => { b.textContent = 'Re-apply'; }, 1500);
+            },
+          }),
+        ]));
+      });
+      histWrap.appendChild(el('button', {
+        class: 'rgnf-chip', text: 'Clear history',
+        onclick: () => { saveJSON(HISTORY_KEY, []); render(panel); },
+      }));
+      secPresets.appendChild(histWrap);
+    }
+    panel.appendChild(secPresets);
+
+    // ---- Actions ----
+    const secActions = el('div', { class: 'rgnf-sec' });
+    const statusLine = el('div', { class: 'rgnf-status' });
+    const applyBtn = el('button', {
+      class: 'rgnf-btn rgnf-btn-apply', text: 'Apply nickname',
+      onclick: async () => {
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Applying…';
+        statusLine.className = 'rgnf-status';
+        statusLine.textContent = '';
+        try {
+          const codeApplied = buildCode(state);
+          const result = await applyNickname(codeApplied);
+          if (result.ok) {
+            statusLine.className = 'rgnf-status ok';
+            statusLine.textContent = '✓ Nickname updated';
+            const hist = loadJSON(HISTORY_KEY, []);
+            const plain = state.name.replace(/<[^>]*>/g, '').slice(0, 24) || '(sprites only)';
+            hist.unshift({ code: codeApplied, plain, ts: Date.now() });
+            saveJSON(HISTORY_KEY, hist.slice(0, 5));
+          } else {
+            statusLine.className = 'rgnf-status err';
+            statusLine.textContent = `✗ ${result.status}: ${result.body.slice(0, 120)}`;
+          }
+        } catch (e) {
+          statusLine.className = 'rgnf-status err';
+          statusLine.textContent = `✗ ${e.message}`;
+        } finally {
+          applyBtn.disabled = false;
+          applyBtn.textContent = 'Apply nickname';
+        }
+      },
+    });
+    const copyBtn = el('button', {
+      class: 'rgnf-btn rgnf-btn-ghost', text: 'Copy code',
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(buildCode(state));
+          copyBtn.textContent = 'Copied ✓';
+          setTimeout(() => { copyBtn.textContent = 'Copy code'; }, 1200);
+        } catch (e) {
+          copyBtn.textContent = 'Copy failed';
+          setTimeout(() => { copyBtn.textContent = 'Copy code'; }, 1200);
+        }
+      },
+    });
+    secActions.appendChild(el('div', { class: 'rgnf-row' }, [applyBtn, copyBtn]));
+    secActions.appendChild(statusLine);
+    panel.appendChild(secActions);
+  }
+
+  function sliderRow(panel, label, key, min, max, unit) {
+    const row = el('div', { class: 'rgnf-row' });
+    row.appendChild(el('label', { text: label }));
+    row.appendChild(el('input', {
+      type: 'range', min, max, value: state[key],
+      oninput: (e) => {
+        state[key] = Number(e.target.value);
+        row.querySelector('.rgnf-val').textContent = state[key] + unit;
+      },
+      onchange: () => render(panel),
+    }));
+    row.appendChild(el('span', { class: 'rgnf-val', text: state[key] + unit }));
+    return row;
+  }
+
+  function makeDraggable(panel, handle) {
+    let sx, sy, ox, oy, dragging = false;
+    handle.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button')) return;
+      dragging = true;
+      const rect = panel.getBoundingClientRect();
+      sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
+      panel.style.right = 'auto'; panel.style.bottom = 'auto';
+      panel.style.left = ox + 'px'; panel.style.top = oy + 'px';
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      panel.style.left = (ox + e.clientX - sx) + 'px';
+      panel.style.top = (oy + e.clientY - sy) + 'px';
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
+  }
+
+  // ------------------------------------------------------------------
+  // Input capture guard — MUST register before the game's own handlers.
+  // rocketgoal.io binds control keys at the window CAPTURE phase and
+  // preventDefault()s them, which kills typing in our fields. Because same-phase
+  // listeners fire in registration order, we run at document-start and register
+  // FIRST, then stopImmediatePropagation for any event aimed at our UI so the
+  // game never sees it. stopImmediatePropagation does NOT preventDefault, so the
+  // character still lands in the input.
+  // ------------------------------------------------------------------
+  function installInputGuard() {
+    const inUI = (t) => t && t.closest && (t.closest('.rgnf-panel') || t.closest('.rgnf-fab'));
+    const isTextField = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
+
+    // Primary handler: we take over editing entirely for our own text fields.
+    // The game cancels the browser's default text insertion, so instead of
+    // fighting for it, we mutate the field's value ourselves and fire a synthetic
+    // 'input' event. This works no matter what the game does with the keystroke.
+    window.addEventListener('keydown', (e) => {
+      const t = e.target;
+      if (!inUI(t)) return;
+      if (e.altKey && e.code === 'KeyN') return; // let the global toggle through
+
+      // Always hide the event from the game's global handlers.
+      e.stopImmediatePropagation();
+
+      if (!isTextField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+
+      const start = t.selectionStart ?? t.value.length;
+      const end = t.selectionEnd ?? t.value.length;
+      let handled = false;
+
+      if (e.key.length === 1) {
+        // printable character (already shifted/cased by the browser)
+        t.value = t.value.slice(0, start) + e.key + t.value.slice(end);
+        const p = start + 1; t.setSelectionRange(p, p); handled = true;
+      } else if (e.key === 'Backspace') {
+        if (start !== end) { t.value = t.value.slice(0, start) + t.value.slice(end); t.setSelectionRange(start, start); }
+        else if (start > 0) { t.value = t.value.slice(0, start - 1) + t.value.slice(end); t.setSelectionRange(start - 1, start - 1); }
+        handled = true;
+      } else if (e.key === 'Delete') {
+        if (start !== end) { t.value = t.value.slice(0, start) + t.value.slice(end); t.setSelectionRange(start, start); }
+        else { t.value = t.value.slice(0, start) + t.value.slice(end + 1); t.setSelectionRange(start, start); }
+        handled = true;
+      }
+      // Arrows / Home / End / Tab etc. fall through: we already stopped the game
+      // from seeing them, and the browser's own caret movement still works.
+
+      if (handled) {
+        e.preventDefault();
+        t.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, true);
+
+    // Keep keyup/keypress away from the game too.
+    ['keyup', 'keypress'].forEach((evt) => {
+      window.addEventListener(evt, (e) => {
+        const t = e.target;
+        if (!inUI(t)) return;
+        if (e.altKey && e.code === 'KeyN') return;
+        e.stopImmediatePropagation();
+      }, true);
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Boot
+  // ------------------------------------------------------------------
+  installInputGuard(); // register immediately at document-start
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', buildUI);
+  } else {
+    buildUI();
+  }
+      let _mountedIn = null;
+      return {
+        // Re-parent Forge's panel into the HUD's rgForgeView on first open.
+        // Everything Forge does (render, presets, keyboard guard, apply)
+        // keeps working once its DOM tree is under a different parent.
+        mountIn(container) {
+          if (!_rgnfPanel || _mountedIn === container) return;
+          // Reset absolute-positioning styles from the fly-out design so the
+          // panel flows naturally inside the HUD tab body. The scroll now lives
+          // on the parent container (rgForgeView), so the panel itself is a
+          // simple block with tightened padding and no border/shadow that would
+          // clash with the HUD's own frame.
+          _rgnfPanel.style.position = 'static';
+          _rgnfPanel.style.transform = 'none';
+          _rgnfPanel.style.left = _rgnfPanel.style.top = _rgnfPanel.style.right = _rgnfPanel.style.bottom = '';
+          _rgnfPanel.style.width = '100%';
+          _rgnfPanel.style.maxWidth = '100%';
+          _rgnfPanel.style.maxHeight = 'none';
+          _rgnfPanel.style.overflow = 'visible';
+          _rgnfPanel.style.padding = '8px 10px';
+          _rgnfPanel.style.border = 'none';
+          _rgnfPanel.style.boxShadow = 'none';
+          _rgnfPanel.style.background = 'transparent';
+          _rgnfPanel.style.display = 'block';
+          container.appendChild(_rgnfPanel);
+          _mountedIn = container;
+        },
+      };
+    })();
 
 })();
