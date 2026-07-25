@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      12.1
+// @version      12.2
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -106,7 +106,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3123,12 +3123,33 @@
 
         // Leaders and co-leaders can kick + manage roles. Can't act on yourself or the leader.
         const canManage = (myRole === "leader" || myRole === "coleader");
+        // Per-member event contribution: current MMR minus their baseline
+        // captured at first sync during this event. Only meaningful while the
+        // event is active AND the baseline map belongs to the current event
+        // (clanBaselineForCurrentEvent handles the staleness guard).
+        const eventActive = eventPhase() === "active";
+        const eventBaselines = eventActive ? (clanBaselineForCurrentEvent(myClan) || {}) : {};
+        const contribFor = (member) => {
+            if (!eventActive) return null;
+            const base = eventBaselines[member.userId];
+            if (base == null || typeof member.mmr !== "number") return null;
+            return member.mmr - base;
+        };
+
         const memberRows = (myClan.members ?? [])
             .slice()
             .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))
             .map(m => {
                 const actable = canManage && m.userId !== uid && m.role !== "leader"
                     && (ROLE_RANK[m.role] ?? 0) < (ROLE_RANK[myRole] ?? 0);
+                const contrib = contribFor(m);
+                // Contribution chip: green for gain, red for loss, gray dash for
+                // "hasn't played this event yet." Only shown during active event.
+                const contribHtml = eventActive
+                    ? (contrib == null
+                        ? `<span title="Hasn't played during this event yet" style="opacity:.4;font-size:10px;font-family:monospace;">—</span>`
+                        : `<span title="Event contribution (current MMR - baseline)" style="color:${contrib >= 0 ? "#00ff66" : "#ff6b6b"};font-size:10px;font-weight:bold;font-family:monospace;">${contrib >= 0 ? "+" : ""}${contrib}</span>`)
+                    : "";
                 return `
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;gap:6px;">
                     <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
@@ -3136,6 +3157,7 @@
                         ${typeof m.mmr === "number" ? `<span style="opacity:.5;font-size:10px;">${m.mmr}</span>` : ""}
                     </span>
                     <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                        ${contribHtml}
                         <span style="opacity:.7;font-size:10px;text-transform:uppercase;">${m.role}</span>
                         ${actable ? `<button class="rgBtn rgManage" data-uid="${m.userId}" data-name="${escapeHtml(m.name)}" data-role="${m.role}" style="padding:1px 6px;font-size:10px;">⋯</button>` : ""}
                     </span>
@@ -3179,8 +3201,11 @@
             <div id="rgMembersList" style="display:none;">${memberRows}</div>
             ${requestsSection}
             <div id="rgClanTagPanel" style="margin-top:10px;padding:8px;border:1px solid #00bfff44;border-radius:6px;">
-                <div style="font-size:11px;font-weight:bold;color:#00bfff;margin-bottom:6px;">CLAN TAG STYLE</div>
-                <div id="rgClanTagBody"></div>
+                <div id="rgClanTagHeader" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+                    <span id="rgClanTagArrow" style="font-size:9px;opacity:.7;width:8px;display:inline-block;">▶</span>
+                    <span style="font-size:11px;font-weight:bold;color:#00bfff;">CLAN TAG STYLE</span>
+                </div>
+                <div id="rgClanTagBody" style="display:none;margin-top:6px;"></div>
             </div>
             <button id="rgLeaveClan" class="rgBtn" style="width:100%;margin-top:8px;">Leave Clan</button>
         `;
@@ -3199,6 +3224,19 @@
                 const arrow = document.getElementById("rgMembersArrow");
                 const open = list.style.display !== "none";
                 list.style.display = open ? "none" : "block";
+                arrow.textContent = open ? "▶" : "▼";
+            };
+        }
+        // Clan Tag Style collapsible toggle -- mirrors Members. Collapsed by
+        // default; renderClanTagPanel() still runs so the body is ready when
+        // the header is clicked open (and its live preview stays warm too).
+        const tHeader = document.getElementById("rgClanTagHeader");
+        if (tHeader) {
+            tHeader.onclick = () => {
+                const body = document.getElementById("rgClanTagBody");
+                const arrow = document.getElementById("rgClanTagArrow");
+                const open = body.style.display !== "none";
+                body.style.display = open ? "none" : "block";
                 arrow.textContent = open ? "▶" : "▼";
             };
         }
