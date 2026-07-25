@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      12.6
+// @version      12.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -119,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1789,16 +1789,49 @@
     let eventConfigLoaded = false;
     let serverNowOffset = null;   // (serverTime - deviceTime) learned from a write, ms
 
+    // Event-time permission defaults. Every flag is checked via eventPerm()
+    // below so an old-shape event doc (no `perms` field) still gets safe,
+    // documented behavior. To change how an active event behaves, edit
+    // events/current in Firestore -- no script redeploy needed.
+    //   allowJoin        : new members can request+get approved to a clan
+    //   allowLeave       : members can walk out of their clan
+    //   allowKick        : leader (or eligible role) can remove a member
+    //   allowApprove     : leader can accept pending join requests
+    //   allowDisband     : solo-leader can disband their own clan
+    //   allowRoleChange  : promote/demote (co-leader, elder, etc.)
+    //   allowTransfer    : hand off leadership to another member
+    //   allowRenameClan  : change clan name or tag string
+    //   allowClanCreate  : anyone can spin up a brand-new clan mid-event
+    const EVENT_PERM_DEFAULTS = {
+        allowJoin:        true,   // people CAN join mid-event (was locked; opened per feedback)
+        allowLeave:       false,  // but they CAN'T leave -- can't dodge a losing team
+        allowKick:        true,   // leaders keep the ability to remove problem members
+        allowApprove:     true,   // approvals fine since joining is fine
+        allowDisband:     false,  // freezes rosters even for solo leaders
+        allowRoleChange:  false,  // role changes = attribution changes, freeze during scoring
+        allowTransfer:    false,  // no leadership handoff mid-event
+        allowRenameClan:  false,  // clan identity freezes during event
+        allowClanCreate:  true,   // new clans don\'t affect anyone else\'s roster
+    };
+
     async function loadEventConfig(fb, force = false) {
         if (eventConfigLoaded && !force) return eventConfig;
         try {
             const snap = await fb.getDoc(fb.doc(fb.db, "events", "current"));
             if (snap.exists()) {
                 const d = snap.data();
+                // Merge stored perms over defaults so a partial `perms` object
+                // (only overriding one or two keys) still gets safe values
+                // for everything else. Undefined perms field -> all defaults.
+                const storedPerms = (d.perms && typeof d.perms === "object") ? d.perms : {};
                 eventConfig = {
                     name: d.name ?? "Clan Event",
                     startTime: d.startTime?.toMillis ? d.startTime.toMillis() : (d.startTime ?? 0),
                     endTime: d.endTime?.toMillis ? d.endTime.toMillis() : (d.endTime ?? 0),
+                    // Top-level (not inside perms) because it applies always,
+                    // not just during an active event window.
+                    maxMembers: (typeof d.maxMembers === "number") ? d.maxMembers : null,
+                    perms: { ...EVENT_PERM_DEFAULTS, ...storedPerms },
                 };
             } else {
                 eventConfig = null;
@@ -1808,6 +1841,17 @@
             console.warn("[RG HUD] Event config load failed:", e);
         }
         return eventConfig;
+    }
+
+    // eventPerm(key): true when the action is allowed RIGHT NOW.
+    //   - Outside an active event, everything is allowed (no lockdown).
+    //   - Inside an active event, look up the flag; missing -> default.
+    // Every clan-mutation guard should route through this so the source of
+    // truth is one Firestore doc that a maintainer can edit live.
+    function eventPerm(key) {
+        if (eventPhase() !== "active") return true;
+        const p = eventConfig?.perms || EVENT_PERM_DEFAULTS;
+        return p[key] !== false; // defaults are all "true or false"; missing key -> allow
     }
 
     // Best estimate of authoritative server time. We learn an offset from device
@@ -2100,7 +2144,16 @@
     let clanLoaded = false;
     let clanLoadedForAccount = null; // which account the above was loaded for
 
-    const CLAN_MAX_MEMBERS = 5;
+    // Clan max member cap. Reads events/current.maxMembers with 5 as the
+    // fallback default, so a maintainer can change the cap live in Firestore
+    // (raise to 6, drop to 4, etc.) without a script redeploy. Kept as a
+    // function call rather than a captured constant so late-arriving event
+    // config picks up automatically on next render.
+    const DEFAULT_CLAN_MAX_MEMBERS = 5;
+    function clanMaxMembers() {
+        const n = eventConfig?.maxMembers;
+        return (typeof n === "number" && n > 0 && n <= 50) ? n : DEFAULT_CLAN_MAX_MEMBERS;
+    }
 
     function myUserId() { return lastKnownPlayerData?.Id ?? null; }
 
@@ -2586,6 +2639,14 @@
         const uid = myUserId();
         if (!uid) return;
 
+        // Event lockdown: gated by allowClanCreate. Default TRUE (creating a
+        // new clan doesn\'t affect existing rosters), but a maintainer can
+        // freeze it in events/current if needed.
+        if (!eventPerm("allowClanCreate")) {
+            showToast("New clans can\'t be created during this event.");
+            return;
+        }
+
         // Uniqueness check against directory (best-effort).
         if (clanDirectory.some(c => c.name.toLowerCase() === name.toLowerCase())) {
             showToast("A clan with that name already exists.");
@@ -2619,10 +2680,11 @@
         const uid = myUserId();
         if (!uid) return;
 
-        // Event lockdown: no new joins during an active event so rosters
-        // are frozen for scoring integrity. Lifts when event ends.
-        if (eventPhase() === "active") {
-            showToast("Clans are locked during the event -- join after it ends.");
+        // Event lockdown: gated by allowJoin. Default is TRUE (join is open),
+        // but a maintainer can flip it off in events/current if a specific
+        // event needs frozen rosters.
+        if (!eventPerm("allowJoin")) {
+            showToast("Clan joins are locked during this event.");
             return;
         }
 
@@ -2631,7 +2693,7 @@
             if (!clanSnap.exists()) return;
             const clan = clanSnap.data();
 
-            if ((clan.members ?? []).length >= CLAN_MAX_MEMBERS) {
+            if ((clan.members ?? []).length >= clanMaxMembers()) {
                 showToast("That clan is full.");
                 return;
             }
@@ -2652,11 +2714,11 @@
         const fb = await initFirebase();
         if (!fb || !myClan) return;
 
-        // Event lockdown: approvals also blocked during an active event, so
-        // even a leader can't grow the roster mid-event. Denies still allowed
-        // (approve === false) since removing a stale request is safe.
-        if (approve && eventPhase() === "active") {
-            showToast("Can't approve during event -- lifts when event ends.");
+        // Event lockdown: approvals gated by allowApprove. Default TRUE now.
+        // Denies (approve === false) are always allowed since removing a
+        // stale request never grows the roster.
+        if (approve && !eventPerm("allowApprove")) {
+            showToast("Approvals are locked during this event.");
             return;
         }
 
@@ -2665,7 +2727,7 @@
             const joinRequests = (myClan.joinRequests ?? []).filter(r => r.userId !== userId);
             let members = myClan.members ?? [];
 
-            if (approve && req && members.length < CLAN_MAX_MEMBERS
+            if (approve && req && members.length < clanMaxMembers()
                 && !members.some(m => m.userId === userId)) {
                 members = [...members, { userId: req.userId, name: req.name, role: "member" }];
             }
@@ -2684,6 +2746,15 @@
         const fb = await initFirebase();
         if (!fb || !myClan) return;
         const myUid = myUserId();
+
+        // Event lockdown: gated by allowKick. Default TRUE (leaders keep the
+        // ability to remove problem members even mid-event -- a scored player
+        // shouldn\'t be trapped in a clan). Flip off if you want fully frozen
+        // rosters during a specific event.
+        if (!eventPerm("allowKick")) {
+            showToast("Kicking is locked during this event.");
+            return;
+        }
 
         try {
             const target = (myClan.members ?? []).find(m => m.userId === userId);
@@ -2769,6 +2840,14 @@
         const target = (myClan.members ?? []).find(m => m.userId === userId);
         if (!me || !target) return;
 
+        // Event lockdown: gated by allowRoleChange. Default FALSE -- role
+        // changes shift attribution and could confuse the "who contributed
+        // what" audit during scoring.
+        if (!eventPerm("allowRoleChange")) {
+            showToast("Role changes are locked during this event.");
+            return;
+        }
+
         if (!canSetRole(me.role, target.role, newRole)) {
             showToast("You can't change that member's role.");
             return;
@@ -2792,6 +2871,14 @@
         const fb = await initFirebase();
         if (!fb || !myClan) return;
         if (myClan.leaderId !== myUserId()) return; // leader only
+
+        // Event lockdown: gated by allowRenameClan. Default FALSE -- clan
+        // identity freezes during scoring so leaderboards don\'t get mid-event
+        // rebrands.
+        if (!eventPerm("allowRenameClan")) {
+            showToast("Clan renames are locked during this event.");
+            return;
+        }
 
         // Uniqueness (ignore our own clan).
         const nameClash = clanDirectory.some(c => c.id !== myClan.id && (c.name ?? "").toLowerCase() === newName.toLowerCase());
@@ -2847,6 +2934,13 @@
         if (!fb || !myClan) return;
         const myUid = myUserId();
         if (myClan.leaderId !== myUid) return; // only the leader can transfer
+
+        // Event lockdown: gated by allowTransfer. Default FALSE -- leadership
+        // handoff mid-event could obscure attribution.
+        if (!eventPerm("allowTransfer")) {
+            showToast("Leadership transfers are locked during this event.");
+            return;
+        }
 
         try {
             const members = (myClan.members ?? []).map(m => {
@@ -3002,17 +3096,25 @@
         if (!fb || !myClan) return;
         const uid = myUserId();
 
-        // Event lockdown: members can't leave mid-event so scores can't be
-        // manipulated by dropping out of a losing clan. The leader can still
-        // kick (kickMember has no such guard by design) so a problem member
-        // isn't stuck either. Restriction lifts when the event ends.
-        if (eventPhase() === "active" && myClan.leaderId !== uid) {
+        // Event lockdown: members can't leave mid-event unless allowLeave is
+        // explicitly turned on in the event doc. Leader isn't checked here --
+        // sole-leader disband is a separate action gated by allowDisband.
+        if (!eventPerm("allowLeave") && myClan.leaderId !== uid) {
             showToast("Can't leave during an active event -- ask leader to kick.");
             return;
         }
 
         try {
             const isLeader = myClan.leaderId === uid;
+            const isSoloLeader = isLeader && (myClan.members ?? []).length === 1;
+            // Event lockdown: solo leader disband gated by allowDisband. Default
+            // FALSE -- disbanding mid-event would erase every contribution the
+            // clan has scored so far. Non-solo leaders hit the transfer flow
+            // below, which is gated by allowTransfer instead.
+            if (isSoloLeader && !eventPerm("allowDisband")) {
+                showToast("Disbanding is locked during this event.");
+                return;
+            }
             if (isLeader && (myClan.members ?? []).length > 1) {
                 showToast("Transfer leadership or remove others before leaving.");
                 return;
@@ -3079,11 +3181,11 @@
                         <span style="color:#ffd700;">#${i + 1}</span>
                         ${c.tag ? `<span style="opacity:.7;">[${c.tag}]</span>` : ""}
                         <b>${escapeHtml(c.name)}</b>
-                        <span style="opacity:.6;font-size:10px;">(${c.memberCount}/${CLAN_MAX_MEMBERS})</span>
+                        <span style="opacity:.6;font-size:10px;">(${c.memberCount}/${clanMaxMembers()})</span>
                     </span>
                     <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
                         <span style="color:#00ff66;font-size:11px;">${c.totalMMR}</span>
-                        <button class="rgBtn rgJoinBtn" data-clan="${c.id}" style="padding:2px 6px;font-size:10px;" ${c.memberCount >= CLAN_MAX_MEMBERS ? "disabled" : ""}>Join</button>
+                        <button class="rgBtn rgJoinBtn" data-clan="${c.id}" style="padding:2px 6px;font-size:10px;" ${c.memberCount >= clanMaxMembers() ? "disabled" : ""}>Join</button>
                     </span>
                 </div>`).join("");
 
@@ -3098,11 +3200,11 @@
 
         document.getElementById("rgCreateClanBtn").onclick = showCreateClanForm;
         view.querySelectorAll(".rgJoinBtn").forEach(btn => {
-            if (eventPhase() === "active") {
+            if (!eventPerm("allowJoin")) {
                 btn.disabled = true;
                 btn.style.opacity = "0.5";
                 btn.style.cursor = "not-allowed";
-                btn.title = "Clans locked during event";
+                btn.title = "Joins locked during event";
                 btn.textContent = "Locked (event)";
             } else {
                 btn.onclick = () => requestJoin(btn.getAttribute("data-clan"));
@@ -3233,7 +3335,7 @@
             </div>
             <div style="font-size:11px;opacity:.75;margin:2px 0 6px;">
                 Total MMR: <span style="color:#00ff66;">${myClan.totalMMR ?? 0}</span>
-                &nbsp;•&nbsp; ${(myClan.members ?? []).length}/${CLAN_MAX_MEMBERS} members
+                &nbsp;•&nbsp; ${(myClan.members ?? []).length}/${clanMaxMembers()} members
             </div>
             <div id="rgMembersHeader" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:2px 0;margin-top:2px;">
                 <span id="rgMembersArrow" style="font-size:9px;opacity:.7;width:8px;display:inline-block;">▶</span>
@@ -3292,8 +3394,8 @@
         });
         renderClanTagPanel();
         // Event lockdown UI: gray out Leave button for non-leader members
-        // during an active event, and show a note explaining why.
-        if (eventPhase() === "active" && myClan && myClan.leaderId !== myUserId()) {
+        // when allowLeave is off. Leader\'s own leave/disband is separate.
+        if (!eventPerm("allowLeave") && myClan && myClan.leaderId !== myUserId()) {
             const lb = document.getElementById("rgLeaveClan");
             if (lb) {
                 lb.disabled = true;
