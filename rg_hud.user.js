@@ -1,9 +1,10 @@
 // ==UserScript==
-// @name         Rocket Goal HUD
+// @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      12.2
-// @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
+// @version      12.3
+// @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
+// @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
 // @grant        none
 // @run-at       document-start
@@ -106,7 +107,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1093,7 +1094,14 @@
     ];
     const PROFANITY_REGEX = new RegExp(`\\b(${PROFANITY_LIST.join("|")})\\b`, "i");
 
-    function containsProfanity(text) {
+    // Clan tags: LETTERS ONLY, ALWAYS UPPERCASE. Enforced on input (live
+    // filter as they type) AND on submit (defense in depth). Kept short so
+    // the styled prefix reads cleanly in-game.
+    function sanitizeClanTag(raw) {
+        return String(raw || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+    }
+
+        function containsProfanity(text) {
         return PROFANITY_REGEX.test(text);
     }
 
@@ -2787,7 +2795,8 @@
                 <input type="text" id="rgEditName" maxlength="24" value="${escapeHtml(myClan.name ?? "")}"
                     style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;margin-bottom:6px;user-select:text;">
                 <input type="text" id="rgEditTag" maxlength="4" value="${escapeHtml(myClan.tag ?? "")}"
-                    style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;user-select:text;">
+                    style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;user-select:text;text-transform:uppercase;"
+                    oninput="this.value=this.value.toUpperCase().replace(/[^A-Z]/g,'').slice(0,4);">
                 <div id="rgEditErr" style="color:#ff6b6b;font-size:11px;min-height:14px;margin:4px 0;"></div>
                 <div style="display:flex;gap:6px;">
                     <button id="rgEditGo" class="rgBtn" style="flex:1;">Save</button>
@@ -2798,9 +2807,9 @@
         const errEl = document.getElementById("rgEditErr");
         document.getElementById("rgEditGo").onclick = () => {
             const name = document.getElementById("rgEditName").value.trim();
-            const tag = document.getElementById("rgEditTag").value.trim();
+            const tag = sanitizeClanTag(document.getElementById("rgEditTag").value);
             if (name.length === 0 || name.length > 24) { errEl.textContent = "Name must be 1-24 characters."; return; }
-            if (tag.length < 2 || tag.length > 4) { errEl.textContent = "Tag must be 2-4 characters."; return; }
+            if (tag.length < 2 || tag.length > 4) { errEl.textContent = "Tag: 2-4 letters, no numbers or symbols."; return; }
             if (containsProfanity(name) || containsEmoji(name)) { errEl.textContent = "That name isn't allowed."; return; }
             if (containsProfanity(tag) || containsEmoji(tag)) { errEl.textContent = "That tag isn't allowed."; return; }
             editClan(name, tag);
@@ -3083,7 +3092,7 @@
             <div style="margin-top:8px;">
                 <input type="text" id="rgClanName" placeholder="Clan name (max 24)" maxlength="24"
                     style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;margin-bottom:6px;user-select:text;">
-                <input type="text" id="rgClanTag" placeholder="Tag (2-4 chars, required)" maxlength="4"
+                <input type="text" id="rgClanTag" placeholder="Tag (2-4 letters, required)" maxlength="4"
                     style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #00bfff88;border-radius:6px;color:#d7f3ff;padding:6px 8px;font-size:13px;user-select:text;">
                 <div id="rgClanErr" style="color:#ff6b6b;font-size:11px;min-height:14px;margin:4px 0;"></div>
                 <div style="display:flex;gap:6px;">
@@ -3098,12 +3107,19 @@
         [nameEl, tagEl].forEach(el => {
             el.addEventListener("keydown", e => e.stopPropagation(), true);
         });
+        // Live tag hygiene: uppercase and letter-only as they type, so the
+        // visual field never shows an illegal character even for a moment.
+        tagEl.style.textTransform = "uppercase";
+        tagEl.addEventListener("input", () => {
+            const clean = sanitizeClanTag(tagEl.value);
+            if (tagEl.value !== clean) tagEl.value = clean;
+        });
 
         document.getElementById("rgClanCreateGo").onclick = () => {
             const name = nameEl.value.trim();
-            const tag = tagEl.value.trim();
+            const tag = sanitizeClanTag(tagEl.value);
             if (name.length === 0 || name.length > 24) { errEl.textContent = "Name must be 1-24 characters."; return; }
-            if (tag.length < 2 || tag.length > 4) { errEl.textContent = "Tag is required (2-4 characters)."; return; }
+            if (tag.length < 2 || tag.length > 4) { errEl.textContent = "Tag: 2-4 letters, no numbers or symbols."; return; }
             if (containsProfanity(name) || containsEmoji(name)) { errEl.textContent = "That name isn't allowed."; return; }
             if (containsProfanity(tag) || containsEmoji(tag)) { errEl.textContent = "That tag isn't allowed."; return; }
             if (clanDirectory.some(c => (c.tag ?? "").toLowerCase() === tag.toLowerCase())) {
