@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      11.8
+// @version      11.9
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -106,7 +106,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -294,8 +294,8 @@
                     </div>
                 </div>
                 <div id="rgClanView" style="display:none;">Loading clans...</div>
-                <div id="rgForgeView" style="display:none;max-height:520px;overflow-y:auto;overflow-x:hidden;margin:0 -4px;"></div>
-                <div style="margin-top:6px;display:flex;gap:4px;">
+                <div id="rgForgeView" style="display:none;max-height:520px;overflow-y:auto;overflow-x:hidden;"></div>
+                <div id="rgActionRow" style="margin-top:6px;display:flex;gap:4px;">
                     <button id="rgRename" class="rgBtn" style="flex:1;">✏️ Rename</button>
                     <button id="rgSub" class="rgBtn" style="flex:1;">📺 Sub</button>
                     <button id="rgLeaderboard" class="rgBtn" style="flex:2;">🏆 Leaderboard</button>
@@ -380,11 +380,17 @@
         const clanView = document.getElementById("rgClanView");
         const panel = document.getElementById("rgSettingsPanel");
         const forgeView = document.getElementById("rgForgeView");
+        const actionRow = document.getElementById("rgActionRow");
         function showStatsOnly() {
             clanView.style.display = "none";
             forgeView.style.display = "none";
             panel.style.display = "none";
             statsView.style.display = "block";
+            // Default: action row visible (relevant to stats and clan views).
+            // The Forge tab explicitly re-hides it below since Rename edits the
+            // leaderboard display name (not the in-game nickname Forge builds),
+            // and Sub/Leaderboard aren't name-related at all.
+            actionRow.style.display = "flex";
         }
         document.getElementById("rgClanBtn").onclick = () => {
             const showingClan = clanView.style.display !== "none";
@@ -400,6 +406,7 @@
             showStatsOnly();
             statsView.style.display = "none";
             forgeView.style.display = "block";
+            actionRow.style.display = "none"; // Forge context: hide unrelated leaderboard/sub actions
             RGNF.mountIn(forgeView);
         };
 
@@ -3262,15 +3269,22 @@
     .rgnf-fab:hover { transform: translateY(-2px) scale(1.04); }
     .rgnf-fab:active { cursor: grabbing; }
     .rgnf-panel {
-      position: fixed; bottom: 82px; right: 18px; z-index: 999999;
-      width: 360px; max-height: 78vh; overflow-y: auto;
-      background: var(--rgnf-bg); color: var(--rgnf-text);
-      border: 1px solid var(--rgnf-line); border-radius: 16px;
-      box-shadow: 0 16px 48px rgba(0,0,0,.6);
+      /* Base: block that fills its container. The fly-out fixed positioning
+         and 360px width come from .rgnf-open below, so the panel is fine to
+         embed inside the HUD's Forge tab without any width-fighting. */
+      color: var(--rgnf-text);
       font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
       display: none;
+      width: 100%; box-sizing: border-box;
     }
-    .rgnf-panel.rgnf-open { display: block; }
+    .rgnf-panel.rgnf-open {
+      position: fixed; bottom: 82px; right: 18px; z-index: 999999;
+      width: 360px; max-height: 78vh; overflow-y: auto;
+      background: var(--rgnf-bg);
+      border: 1px solid var(--rgnf-line); border-radius: 16px;
+      box-shadow: 0 16px 48px rgba(0,0,0,.6);
+      display: block;
+    }
     .rgnf-head {
       position: sticky; top: 0; z-index: 2;
       padding: 14px 16px; cursor: grab;
@@ -3342,12 +3356,15 @@
     .rgnf-meta { display: flex; justify-content: space-between; color: var(--rgnf-muted); font-size: 11px; margin-top: 4px; }
     .rgnf-btn {
       border: none; border-radius: 10px; padding: 9px 12px; font-weight: 700; cursor: pointer; font-size: 13px;
+      min-width: 0; /* let flex children shrink below their content width */
     }
     .rgnf-btn-apply {
       flex: 1; color: #06121a;
       background: linear-gradient(90deg, var(--rgnf-accent), var(--rgnf-accent-2));
     }
-    .rgnf-btn-ghost { background: var(--rgnf-panel); color: var(--rgnf-text); border: 1px solid var(--rgnf-line); }
+    .rgnf-btn-ghost { background: var(--rgnf-panel); color: var(--rgnf-text); border: 1px solid var(--rgnf-line); flex-shrink: 0; }
+    /* Rows wrap when the panel is embedded narrow; keeps buttons on-screen. */
+    .rgnf-row { flex-wrap: wrap; }
     .rgnf-status { margin-top: 8px; font-size: 12px; min-height: 16px; }
     .rgnf-status.ok { color: #34d399; }
     .rgnf-status.err { color: #f87171; }
