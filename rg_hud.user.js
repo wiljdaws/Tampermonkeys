@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      12.0
+// @version      12.1
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -106,7 +106,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -407,6 +407,11 @@
             statsView.style.display = "none";
             forgeView.style.display = "block";
             actionRow.style.display = "none"; // Forge context: hide unrelated leaderboard/sub actions
+            if (RGNF.setPrefixProvider) RGNF.setPrefixProvider(getClanTagPrefix);
+            // Sync Forge\'s Name field to this account\'s identity so a saved
+            // state from a different account (or a fresh install) doesn\'t
+            // greet the player with the wrong name.
+            if (RGNF.syncToCurrentPlayer) RGNF.syncToCurrentPlayer(myUserId(), myGameNamePlain() || myName(), lastKnownPlayerData?.Nickname ?? "");
             RGNF.mountIn(forgeView);
         };
 
@@ -2065,6 +2070,21 @@
     const CLAN_MAX_MEMBERS = 5;
 
     function myUserId() { return lastKnownPlayerData?.Id ?? null; }
+
+    // Plain-text letters of the player's ACTUAL in-game name: first line of
+    // the raw nickname from the game's login response, TMP tags stripped,
+    // leading [TAG] clan prefix removed (the clan-tag prefix feature owns
+    // that separately now). This is what Name Forge should seed its Name
+    // field with -- the in-game name, not the leaderboard display name.
+    function myGameNamePlain() {
+        const raw = String(lastKnownPlayerData?.Nickname ?? "");
+        if (!raw) return "";
+        const firstLine = raw.split(/<br\s*\/?\s*>/i)[0];
+        let plain = firstLine.replace(/<[^>]*>/g, "").trim();
+        plain = plain.replace(/^\[[^\]]{1,6}\]\s*/, "");
+        return plain;
+    }
+
     function myName() {
         return cachedDisplayNames.get(myUserId()) || cleanName(lastKnownPlayerData?.Nickname) || "Unknown";
     }
@@ -2149,6 +2169,347 @@
         await refreshDirectory(fb);
     }
 
+
+    // Renders the Tag Style panel with a big Forge-style preview, palette
+    // chips, gradient endpoints, bold/italic, wave (alternating rotate),
+    // static rotate slider. Every control updates the preview live so leaders
+    // can dial in the exact look before hitting Save. Members see just the
+    // preview + opt-in checkbox.
+    function renderClanTagPanel() {
+        const body = document.getElementById("rgClanTagBody");
+        if (!body || !myClan) return;
+        const isLeader = myClan.leaderId === myUserId();
+        const st = myClan.tagStyle || {};
+        const tagText = String(myClan.tag || "").trim();
+
+        // Working copy separate from myClan.tagStyle so live edits don't feel
+        // committed. Sync back on Save.
+        const work = {
+            mode: st.mode || (st.color ? "solid" : Array.isArray(st.stops) || st.paletteKey ? "gradient" : "none"),
+            color: st.color || "#00bfff",
+            gradientStart: st.gradientStart || "#00bfff",
+            gradientEnd: st.gradientEnd || "#e94fff",
+            paletteKey: st.paletteKey || null,   // null = custom start/end
+            bracketColor: st.bracketColor || null, // null = brackets follow main style
+            bold: !!st.bold,
+            italic: !!st.italic,
+            waveOn: !!st.waveOn,
+            waveAmp: st.waveAmp ?? 8,
+            rotateDeg: st.rotateDeg ?? 0,
+        };
+
+        function activeStops() {
+            if (work.paletteKey) {
+                const p = CLAN_TAG_PALETTES.find(x => x.key === work.paletteKey);
+                if (p) return p.stops;
+            }
+            return [work.gradientStart, work.gradientEnd];
+        }
+
+        // Build the visible preview HTML for the current working style.
+        // Brackets get their own color when work.bracketColor is set; gradient
+        // then runs over just the tag LETTERS so the blend isn\'t interrupted
+        // by contrast-colored brackets on either end.
+        function buildPreviewHtml() {
+            if (!tagText) return '<span style="color:#888;font-style:italic;font-size:14px;">(clan has no tag set)</span>';
+            const escCh = ch => ch === "<" ? "&lt;" : ch === ">" ? "&gt;" : ch;
+            const tagChars = [...tagText];
+            const bracketColor = /^#[0-9a-fA-F]{6}$/.test(work.bracketColor || "") ? work.bracketColor : null;
+            const stops = work.mode === "gradient" ? activeStops() : null;
+
+            // Rotation per emitted char index (wave alternates, static rotate
+            // applies same value to all)
+            const rotFor = wi => work.waveOn ? (wi % 2 === 0 ? work.waveAmp : -work.waveAmp)
+                : (work.rotateDeg && !work.waveOn ? work.rotateDeg : 0);
+            const spanFor = (ch, color, wi) => {
+                const rot = rotFor(wi);
+                const tf = rot ? "display:inline-block;transform:rotate(" + rot + "deg);" : "";
+                const co = color ? "color:" + color + ";" : "";
+                return '<span style="' + co + tf + '">' + escCh(ch) + '</span>';
+            };
+
+            // Color resolver for tag LETTER at position i out of tagChars.length
+            const letterColor = (i) => {
+                if (stops) {
+                    const giMax = bracketColor ? Math.max(0, tagChars.length - 1) : tagChars.length + 1;
+                    const gi = bracketColor ? i : i + 1;
+                    const t = giMax === 0 ? 0 : gi / giMax;
+                    return _sampleStops(stops, t);
+                }
+                if (work.mode === "solid") return work.color;
+                return null;
+            };
+            // Bracket color: use bracketColor if set, else defer to mode
+            const bracketC = bracketColor
+                ? bracketColor
+                : stops
+                    ? _sampleStops(stops, 0) // start of gradient for opening
+                    : work.mode === "solid" ? work.color : null;
+            const bracketCEnd = bracketColor
+                ? bracketColor
+                : stops
+                    ? _sampleStops(stops, 1)
+                    : work.mode === "solid" ? work.color : null;
+
+            let wi = 0;
+            let content = spanFor("[", bracketC, wi++);
+            for (let i = 0; i < tagChars.length; i++) {
+                content += spanFor(tagChars[i], letterColor(i), wi++);
+            }
+            content += spanFor("]", bracketCEnd, wi++);
+
+            const wrapStyle = "font-size:22px;font-weight:" + (work.bold ? "700" : "400") + ";font-style:" + (work.italic ? "italic" : "normal") + ";";
+            return '<span style="' + wrapStyle + '">' + content + '</span>';
+        }
+
+        function updatePreview() {
+            const el = document.getElementById("rgTagPreviewInner");
+            if (el) el.innerHTML = buildPreviewHtml();
+        }
+
+        // ---- Build panel HTML ----
+        let html = '';
+
+        // Big preview box (Forge style)
+        html += '<div style="background:radial-gradient(120% 140% at 50% 0%, #101a3a 0%, #070a16 70%);border:1px solid #00bfff44;border-radius:10px;padding:16px;text-align:center;min-height:60px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;">'
+            + '<span id="rgTagPreviewInner">' + buildPreviewHtml() + '</span></div>';
+
+        if (isLeader && tagText) {
+            // Mode selector
+            html += '<div style="font-size:10px;font-weight:bold;color:#00bfff;margin:6px 0 4px;">STYLE MODE</div>';
+            html += '<div style="display:flex;gap:4px;">';
+            for (const m of ["none","solid","gradient"]) {
+                const active = work.mode === m;
+                html += '<button class="rgBtn rgTagMode" data-mode="' + m + '" style="flex:1;padding:5px;font-size:11px;'
+                    + (active ? 'background:#00bfff33;border:1px solid #00bfff;color:#00bfff;' : '') + '">'
+                    + m.charAt(0).toUpperCase() + m.slice(1) + '</button>';
+            }
+            html += '</div>';
+
+            // Solid color row
+            html += '<div id="rgTagSolidRow" style="margin-top:8px;display:' + (work.mode === "solid" ? "flex" : "none") + ';gap:8px;align-items:center;font-size:11px;">'
+                + 'Color: <input type="color" id="rgTagColor" value="' + work.color + '" style="width:40px;height:24px;padding:0;border:none;background:transparent;cursor:pointer;">'
+                + '<span id="rgTagColorHex" style="opacity:.7;font-family:monospace;">' + work.color + '</span>'
+                + '</div>';
+
+            // Gradient section: palettes + custom endpoints + preview bar
+            html += '<div id="rgTagGradientRow" style="margin-top:8px;display:' + (work.mode === "gradient" ? "block" : "none") + ';font-size:11px;">';
+            html += '<div style="opacity:.7;margin-bottom:4px;">Palettes</div>';
+            html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+            for (const p of CLAN_TAG_PALETTES) {
+                const active = work.paletteKey === p.key;
+                html += '<button class="rgBtn rgTagPalette" data-key="' + p.key + '" style="padding:3px 8px;font-size:11px;'
+                    + (active ? 'background:#00bfff33;border:1px solid #00bfff;' : '') + '">'
+                    + p.label + '</button>';
+            }
+            html += '<button class="rgBtn rgTagPalette" data-key="__custom" style="padding:3px 8px;font-size:11px;'
+                + (!work.paletteKey ? 'background:#00bfff33;border:1px solid #00bfff;' : '') + '">Custom</button>';
+            html += '</div>';
+            html += '<div id="rgTagCustomRow" style="margin-top:6px;display:' + (work.paletteKey ? "none" : "flex") + ';gap:8px;align-items:center;flex-wrap:wrap;">'
+                + 'Start: <input type="color" id="rgTagGradStart" value="' + work.gradientStart + '" style="width:40px;height:24px;padding:0;border:none;background:transparent;cursor:pointer;">'
+                + '&rarr; End: <input type="color" id="rgTagGradEnd" value="' + work.gradientEnd + '" style="width:40px;height:24px;padding:0;border:none;background:transparent;cursor:pointer;">'
+                + '</div>';
+            const barStops = activeStops();
+            html += '<div id="rgTagGradientBar" style="margin-top:6px;height:6px;border-radius:3px;background:linear-gradient(90deg, ' + barStops.join(", ") + ');"></div>';
+            html += '</div>';
+
+            // Bold + Italic
+            html += '<div style="margin-top:10px;display:flex;gap:16px;font-size:11px;">'
+                + '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="rgTagBold"' + (work.bold ? " checked" : "") + '> <b>Bold</b></label>'
+                + '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="rgTagItalic"' + (work.italic ? " checked" : "") + '> <i>Italic</i></label>'
+                + '</div>';
+
+            // Brackets: optional separate color for [ and ]. When cleared,
+            // brackets follow the main style (participate in gradient/solid).
+            html += '<div style="font-size:10px;font-weight:bold;color:#00bfff;margin:10px 0 4px;">BRACKETS</div>';
+            html += '<div style="display:flex;gap:8px;align-items:center;font-size:11px;">'
+                + 'Color: <input type="color" id="rgTagBracketColor" value="' + (work.bracketColor || "#ffffff") + '" style="width:40px;height:24px;padding:0;border:none;background:transparent;cursor:pointer;">'
+                + '<button id="rgTagBracketMatch" class="rgBtn" style="padding:3px 8px;font-size:10px;'
+                + (!work.bracketColor ? 'background:#00bfff33;border:1px solid #00bfff;' : '') + '">Match tag</button>'
+                + '<span style="opacity:.6;font-size:10px;">' + (work.bracketColor ? work.bracketColor : "matches") + '</span>'
+                + '</div>';
+
+            // Effects: wave + static rotate. Wave overrides static rotate.
+            html += '<div style="font-size:10px;font-weight:bold;color:#00bfff;margin:10px 0 4px;">EFFECTS</div>';
+            html += '<label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer;">'
+                + '<input type="checkbox" id="rgTagWave"' + (work.waveOn ? " checked" : "") + '> Wave'
+                + ' <span style="opacity:.6;margin-left:4px;">(alternates ±<span id="rgTagWaveAmpLbl">' + work.waveAmp + '</span>°)</span>'
+                + '</label>';
+            html += '<div id="rgTagWaveRow" style="margin-top:4px;display:' + (work.waveOn ? "flex" : "none") + ';gap:8px;align-items:center;font-size:11px;">'
+                + 'Amp: <input type="range" id="rgTagWaveAmp" min="0" max="30" value="' + work.waveAmp + '" style="flex:1;">'
+                + '</div>';
+            html += '<div id="rgTagRotateRow" style="margin-top:6px;display:' + (work.waveOn ? "none" : "flex") + ';gap:8px;align-items:center;font-size:11px;">'
+                + 'Rotate: <input type="range" id="rgTagRotate" min="-45" max="45" value="' + work.rotateDeg + '" style="flex:1;">'
+                + '<span id="rgTagRotateLbl" style="width:32px;opacity:.7;">' + work.rotateDeg + '°</span>'
+                + '</div>';
+
+            html += '<button id="rgTagSave" class="rgBtn" style="width:100%;margin-top:10px;">Save Tag Style</button>';
+        } else if (!isLeader && !tagText) {
+            html += '<div style="font-size:11px;color:#888;text-align:center;margin-top:4px;">Leader hasn\'t set a tag yet.</div>';
+        }
+
+        // Opt-in (all members)
+        if (tagText) {
+            html += '<hr style="border:none;border-top:1px solid #00bfff22;margin:10px 0 8px;">';
+            html += '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;">'
+                + '<input type="checkbox" id="rgUseTag"' + (useClanTagPref() ? " checked" : "") + '>'
+                + ' Prepend clan tag to my in-game name</label>';
+        }
+
+        body.innerHTML = html;
+
+        // ---- Wire live-update handlers ----
+        if (isLeader && tagText) {
+            // Mode buttons
+            for (const btn of document.querySelectorAll(".rgTagMode")) {
+                btn.onclick = () => {
+                    work.mode = btn.getAttribute("data-mode");
+                    document.getElementById("rgTagSolidRow").style.display = work.mode === "solid" ? "flex" : "none";
+                    document.getElementById("rgTagGradientRow").style.display = work.mode === "gradient" ? "block" : "none";
+                    document.querySelectorAll(".rgTagMode").forEach(b => {
+                        const active = b === btn;
+                        b.style.background = active ? "#00bfff33" : "";
+                        b.style.border = active ? "1px solid #00bfff" : "";
+                        b.style.color = active ? "#00bfff" : "";
+                    });
+                    updatePreview();
+                };
+            }
+            // Palette chips: pick preset or "Custom" (returns to user start/end)
+            for (const btn of document.querySelectorAll(".rgTagPalette")) {
+                btn.onclick = () => {
+                    const key = btn.getAttribute("data-key");
+                    work.paletteKey = key === "__custom" ? null : key;
+                    document.querySelectorAll(".rgTagPalette").forEach(b => {
+                        const active = (b.getAttribute("data-key") === (work.paletteKey || "__custom"));
+                        b.style.background = active ? "#00bfff33" : "";
+                        b.style.border = active ? "1px solid #00bfff" : "";
+                    });
+                    document.getElementById("rgTagCustomRow").style.display = work.paletteKey ? "none" : "flex";
+                    const bar = document.getElementById("rgTagGradientBar");
+                    if (bar) bar.style.background = "linear-gradient(90deg, " + activeStops().join(", ") + ")";
+                    updatePreview();
+                };
+            }
+            const wireInput = (id, key, extra) => {
+                const el = document.getElementById(id);
+                if (el) el.oninput = () => { work[key] = el.value; if (extra) extra(); updatePreview(); };
+            };
+            wireInput("rgTagColor", "color", () => {
+                const hex = document.getElementById("rgTagColorHex");
+                if (hex) hex.textContent = work.color;
+            });
+            const refreshBar = () => {
+                const bar = document.getElementById("rgTagGradientBar");
+                if (bar) bar.style.background = "linear-gradient(90deg, " + activeStops().join(", ") + ")";
+            };
+            wireInput("rgTagGradStart", "gradientStart", refreshBar);
+            wireInput("rgTagGradEnd", "gradientEnd", refreshBar);
+            const wireCheck = (id, key) => {
+                const el = document.getElementById(id);
+                if (el) el.onchange = () => { work[key] = el.checked; updatePreview(); };
+            };
+            wireCheck("rgTagBold", "bold");
+            wireCheck("rgTagItalic", "italic");
+
+            // Bracket color: picking one sets it; "Match tag" clears it so
+            // brackets rejoin the main style.
+            const bracketColorEl = document.getElementById("rgTagBracketColor");
+            const bracketMatchBtn = document.getElementById("rgTagBracketMatch");
+            const bracketHexLbl = () => bracketMatchBtn && bracketMatchBtn.nextElementSibling;
+            if (bracketColorEl) bracketColorEl.oninput = () => {
+                work.bracketColor = bracketColorEl.value;
+                if (bracketMatchBtn) {
+                    bracketMatchBtn.style.background = "";
+                    bracketMatchBtn.style.border = "";
+                }
+                const lbl = bracketHexLbl();
+                if (lbl) lbl.textContent = work.bracketColor;
+                updatePreview();
+            };
+            if (bracketMatchBtn) bracketMatchBtn.onclick = () => {
+                work.bracketColor = null;
+                bracketMatchBtn.style.background = "#00bfff33";
+                bracketMatchBtn.style.border = "1px solid #00bfff";
+                const lbl = bracketHexLbl();
+                if (lbl) lbl.textContent = "matches";
+                updatePreview();
+            };
+            const waveEl = document.getElementById("rgTagWave");
+            if (waveEl) waveEl.onchange = () => {
+                work.waveOn = waveEl.checked;
+                document.getElementById("rgTagWaveRow").style.display = work.waveOn ? "flex" : "none";
+                document.getElementById("rgTagRotateRow").style.display = work.waveOn ? "none" : "flex";
+                updatePreview();
+            };
+            const waveAmpEl = document.getElementById("rgTagWaveAmp");
+            if (waveAmpEl) waveAmpEl.oninput = () => {
+                work.waveAmp = Number(waveAmpEl.value);
+                const lbl = document.getElementById("rgTagWaveAmpLbl");
+                if (lbl) lbl.textContent = work.waveAmp;
+                updatePreview();
+            };
+            const rotEl = document.getElementById("rgTagRotate");
+            if (rotEl) rotEl.oninput = () => {
+                work.rotateDeg = Number(rotEl.value);
+                const lbl = document.getElementById("rgTagRotateLbl");
+                if (lbl) lbl.textContent = work.rotateDeg + "°";
+                updatePreview();
+            };
+
+            document.getElementById("rgTagSave").onclick = async () => {
+                const newStyle = {
+                    mode: work.mode,
+                    color: work.color,
+                    gradientStart: work.gradientStart,
+                    gradientEnd: work.gradientEnd,
+                    paletteKey: work.paletteKey,
+                    bracketColor: work.bracketColor,
+                    bold: work.bold,
+                    italic: work.italic,
+                    waveOn: work.waveOn,
+                    waveAmp: work.waveAmp,
+                    rotateDeg: work.rotateDeg,
+                };
+                try {
+                    const fb = await initFirebase();
+                    if (!fb) return;
+                    await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { tagStyle: newStyle }, { merge: true });
+                    myClan.tagStyle = newStyle;
+                    // Inline confirmation on the button itself -- the bottom
+                    // toast is easy to miss from deep in a scrolled panel.
+                    const saveBtn = document.getElementById("rgTagSave");
+                    if (saveBtn) {
+                        saveBtn.textContent = "✓ Saved for the clan!";
+                        saveBtn.style.borderColor = "#00ff88";
+                        saveBtn.style.color = "#00ff88";
+                        setTimeout(() => {
+                            saveBtn.textContent = "Save Tag Style";
+                            saveBtn.style.borderColor = "";
+                            saveBtn.style.color = "";
+                        }, 1800);
+                    }
+                    showToast("Tag style saved -- members see it on their next clan tab visit.");
+                } catch (e) { console.error("[RG HUD] Save tag style failed:", e); showToast("Save failed."); }
+            };
+        }
+
+        // Opt-in handler
+        const useTagCb = document.getElementById("rgUseTag");
+        if (useTagCb) {
+            useTagCb.onchange = () => {
+                setUseClanTagPref(useTagCb.checked);
+                // The prefix reaches the actual in-game name only when the
+                // player hits Apply in Name Forge -- say so, so the checkbox
+                // doesn't feel like it silently did nothing.
+                showToast(useTagCb.checked
+                    ? "Tag armed! Open 🎨 Name Forge and hit Apply to update your name."
+                    : "Tag prefix off -- hit Apply in 🎨 Name Forge to update your name.");
+                if (typeof RGNF !== "undefined" && RGNF.refresh) RGNF.refresh();
+            };
+        }
+    }
+
     async function refreshDirectory(fb) {
         try {
             const snap = await fb.getDocs(fb.collection(fb.db, "clans"));
@@ -2159,6 +2520,7 @@
                     id: docSnap.id,
                     name: d.name,
                     tag: d.tag ?? "",
+                    tagStyle: d.tagStyle || null,
                     memberCount: (d.members ?? []).length,
                     memberIds: (d.members ?? []).map(m => m.userId),
                     totalMMR: d.totalMMR ?? 0,
@@ -2201,6 +2563,7 @@
             const clan = {
                 name,
                 tag: tag || "",
+                tagStyle: null,
                 leaderId: uid,
                 members: [{ userId: uid, name: myName(), role: "leader" }],
                 joinRequests: [],
@@ -2222,6 +2585,13 @@
         if (!fb) return;
         const uid = myUserId();
         if (!uid) return;
+
+        // Event lockdown: no new joins during an active event so rosters
+        // are frozen for scoring integrity. Lifts when event ends.
+        if (eventPhase() === "active") {
+            showToast("Clans are locked during the event -- join after it ends.");
+            return;
+        }
 
         try {
             const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", clanId));
@@ -2248,6 +2618,14 @@
     async function approveRequest(userId, approve) {
         const fb = await initFirebase();
         if (!fb || !myClan) return;
+
+        // Event lockdown: approvals also blocked during an active event, so
+        // even a leader can't grow the roster mid-event. Denies still allowed
+        // (approve === false) since removing a stale request is safe.
+        if (approve && eventPhase() === "active") {
+            showToast("Can't approve during event -- lifts when event ends.");
+            return;
+        }
 
         try {
             const req = (myClan.joinRequests ?? []).find(r => r.userId === userId);
@@ -2453,10 +2831,151 @@
         }
     }
 
+
+    // ---------- Clan tag styling ----------
+    // Leader owns clan.tagStyle: { color?: hex, bold?: bool, wrap: 'brackets'|'angle'|'none' }
+    // Each member opts in via localStorage (no server writes per-member so the
+    // clan doc doesn't inflate). When a member has opted in AND their clan has
+    // a tag string set, getClanTagPrefix() returns the TMP-formatted markup to
+    // prepend before their in-game nickname (via Name Forge's apply path).
+
+    const CLAN_TAG_OPTIN_KEY = "rgHudUseClanTag";
+
+    function useClanTagPref() {
+        try { return localStorage.getItem(CLAN_TAG_OPTIN_KEY) === "1"; } catch { return false; }
+    }
+    function setUseClanTagPref(on) {
+        try { localStorage.setItem(CLAN_TAG_OPTIN_KEY, on ? "1" : "0"); } catch {}
+    }
+
+    // Interpolate two #RRGGBB hex colors at t in [0,1].
+    function _interpHex(a, b, t) {
+        const ar = parseInt(a.slice(1,3),16), ag = parseInt(a.slice(3,5),16), ab_ = parseInt(a.slice(5,7),16);
+        const br = parseInt(b.slice(1,3),16), bg = parseInt(b.slice(3,5),16), bb = parseInt(b.slice(5,7),16);
+        const r = Math.round(ar + (br-ar)*t), g = Math.round(ag + (bg-ag)*t), bl = Math.round(ab_ + (bb-ab_)*t);
+        return '#' + r.toString(16).padStart(2,'0') + g.toString(16).padStart(2,'0') + bl.toString(16).padStart(2,'0');
+    }
+
+    // Sample an N-stop gradient at t in [0,1]. Stops are evenly spaced.
+    // Same math Name Forge uses so tag gradients match name gradients.
+    function _sampleStops(stops, t) {
+        if (!stops || stops.length === 0) return "#ffffff";
+        if (stops.length === 1) return stops[0];
+        const scaled = t * (stops.length - 1);
+        const i = Math.min(Math.floor(scaled), stops.length - 2);
+        return _interpHex(stops[i], stops[i + 1], scaled - i);
+    }
+
+    // Palette presets (mirrors Name Forge). start/end stored on tagStyle for
+    // arbitrary user gradients; palette selection just overwrites those with
+    // a preset\'s stop array (stored as tagStyle.stops when a preset picked).
+    const CLAN_TAG_PALETTES = [
+        { key: 'fire',    label: '🔥 Fire',    stops: ['#FF4D00', '#FFB800', '#FF0000'] },
+        { key: 'ocean',   label: '🌊 Ocean',   stops: ['#00FFFF', '#00CFFF'] }, // exact [KING] shimmer: K,I,N,G sample to #00FFFF,#00EFFF,#00DFFF,#00CFFF
+        { key: 'rainbow', label: '🌈 Rainbow', stops: ['#FF0000', '#FFFF00', '#00FF00', '#00BFFF', '#8B00FF'] },
+        { key: 'sunset',  label: '🌇 Sunset',  stops: ['#FF6B6B', '#FFB347', '#8E44AD'] },
+        { key: 'toxic',   label: '☢️ Toxic',   stops: ['#39FF14', '#CCFF00', '#00FF9F'] },
+        { key: 'ice',     label: '❄️ Ice',     stops: ['#E0FFFF', '#7DD3FC', '#2563EB'] },
+    ];
+
+    // Effective color stops for the tag: palette stops if a palette is picked,
+    // otherwise the two user-picked gradient endpoints. Returns null if not
+    // in a gradient mode.
+    function _tagStops(st) {
+        if (!st) return null;
+        if (st.paletteKey) {
+            const p = CLAN_TAG_PALETTES.find(x => x.key === st.paletteKey);
+            if (p) return p.stops;
+        }
+        if (Array.isArray(st.stops) && st.stops.length >= 2) return st.stops;
+        if (/^#[0-9a-fA-F]{6}$/.test(st.gradientStart || "") && /^#[0-9a-fA-F]{6}$/.test(st.gradientEnd || "")) {
+            return [st.gradientStart, st.gradientEnd];
+        }
+        return null;
+    }
+
+    // Returns the TMP-formatted markup for this member\'s clan tag prefix.
+    // Always uses [TAG] wrapping. Mode: 'none' | 'solid' | 'gradient'.
+    // Optional effects: bold, italic, wave (alternating rotate), rotate
+    // (static). Gradient emits per-character <#RRGGBB> tags; when combined
+    // with wave, each character also gets its own <rotate=±waveAmp>.
+    function getClanTagPrefix() {
+        if (!myClan || !myClan.tag || !useClanTagPref()) return "";
+        const tag = String(myClan.tag).trim();
+        if (!tag) return "";
+        const st = myClan.tagStyle || {};
+        const tagChars = [...tag];
+        const mode = st.mode || (st.color ? "solid" : "none");
+        const stops = mode === "gradient" ? _tagStops(st) : null;
+        const waveOn = !!st.waveOn;
+        const waveAmp = Math.max(0, Math.min(45, st.waveAmp ?? 8));
+        const rotateDeg = Math.max(-45, Math.min(45, st.rotateDeg ?? 0));
+        const bracketColor = /^#[0-9a-fA-F]{6}$/.test(st.bracketColor || "") ? st.bracketColor.toUpperCase() : null;
+
+        // Emits color+wave markup for one character at "gradient position" gi
+        // out of total-1. When bracketColor is set for gradient mode, gi runs
+        // over TAG LETTERS ONLY so the blend distributes cleanly inside the
+        // brackets. Brackets themselves use bracketColor.
+        function emitChar(ch, gi, giMax, forceColor, waveIdx) {
+            let piece = "";
+            if (waveOn) piece += "<rotate=" + (waveIdx % 2 === 0 ? waveAmp : -waveAmp) + ">";
+            if (forceColor) {
+                piece += "<" + forceColor + ">";
+            } else if (stops) {
+                const t = giMax === 0 ? 0 : gi / giMax;
+                piece += "<" + _sampleStops(stops, t).toUpperCase() + ">";
+            } else if (mode === "solid" && /^#[0-9a-fA-F]{6}$/.test(st.color || "")) {
+                // Always emit the solid color for letters in the per-char path:
+                // the bracket's color tag persists in TMP until changed, so a
+                // letter without its own tag wears the bracket color. (This
+                // was gated on waveOn before -- solid + bracket color + no
+                // wave rendered the whole tag bracket-colored.)
+                piece += "<" + st.color.toUpperCase() + ">";
+            }
+            return piece + ch;
+        }
+
+        let out = "";
+        if (!waveOn && rotateDeg !== 0) out += "<rotate=" + rotateDeg + ">";
+
+        // Fast path: solid color, no wave, no separate bracket color -- one wrap
+        if (mode === "solid" && /^#[0-9a-fA-F]{6}$/.test(st.color || "") && !waveOn && !bracketColor) {
+            out += "<" + st.color.toUpperCase() + ">[" + tag + "]";
+        } else {
+            let wi = 0; // wave index counts every emitted char including brackets
+            // Opening bracket
+            out += emitChar("[", 0, Math.max(0, tagChars.length - 1), bracketColor, wi++);
+            // Tag letters: gradient distributes over these when bracketColor set
+            for (let i = 0; i < tagChars.length; i++) {
+                const gi = bracketColor ? i : i + 1;
+                const giMax = bracketColor ? Math.max(0, tagChars.length - 1) : tagChars.length + 1;
+                out += emitChar(tagChars[i], gi, giMax, null, wi++);
+            }
+            // Closing bracket
+            out += emitChar("]", Math.max(0, tagChars.length - 1),
+                             Math.max(0, tagChars.length - 1), bracketColor, wi++);
+            if (waveOn) out += "<rotate=0>";
+        }
+
+        if (!waveOn && rotateDeg !== 0) out += "<rotate=0>";
+        if (st.italic) out = "<i>" + out + "</i>";
+        if (st.bold) out = "<b>" + out + "</b>";
+        return out + " ";
+    }
+
     async function leaveClan() {
         const fb = await initFirebase();
         if (!fb || !myClan) return;
         const uid = myUserId();
+
+        // Event lockdown: members can't leave mid-event so scores can't be
+        // manipulated by dropping out of a losing clan. The leader can still
+        // kick (kickMember has no such guard by design) so a problem member
+        // isn't stuck either. Restriction lifts when the event ends.
+        if (eventPhase() === "active" && myClan.leaderId !== uid) {
+            showToast("Can't leave during an active event -- ask leader to kick.");
+            return;
+        }
 
         try {
             const isLeader = myClan.leaderId === uid;
@@ -2545,7 +3064,15 @@
 
         document.getElementById("rgCreateClanBtn").onclick = showCreateClanForm;
         view.querySelectorAll(".rgJoinBtn").forEach(btn => {
-            btn.onclick = () => requestJoin(btn.getAttribute("data-clan"));
+            if (eventPhase() === "active") {
+                btn.disabled = true;
+                btn.style.opacity = "0.5";
+                btn.style.cursor = "not-allowed";
+                btn.title = "Clans locked during event";
+                btn.textContent = "Locked (event)";
+            } else {
+                btn.onclick = () => requestJoin(btn.getAttribute("data-clan"));
+            }
         });
     }
 
@@ -2651,6 +3178,10 @@
             </div>
             <div id="rgMembersList" style="display:none;">${memberRows}</div>
             ${requestsSection}
+            <div id="rgClanTagPanel" style="margin-top:10px;padding:8px;border:1px solid #00bfff44;border-radius:6px;">
+                <div style="font-size:11px;font-weight:bold;color:#00bfff;margin-bottom:6px;">CLAN TAG STYLE</div>
+                <div id="rgClanTagBody"></div>
+            </div>
             <button id="rgLeaveClan" class="rgBtn" style="width:100%;margin-top:8px;">Leave Clan</button>
         `;
 
@@ -2680,7 +3211,20 @@
             const tRole = b.getAttribute("data-role");
             await showManageMemberMenu(tUid, tName, tRole, myRole, myClan.leaderId === uid);
         });
-        document.getElementById("rgLeaveClan").onclick = async () => {
+        renderClanTagPanel();
+        // Event lockdown UI: gray out Leave button for non-leader members
+        // during an active event, and show a note explaining why.
+        if (eventPhase() === "active" && myClan && myClan.leaderId !== myUserId()) {
+            const lb = document.getElementById("rgLeaveClan");
+            if (lb) {
+                lb.disabled = true;
+                lb.style.opacity = "0.5";
+                lb.style.cursor = "not-allowed";
+                lb.title = "Locked during active event";
+                lb.textContent = "Leave Clan (locked during event)";
+            }
+        }
+                document.getElementById("rgLeaveClan").onclick = async () => {
             const sure = await showDialog({ message: "Leave this clan?", okLabel: "Leave", cancelLabel: "Cancel" });
             if (sure) leaveClan();
         };
@@ -2826,7 +3370,14 @@
   // ------------------------------------------------------------------
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
   const STORE_KEY = 'rgNameForge.presets.v1';
-  const STATE_KEY = 'rgNameForge.lastState.v1';
+  const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
+  // Per-account state key so switching accounts loads that account\'s last
+  // customized name instead of leaking the previous account\'s work. The
+  // legacy key is read as a one-time fallback when the per-account slot is
+  // empty (so users don\'t lose their existing customization on upgrade).
+  let _currentUserId = null;
+  let _lastRawNickname = ''; // latest known in-game name markup, for the Reset button
+  const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
   const HISTORY_KEY = 'rgNameForge.history.v1';
   const FABPOS_KEY = 'rgNameForge.fabPos.v1';
   const PALETTES = [
@@ -2887,9 +3438,10 @@
     scoredMode: 'default',            // 'default' | 'hide' | 'tiny' | 'styled'
     scoredColor: '#22d3ee',
     scoredSizePct: 100,
+    rawCode: null,                    // when set: exact current in-game markup, used verbatim
   });
 
-  let state = loadJSON(STATE_KEY, defaultState());
+  let state = loadJSON(stateKey(), null) || loadJSON(STATE_KEY_LEGACY, defaultState());
   // backfill any new fields if an old state was saved
   state = Object.assign(defaultState(), state);
 
@@ -3074,6 +3626,45 @@
     if (s.sizePct !== 100) styles.push(`font-size:${Math.max(8, 18 * s.sizePct / 100)}px`);
     if (s.markOn) styles.push(`background:${s.markColor}${alphaHex(s.markAlpha)}`);
     nameLine.style.cssText = styles.join(';');
+
+    // Clan tag prefix: minimally parses "<b>", "<#XXXXXX>" wrappers so the
+    // preview reflects what will actually be sent. Anything unrecognized is
+    // shown as plain text so we never render markup like literal <color> tags.
+    // Clan tag prefix: render TMP-style markup ( <b>, <i>, <#RRGGBB>,
+    // <rotate=N> ) into styled DOM. Supports gradient (per-char color) and
+    // wave/rotate (per-char rotation) markup so preview matches in-game.
+    const pfx = _prefix();
+    if (pfx) {
+      let inner = pfx;
+      let outerBold = false, outerItalic = false;
+      let m;
+      while ((m = inner.match(/^<b>([\s\S]*)<\/b>\s*$/))) { outerBold = true; inner = m[1]; }
+      while ((m = inner.match(/^<i>([\s\S]*)<\/i>\s*$/))) { outerItalic = true; inner = m[1]; }
+      const pfxWrap = document.createElement('span');
+      if (outerBold) pfxWrap.style.fontWeight = '700';
+      if (outerItalic) pfxWrap.style.fontStyle = 'italic';
+      pfxWrap.style.marginRight = '4px';
+      let idx = 0, currentColor = null, currentRotate = 0;
+      while (idx < inner.length) {
+        const rest = inner.slice(idx);
+        const colorTag = rest.match(/^<(#[0-9A-Fa-f]{6})>/);
+        if (colorTag) { currentColor = colorTag[1]; idx += colorTag[0].length; continue; }
+        const rotateTag = rest.match(/^<rotate=(-?\d+)>/);
+        if (rotateTag) { currentRotate = Number(rotateTag[1]); idx += rotateTag[0].length; continue; }
+        const ch = inner[idx];
+        const chSpan = document.createElement('span');
+        chSpan.textContent = ch;
+        if (currentColor) chSpan.style.color = currentColor;
+        if (currentRotate) {
+          chSpan.style.display = 'inline-block';
+          chSpan.style.transform = 'rotate(' + currentRotate + 'deg)';
+        }
+        pfxWrap.appendChild(chSpan);
+        idx++;
+      }
+      nameLine.appendChild(pfxWrap);
+    }
+
 
     const decoParts = [];
     if (s.underline) decoParts.push('underline');
@@ -3513,9 +4104,62 @@ _rgnfFab = fab; _rgnfPanel = panel;
     window.addEventListener('touchend', onUp);
   }
 
+
+  // Render raw TMP-style nickname markup into DOM for the preview. Handles
+  // the tags Rocket Goal names actually use: <#RRGGBB>/<#RRGGBBAA> colors,
+  // <b> <i> <sub> (open/close), <size=N%>, <rotate=N>, <mark=#hex>, <br>,
+  // <sprite=N> (shown via the SPRITES emoji map). Unknown tags are skipped
+  // so preview shows the intent, never literal angle-bracket soup.
+  function renderRawTMP(raw) {
+    const root = document.createElement('div');
+    root.style.lineHeight = '1.35';
+    const st = { color: null, bold: false, italic: false, sub: false, sizePct: 100, rotate: 0, mark: null };
+    let line = document.createElement('div');
+    root.appendChild(line);
+    let i = 0;
+    const spriteEmoji = n => (SPRITES.find(x => x.n === n) || {}).e || '❔';
+    while (i < raw.length) {
+      const rest = raw.slice(i);
+      let m;
+      if ((m = rest.match(/^<br\s*\/?\s*>/i))) { line = document.createElement('div'); root.appendChild(line); i += m[0].length; continue; }
+      if ((m = rest.match(/^<(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)>/))) { st.color = m[1]; i += m[0].length; continue; }
+      if ((m = rest.match(/^<b>/i)))   { st.bold = true;  i += m[0].length; continue; }
+      if ((m = rest.match(/^<\/b>/i))) { st.bold = false; i += m[0].length; continue; }
+      if ((m = rest.match(/^<i>/i)))   { st.italic = true;  i += m[0].length; continue; }
+      if ((m = rest.match(/^<\/i>/i))) { st.italic = false; i += m[0].length; continue; }
+      if ((m = rest.match(/^<sub>/i)))   { st.sub = true;  i += m[0].length; continue; }
+      if ((m = rest.match(/^<\/sub>/i))) { st.sub = false; i += m[0].length; continue; }
+      if ((m = rest.match(/^<size=(\d+)%?>/i))) { st.sizePct = Number(m[1]) || 100; i += m[0].length; continue; }
+      if ((m = rest.match(/^<\/size>/i))) { st.sizePct = 100; i += m[0].length; continue; }
+      if ((m = rest.match(/^<rotate=(-?\d+)>/i))) { st.rotate = Number(m[1]) || 0; i += m[0].length; continue; }
+      if ((m = rest.match(/^<mark=(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)>/i))) { st.mark = m[1]; i += m[0].length; continue; }
+      if ((m = rest.match(/^<\/mark>/i))) { st.mark = null; i += m[0].length; continue; }
+      if ((m = rest.match(/^<sprite=(\d+)>/i))) {
+        const sp = document.createElement('span');
+        sp.textContent = spriteEmoji(Number(m[1]));
+        line.appendChild(sp); i += m[0].length; continue;
+      }
+      if ((m = rest.match(/^<[^>]*>/))) { i += m[0].length; continue; } // unknown tag: skip
+      const ch = raw[i];
+      const span = document.createElement('span');
+      span.textContent = ch;
+      if (st.color) span.style.color = st.color;
+      if (st.bold) span.style.fontWeight = '700';
+      if (st.italic) span.style.fontStyle = 'italic';
+      if (st.mark) span.style.background = st.mark;
+      let size = 18 * (st.sizePct / 100);
+      if (st.sub) { size *= 0.65; span.style.verticalAlign = 'sub'; }
+      span.style.fontSize = Math.max(7, size) + 'px';
+      if (st.rotate) { span.style.display = 'inline-block'; span.style.transform = 'rotate(' + st.rotate + 'deg)'; }
+      line.appendChild(span);
+      i++;
+    }
+    return root;
+  }
+
   function render(panel) {
     panel.innerHTML = '';
-    saveJSON(STATE_KEY, state);
+    saveJSON(stateKey(), state);
 
     // ---- Header (draggable in fly-out mode; inert inside HUD tab) ----
     // The ✕ close button was removed when Forge became a HUD tab: closing is
@@ -3525,6 +4169,31 @@ _rgnfFab = fab; _rgnfPanel = panel;
     ]);
     makeDraggable(panel, head);
     panel.appendChild(head);
+
+    // Touch-to-exit for raw mode: attached once to the panel (persists across
+    // innerHTML rebuilds). Fires ONLY on genuine user interaction -- pointer
+    // or key -- never programmatically, which is what made the old timer
+    // heuristic dangerous. Interacting with any styling control clears the
+    // raw snapshot so the control's own handler proceeds against rebuild
+    // state; the mode bar is removed inline so there's no stale banner and
+    // no focus-stealing re-render mid-interaction.
+    if (!panel._rgnfRawExitWired) {
+      panel._rgnfRawExitWired = true;
+      const exitRawIfStylingTouch = (e) => {
+        if (!state.rawCode) return;
+        const t = e.target;
+        if (!t || !t.closest) return;
+        if (t.closest('.rgnf-modebar') || t.closest('.rgnf-actions-sec')
+            || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
+            || t.closest('.rgnf-head')) return;
+        state.rawCode = null;
+        saveJSON(stateKey(), state);
+        const bar = panel.querySelector('.rgnf-modebar');
+        if (bar) bar.remove();
+      };
+      panel.addEventListener('pointerdown', exitRawIfStylingTouch, true);
+      panel.addEventListener('keydown', exitRawIfStylingTouch, true);
+    }
 
     // ---- Preview + code ----
     // The rendered preview BOX is appended directly to the panel (Forge's
@@ -3539,9 +4208,42 @@ _rgnfFab = fab; _rgnfPanel = panel;
     panel.appendChild(pv);
 
     const secPreview = el('div', { class: 'rgnf-sec rgnf-preview-sec' });
-    secPreview.appendChild(el('h4', { text: 'Preview' }));
+    // Header row: "Preview" label + a minimal ↺ reset icon that reloads the
+    // player's exact current in-game name (markup, colors, everything). No
+    // banner, no block -- just the one small escape hatch, always available.
+    {
+      const hrow = el('div', {});
+      hrow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;';
+      const h4 = el('h4', { text: 'Preview' });
+      h4.style.margin = '0';
+      hrow.appendChild(h4);
+      if (_lastRawNickname) {
+        hrow.appendChild(el('button', {
+          class: 'rgnf-chip', text: '↺',
+          title: 'Reset to my current in-game name',
+          onclick: () => { state.rawCode = _lastRawNickname; render(panel); },
+        }));
+      }
+      secPreview.appendChild(hrow);
+    }
     const codeDiv = el('div', { class: 'rgnf-code', text: buildCode(state) });
     secPreview.appendChild(codeDiv);
+    // Editable raw markup box: shown instead of the readonly code div while
+    // raw mode is active. Direct edits to the markup update the preview live
+    // -- this is how minor surgical edits to complex names happen (e.g.
+    // deleting the [TAG] chunk) without rebuilding the whole design.
+    const rawEdit = el('textarea', { class: 'rgnf-code' });
+    rawEdit.style.cssText = 'display:none;width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:#9fb3ff;';
+    rawEdit.addEventListener('input', () => {
+      state.rawCode = rawEdit.value;
+      const rawPfx = _prefix();
+      pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
+      charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
+      const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
+      letterSpan.textContent = `${[...plainLetters].length} letters`;
+      saveJSON(stateKey(), state);
+    });
+    secPreview.appendChild(rawEdit);
     const charSpan = el('span', { text: '' });
     const letterSpan = el('span', { text: '' });
     secPreview.appendChild(el('div', { class: 'rgnf-meta' }, [charSpan, letterSpan]));
@@ -3550,12 +4252,33 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // Update just the preview/code/meta without rebuilding the panel,
     // so the name field keeps focus and cursor position while typing.
     const refreshPreview = () => {
-      const code = buildCode(state);
+      if (state.rawCode) {
+        // Raw mode: the editable box holds the raw name for surgical edits
+        // (e.g. deleting an old hardcoded [TAG] chunk). The clan-tag prefix
+        // applies HERE TOO -- checkbox on means the tag prepends in every
+        // mode, no exceptions (the old raw-mode exclusion made the clan-tag
+        // feature silently dead for anyone in raw mode, i.e. everyone).
+        // If a raw name still contains its old hardcoded tag, the preview
+        // will show it doubled -- the fix is deleting it in the box below.
+        const rawPfx = _prefix();
+        pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
+        codeDiv.style.display = 'none';
+        rawEdit.style.display = 'block';
+        if (rawEdit.value !== state.rawCode) rawEdit.value = state.rawCode;
+        charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
+        const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
+        letterSpan.textContent = `${[...plainLetters].length} letters`;
+        saveJSON(stateKey(), state);
+        return;
+      }
+      codeDiv.style.display = 'block';
+      rawEdit.style.display = 'none';
+      const code = _prefix() + buildCode(state);
       pv.replaceChildren(renderPreview(state));
       codeDiv.textContent = code;
       charSpan.textContent = `${code.length} chars`;
       letterSpan.textContent = `${[...state.name].length} letters`;
-      saveJSON(STATE_KEY, state);
+      saveJSON(stateKey(), state);
     };
     refreshPreview();
 
@@ -3856,7 +4579,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     panel.appendChild(secPresets);
 
     // ---- Actions ----
-    const secActions = el('div', { class: 'rgnf-sec' });
+    const secActions = el('div', { class: 'rgnf-sec rgnf-actions-sec' });
     const statusLine = el('div', { class: 'rgnf-status' });
     const applyBtn = el('button', {
       class: 'rgnf-btn rgnf-btn-apply', text: 'Apply nickname',
@@ -3866,7 +4589,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
         statusLine.className = 'rgnf-status';
         statusLine.textContent = '';
         try {
-          const codeApplied = buildCode(state);
+          const codeApplied = _prefix() + (state.rawCode ? state.rawCode : buildCode(state));
+          _lastRawNickname = codeApplied; // Reset now returns to what was just applied
           const result = await applyNickname(codeApplied);
           if (result.ok) {
             statusLine.className = 'rgnf-status ok';
@@ -3892,7 +4616,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       class: 'rgnf-btn rgnf-btn-ghost', text: 'Copy code',
       onclick: async () => {
         try {
-          await navigator.clipboard.writeText(buildCode(state));
+          await navigator.clipboard.writeText(_prefix() + (state.rawCode ? state.rawCode : buildCode(state)));
           copyBtn.textContent = 'Copied ✓';
           setTimeout(() => { copyBtn.textContent = 'Copy code'; }, 1200);
         } catch (e) {
@@ -4014,7 +4738,60 @@ _rgnfFab = fab; _rgnfPanel = panel;
     buildUI();
   }
       let _mountedIn = null;
+      // External prefix provider: HUD sets this to getClanTagPrefix. Called
+      // by buildCode()/renderPreview() so Forge stays clan-agnostic.
+      let _prefixProvider = null;
+      function _prefix() { try { return _prefixProvider ? _prefixProvider() : ""; } catch { return ""; } }
       return {
+        setPrefixProvider(fn) { _prefixProvider = fn; },
+        // Re-render the Forge panel in place (e.g. after the clan-tag opt-in
+        // toggles, so the prefix appears/disappears in the preview live).
+        refresh() { if (_rgnfPanel) render(_rgnfPanel); },
+        // Called by HUD when Forge opens (or when the player switches accounts).
+        // Two paths:
+        //   1. Per-account state exists -> honor completely. This player has
+        //      already customized Forge under this account; whatever they
+        //      typed is their intent, don\'t clobber it.
+        //   2. No per-account state -> fresh seed. Copy STYLING from the
+        //      legacy shared state if it exists (so the visual design carries
+        //      over the first time), but ALWAYS use the current account\'s
+        //      displayName for state.name -- never inherit another account\'s
+        //      name text. This is the fix for cross-account name leakage.
+        syncToCurrentPlayer(userId, displayName, rawNickname) {
+          if (!userId) return;
+          if (rawNickname) _lastRawNickname = String(rawNickname);
+          const prevId = _currentUserId;
+          _currentUserId = userId;
+          if (prevId === userId) return;
+          const perUser = loadJSON(stateKey(), null);
+          if (perUser) {
+            state = Object.assign(defaultState(), perUser);
+          } else {
+            // TRULY fresh seed: the player's WHOLE current in-game name,
+            // exactly as the game returns it, loaded as a raw snapshot.
+            // Preview shows it faithfully, Apply is a no-op round-trip, and
+            // the first styling edit clears the snapshot to rebuild from
+            // scratch. state.name gets the full plain-text letters (all
+            // lines, tags stripped) as the rebuild starting point.
+            state = defaultState();
+            const raw = String(rawNickname || "").trim();
+            if (raw) {
+              state.rawCode = raw;
+              state.name = raw.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+            } else {
+              state.name = String(displayName || "").trim();
+            }
+            saveJSON(stateKey(), state);
+          }
+
+          // CRITICAL: re-render immediately and unconditionally. The panel DOM
+          // exists from page load whether or not it has been re-parented into
+          // the HUD tab yet -- and sync runs BEFORE mountIn on first open, so
+          // gating this render on _mountedIn meant the swapped state never
+          // reached the screen. That gate was the bug behind two failed fixes:
+          // the seed logic worked, the pixels didn't.
+          if (_rgnfPanel) render(_rgnfPanel);
+        },
         // Re-parent Forge's panel into the HUD's rgForgeView on first open.
         // Everything Forge does (render, presets, keyboard guard, apply)
         // keeps working once its DOM tree is under a different parent.
