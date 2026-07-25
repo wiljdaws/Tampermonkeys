@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rocket Goal HUD
 // @namespace    https://rocketgoal.io
-// @version      11.9
+// @version      12.0
 // @description  Live stats HUD for Rocket Goal - ratings, ranks, session deltas, win rates, auto leaderboard sync, customizable glow
 // @author       JesusDied4U
 // @match        https://rocketgoal.io/*
@@ -106,7 +106,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "11.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -410,17 +410,15 @@
             RGNF.mountIn(forgeView);
         };
 
-        // Settings panel wiring -- opening settings always returns to the stats
-        // view first, so the panel (which lives inside stats) is actually visible.
+        // Settings panel wiring -- opening settings routes through showStatsOnly()
+        // so any other open tab (Clan, Forge) closes cleanly first, and the action
+        // row is correctly restored (matters when settings is opened from Forge,
+        // which had hidden the row). Closing settings returns to the clean Stats
+        // view. Without this, opening Settings from Forge left both views stacked.
         document.getElementById("rgSettingsBtn").onclick = () => {
             const opening = panel.style.display === "none";
-            if (opening) {
-                clanView.style.display = "none";   // leave clan view if it was open
-                statsView.style.display = "block";
-                panel.style.display = "block";
-            } else {
-                panel.style.display = "none";
-            }
+            showStatsOnly();
+            if (opening) panel.style.display = "block";
         };
 
         const setGlow = document.getElementById("rgSetGlow");
