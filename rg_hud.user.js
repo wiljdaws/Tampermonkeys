@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      12.3
+// @version      12.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -107,7 +107,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3436,7 +3436,7 @@
   const FABPOS_KEY = 'rgNameForge.fabPos.v1';
   const PALETTES = [
     { label: '🔥 Fire', stops: ['#FF4D00', '#FFB800', '#FF0000'] },
-    { label: '🌊 Ocean', stops: ['#00E5FF', '#0066FF', '#7C3AED'] },
+    { label: '🌊 Ocean', stops: ['#00FFFF', '#0000FF'] }, // signature ramp -- matches RootedEngineering (green channel descends, blue pinned)
     { label: '🌈 Rainbow', stops: ['#FF0000', '#FFFF00', '#00FF00', '#00BFFF', '#8B00FF'] },
     { label: '🌇 Sunset', stops: ['#FF6B6B', '#FFB347', '#8E44AD'] },
     { label: '☢️ Toxic', stops: ['#39FF14', '#CCFF00', '#00FF9F'] },
@@ -3489,6 +3489,19 @@
     titleColor: '#94a3b8',
     titleSizePct: 60,
     titleSub: true,                   // wrap title in <sub> for that low-set look
+    // Title now has its OWN styling parallel to the name. Previously title
+    // borrowed the name\'s stops/bold/etc, which meant "customize title" was a
+    // half-lie. Full independence: separate palette, gradient, style toggles.
+    titleStops: ['#ff8fb1', '#a78bfa'],
+    titlePaletteKey: null,
+    titleBold: false,
+    titleItalic: false,
+    titleUnderline: false,
+    titleStrike: false,
+    titleAlpha: 255,                  // 0-255 alpha on titleColor (solid only)
+    // Alpha for the NAME\'s solid color, so trailing text like the URL line
+    // can be dimmed (Dawson\'s own name uses <#ffffff44> for exactly this).
+    solidAlpha: 255,
     scoredMode: 'default',            // 'default' | 'hide' | 'tiny' | 'styled'
     scoredColor: '#22d3ee',
     scoredSizePct: 100,
@@ -3585,7 +3598,10 @@
     let i = 0;
     let lastColor = null;
     let out = '';
-    if (mode === 'solid') out += `<${solid.toUpperCase()}>`;
+    if (mode === 'solid') {
+      const aaN = (s.solidAlpha ?? 255) < 255 ? alphaHex(s.solidAlpha) : '';
+      out += `<${solid.toUpperCase()}${aaN}>`;
+    }
     for (const tok of tokens) {
       if (tok.type === 'sprite') { out += tok.value; continue; }
       if (skipSpaces && tok.value === ' ') { out += ' '; continue; }
@@ -3633,17 +3649,28 @@
 
     let code = open + nameCode + close;
 
-    // Title line
+    // Title line -- fully independent styling from the name.
+    // Colors: solid gets <#RRGGBB> or <#RRGGBBAA> (alpha < 255 emits 8-digit).
+    // Gradient uses titleStops via colorizeText (same function name works both).
     if (s.titleOn && s.titleText.trim().length > 0) {
       let t = s.titleText;
       if (s.titleColorMode === 'solid') {
-        t = `<${s.titleColor.toUpperCase()}>` + t;
+        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
+        t = `<${s.titleColor.toUpperCase()}${aa}>` + t;
       } else if (s.titleColorMode === 'gradient') {
-        t = colorizeText(t, 'gradient', s.titleColor, s.stops, s.skipSpaces);
+        t = colorizeText(t, 'gradient', s.titleColor, s.titleStops, s.skipSpaces);
+        // Alpha on gradient: append the alpha byte to every <#RRGGBB> tag in
+        // one pass, so title gradient can be transparent like solid can.
+        const aaG = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
+        if (aaG) t = t.replace(/<(#[0-9A-Fa-f]{6})>/g, `<$1${aaG}>`);
       }
       let tOpen = '', tClose = '';
       if (s.titleSizePct !== 100) tOpen += `<size=${s.titleSizePct}%>`;
       if (s.titleSub) { tOpen += '<sub>'; tClose = '</sub>' + tClose; }
+      if (s.titleBold) { tOpen += '<b>'; tClose = '</b>' + tClose; }
+      if (s.titleItalic) { tOpen += '<i>'; tClose = '</i>' + tClose; }
+      if (s.titleUnderline) { tOpen += '<u>'; tClose = '</u>' + tClose; }
+      if (s.titleStrike) { tOpen += '<s>'; tClose = '</s>' + tClose; }
       code += '<br>' + tOpen + t + tClose;
     }
 
@@ -3738,7 +3765,10 @@
       } else {
         span.textContent = tok.value;
         if (tok.value !== ' ' || !s.skipSpaces) {
-          if (s.colorMode === 'solid') span.style.color = s.solidColor;
+          if (s.colorMode === 'solid') {
+            const aa = (s.solidAlpha ?? 255) < 255 ? alphaHex(s.solidAlpha) : '';
+            span.style.color = s.solidColor + aa;
+          }
           else if (s.colorMode === 'gradient' && n > 0 && tok.value !== ' ') {
             const t = n === 1 ? 0 : i / (n - 1);
             span.style.color = gradientAt(s.stops, t);
@@ -3772,18 +3802,30 @@
       titleLine.className = 'rgnf-preview-title';
       titleLine.style.fontSize = `${Math.max(7, 18 * s.titleSizePct / 100)}px`;
       if (s.titleSub) titleLine.style.verticalAlign = 'sub';
+      if (s.titleBold) titleLine.style.fontWeight = '700';
+      if (s.titleItalic) titleLine.style.fontStyle = 'italic';
+      const titleDeco = [];
+      if (s.titleUnderline) titleDeco.push('underline');
+      if (s.titleStrike) titleDeco.push('line-through');
+      if (titleDeco.length) titleLine.style.textDecorationLine = titleDeco.join(' ');
       if (s.titleColorMode === 'solid') {
         titleLine.textContent = s.titleText;
-        titleLine.style.color = s.titleColor;
+        // Match TMP 8-digit hex: append alpha byte when < 255 (browsers accept it).
+        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
+        titleLine.style.color = s.titleColor + aa;
       } else if (s.titleColorMode === 'gradient') {
+        // Fix: use s.titleStops (not s.stops -- that was the name\'s palette
+        // leaking through). Apply titleAlpha across every letter for gradient
+        // transparency parity with solid mode.
         const chars = [...s.titleText];
         const paint = chars.filter(c => c !== ' ').length;
+        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
         let j = 0;
         for (const c of chars) {
           const sp = document.createElement('span');
           sp.textContent = c;
           if (c !== ' ') {
-            sp.style.color = gradientAt(s.stops, paint === 1 ? 0 : j / (paint - 1));
+            sp.style.color = gradientAt(s.titleStops, paint === 1 ? 0 : j / (paint - 1)) + aa;
             j++;
           }
           titleLine.appendChild(sp);
@@ -4394,6 +4436,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
       secColor.appendChild(el('div', { class: 'rgnf-row' }, [
         el('label', { text: 'Color' }),
         el('input', { type: 'color', value: state.solidColor, oninput: (e) => { state.solidColor = e.target.value; render(panel); } }),
+        el('label', { text: 'Opacity' }, [
+          el('input', { type: 'range', min: 32, max: 255, value: state.solidAlpha ?? 255,
+            oninput: (e) => { state.solidAlpha = Number(e.target.value); refreshPreview(); },
+            style: 'width:80px;margin-left:6px;',
+          }),
+        ]),
       ]));
     }
 
@@ -4500,9 +4548,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
     }));
     secTitle.appendChild(tRow);
     if (state.titleOn) {
+      // Text input
       secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
-        el('input', { type: 'text', placeholder: 'e.g. Data Shepherd', value: state.titleText, oninput: (e) => { state.titleText = e.target.value; refreshPreview(); } }),
+        el('input', { type: 'text', placeholder: 'e.g. RGC FINALIST', value: state.titleText, oninput: (e) => { state.titleText = e.target.value; refreshPreview(); } }),
       ]));
+      // Color mode
       const tm = el('div', { class: 'rgnf-row' });
       [['inherit', 'Inherit'], ['solid', 'Solid'], ['gradient', 'Gradient']].forEach(([v, label]) => {
         tm.appendChild(el('button', {
@@ -4510,17 +4560,84 @@ _rgnfFab = fab; _rgnfPanel = panel;
           onclick: () => { state.titleColorMode = v; render(panel); },
         }));
       });
-      if (state.titleColorMode === 'solid') {
-        tm.appendChild(el('input', { type: 'color', value: state.titleColor, oninput: (e) => { state.titleColor = e.target.value; render(panel); } }));
-      }
       secTitle.appendChild(tm);
-      secTitle.appendChild(sliderRow(panel, 'Size', 'titleSizePct', 25, 100, '%'));
-      secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
-        el('button', {
-          class: `rgnf-chip ${state.titleSub ? 'rgnf-on' : ''}`, text: '<sub> style',
-          onclick: () => { state.titleSub = !state.titleSub; render(panel); },
-        }),
-      ]));
+      // Solid: color picker (opacity moved below so it also applies to gradient)
+      if (state.titleColorMode === 'solid') {
+        secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
+          el('input', { type: 'color', value: state.titleColor, oninput: (e) => { state.titleColor = e.target.value; refreshPreview(); } }),
+        ]));
+      }
+      // Gradient: own palette chips + own editable stops (mirrors Name gradient)
+      if (state.titleColorMode === 'gradient') {
+        const palRow = el('div', { class: 'rgnf-row' });
+        PALETTES.forEach(p => {
+          palRow.appendChild(el('button', {
+            class: `rgnf-chip ${state.titlePaletteKey === p.label ? 'rgnf-on' : ''}`, text: p.label,
+            onclick: () => {
+              state.titlePaletteKey = p.label;
+              state.titleStops = [...p.stops];
+              refreshPreview();
+              render(panel);
+            },
+          }));
+        });
+        secTitle.appendChild(palRow);
+        const tStops = el('div', { class: 'rgnf-row' });
+        state.titleStops.forEach((c, idx) => {
+          const stop = el('div', { class: 'rgnf-stop' }, [
+            el('input', { type: 'color', value: c, oninput: (e) => {
+              state.titleStops[idx] = e.target.value;
+              state.titlePaletteKey = null; // hand-edited: no longer a preset
+              refreshPreview();
+              // repaint gradient bar
+              const bar = document.getElementById('rgnfTitleGradBar');
+              if (bar) bar.style.background = `linear-gradient(90deg, ${state.titleStops.join(',')})`;
+            } }),
+          ]);
+          if (state.titleStops.length > 2) {
+            stop.appendChild(el('button', { text: '✕', onclick: () => { state.titleStops.splice(idx, 1); state.titlePaletteKey = null; render(panel); } }));
+          }
+          tStops.appendChild(stop);
+        });
+        if (state.titleStops.length < 5) {
+          tStops.appendChild(el('button', {
+            class: 'rgnf-chip', text: '+ stop',
+            onclick: () => { state.titleStops.push(state.titleStops[state.titleStops.length - 1]); state.titlePaletteKey = null; render(panel); },
+          }));
+        }
+        secTitle.appendChild(tStops);
+        const bar = el('div', { class: 'rgnf-gradbar' });
+        bar.id = 'rgnfTitleGradBar';
+        bar.style.background = `linear-gradient(90deg, ${state.titleStops.join(',')})`;
+        secTitle.appendChild(bar);
+      }
+      // Size + Sub
+      // Opacity: applies to solid AND gradient title colors (via 8-digit hex).
+      if (state.titleColorMode !== 'inherit') {
+        secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
+          el('label', { text: 'Opacity' }, [
+            el('input', { type: 'range', min: 32, max: 255, value: state.titleAlpha ?? 255,
+              oninput: (e) => { state.titleAlpha = Number(e.target.value); refreshPreview(); },
+              style: 'width:140px;margin-left:6px;',
+            }),
+          ]),
+        ]));
+      }
+      // Size: cap raised to 180% so titles can go bigger than the name if the
+      // player wants a headline-style tagline.
+      secTitle.appendChild(sliderRow(panel, 'Size', 'titleSizePct', 25, 180, '%'));
+      // Style toggles: Bold/Italic/Underline/Strike + <sub> layout toggle
+      const tStyle = el('div', { class: 'rgnf-row' });
+      const tToggle = (key, label) => el('button', {
+        class: `rgnf-chip ${state[key] ? 'rgnf-on' : ''}`, text: label,
+        onclick: () => { state[key] = !state[key]; refreshPreview(); render(panel); },
+      });
+      tStyle.appendChild(tToggle('titleBold', 'B'));
+      tStyle.appendChild(tToggle('titleItalic', 'I'));
+      tStyle.appendChild(tToggle('titleUnderline', 'U'));
+      tStyle.appendChild(tToggle('titleStrike', 'S'));
+      tStyle.appendChild(tToggle('titleSub', '<sub>'));
+      secTitle.appendChild(tStyle);
     }
     panel.appendChild(secTitle);
 
