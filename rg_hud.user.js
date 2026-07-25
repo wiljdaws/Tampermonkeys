@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      12.7
+// @version      12.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -119,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -400,11 +400,10 @@
             forgeView.style.display = "none";
             panel.style.display = "none";
             statsView.style.display = "block";
-            // Default: action row visible (relevant to stats and clan views).
-            // The Forge tab explicitly re-hides it below since Rename edits the
-            // leaderboard display name (not the in-game nickname Forge builds),
-            // and Sub/Leaderboard aren't name-related at all.
             actionRow.style.display = "flex";
+            // Detach the clan real-time listener when leaving Clan tab so we
+            // stop paying for updates the player isn\'t looking at anymore.
+            detachClanListener();
         }
         document.getElementById("rgClanBtn").onclick = () => {
             const showingClan = clanView.style.display !== "none";
@@ -412,7 +411,7 @@
             showStatsOnly();
             statsView.style.display = "none";
             clanView.style.display = "block";
-            renderClanView();
+            renderClanView(); // listener attaches inside once myClan is known
         };
         document.getElementById("rgForgeBtn").onclick = () => {
             const showingForge = forgeView.style.display !== "none";
@@ -1042,13 +1041,13 @@
 
         try {
             const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp } =
+            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
 
-            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp };
+            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot };
             return firestoreReady;
         } catch (e) {
             console.error("[RG HUD] Firebase init failed:", e);
@@ -1571,14 +1570,28 @@
             const prevMine = (myClan.members ?? []).find(m => m.userId === uid)?.mmr;
             if (prevMine !== myMMR) {
                 try {
+                    // syncedAt: client ms timestamp on MY member entry, so
+                    // teammates can render per-member freshness ("2m ago").
+                    // Client clock is fine for display; serverTimestamp() is
+                    // not allowed inside Firestore array elements anyway.
                     const members = (myClan.members ?? []).map(m =>
-                        m.userId === uid ? { ...m, mmr: myMMR } : m
+                        m.userId === uid ? { ...m, mmr: myMMR, syncedAt: Date.now() } : m
                     );
                     const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
                     // Stamp an unforgeable server time; we read it back to learn the
                     // authoritative clock for event-window decisions.
-                    await fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
+                    const writeClanMMR = () => fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
                         { members, totalMMR, lastSyncAt: fb.serverTimestamp() }, { merge: true });
+                    try {
+                        await writeClanMMR();
+                    } catch (firstErr) {
+                        // One retry after 5s: a transient failure here used to
+                        // stall this member's visible contribution until their
+                        // NEXT match. One cheap retry closes most of that gap.
+                        console.warn("[RG HUD] Clan MMR write failed, retrying in 5s:", firstErr);
+                        await new Promise(r => setTimeout(r, 5000));
+                        await writeClanMMR();
+                    }
                     myClan.members = members;
                     myClan.totalMMR = totalMMR;
 
@@ -2178,6 +2191,57 @@
     // Roles that can approve/reject join requests.
     function canManageRequests(role) {
         return role === "leader" || role === "coleader" || role === "elder";
+    }
+
+    // Real-time clan doc listener. Attached while the Clan tab is visible,
+    // detached when it closes. Firestore bills listeners 1 read on attach and
+    // 1 read per actual change -- idle time is free -- so this is strictly
+    // cheaper than polling PROVIDED the callback never refetches. The
+    // callback therefore renders from memory only (the snapshot already
+    // carries the fresh doc); calling the fetching renderClanView() here
+    // would triple the cost and was the flaw in the first implementation.
+    let _clanUnsub = null;
+    let _clanListenerId = null; // which clan doc the live listener serves
+
+    async function attachClanListener() {
+        if (!myClan) return;
+        if (_clanUnsub && _clanListenerId === myClan.id) return; // already live
+        detachClanListener(); // clan changed since attach -> resubscribe
+        const fb = await initFirebase();
+        if (!fb || !myClan) return;
+        try {
+            const clanId = myClan.id;
+            _clanListenerId = clanId;
+            _clanUnsub = fb.onSnapshot(fb.doc(fb.db, "clans", clanId), (snap) => {
+                const uid = myUserId();
+                // Doc deleted (disband) or we're no longer on the roster
+                // (left / kicked): drop local clan state and show the browse
+                // view live. This also means a kicked player SEES the kick
+                // happen in real time instead of a stale roster.
+                const stillMember = snap.exists()
+                    && ((snap.data().members ?? []).some(m => m.userId === uid));
+                if (!stillMember) {
+                    detachClanListener();
+                    myClan = null;
+                    clanLoaded = false; // force a real reload next tab open
+                    refreshClanViewIfOpen();
+                    return;
+                }
+                myClan = { id: snap.id, ...snap.data() };
+                // Zero-read repaint from the data we were just handed.
+                refreshClanViewIfOpen();
+            });
+        } catch (e) {
+            console.warn("[RG HUD] Clan listener attach failed:", e);
+            _clanListenerId = null;
+        }
+    }
+    function detachClanListener() {
+        if (_clanUnsub) {
+            try { _clanUnsub(); } catch (e) {}
+            _clanUnsub = null;
+        }
+        _clanListenerId = null;
     }
 
     async function loadClanData(force = false) {
@@ -3121,6 +3185,7 @@
             }
             if (isLeader) {
                 // Last member & leader -> disband.
+                detachClanListener(); // stop listening before the doc vanishes
                 await fb.deleteDoc(fb.doc(fb.db, "clans", myClan.id));
             } else {
                 const members = (myClan.members ?? []).filter(m => m.userId !== uid);
@@ -3151,6 +3216,7 @@
         if (fb) await loadEventConfig(fb, true);
 
         renderClanViewFromMemory();
+        if (myClan) attachClanListener();
     }
 
     // Re-renders the clan tab from whatever's already in myClan/clanDirectory --
@@ -3168,6 +3234,11 @@
         const view = document.getElementById("rgClanView");
         if (view && view.style.display !== "none") {
             renderClanViewFromMemory();
+            // Keep the live listener aligned with whatever clan is now shown.
+            // Idempotent: no-ops when already subscribed to this clan; swaps
+            // subscription when the clan changed; detached state stays
+            // detached only when there is no clan at all.
+            if (myClan) attachClanListener();
         }
     }
 
@@ -3286,12 +3357,23 @@
                 const actable = canManage && m.userId !== uid && m.role !== "leader"
                     && (ROLE_RANK[m.role] ?? 0) < (ROLE_RANK[myRole] ?? 0);
                 const contrib = contribFor(m);
+                // Freshness: how old is this member's last synced MMR? Turns
+                // "why is Xuuya +0?!" into "ah, Xuuya last synced 2h ago" --
+                // distinguishing staleness from zero effort at a glance.
+                const ageMs = typeof m.syncedAt === "number" ? Date.now() - m.syncedAt : null;
+                const ageLabel = ageMs == null ? null
+                    : ageMs < 90e3 ? "just now"
+                    : ageMs < 3600e3 ? `${Math.round(ageMs / 60e3)}m ago`
+                    : ageMs < 86400e3 ? `${Math.round(ageMs / 3600e3)}h ago`
+                    : `${Math.round(ageMs / 86400e3)}d ago`;
+                const freshnessNote = ageLabel ? `· last synced ${ageLabel}` : "· sync age unknown (teammate needs v12.9+)";
+                const stale = ageMs != null && ageMs > 3600e3; // >1h: dim the chip
                 // Contribution chip: green for gain, red for loss, gray dash for
                 // "hasn't played this event yet." Only shown during active event.
                 const contribHtml = eventActive
                     ? (contrib == null
                         ? `<span title="Hasn't played during this event yet" style="opacity:.4;font-size:10px;font-family:monospace;">—</span>`
-                        : `<span title="Event contribution (current MMR - baseline)" style="color:${contrib >= 0 ? "#00ff66" : "#ff6b6b"};font-size:10px;font-weight:bold;font-family:monospace;">${contrib >= 0 ? "+" : ""}${contrib}</span>`)
+                        : `<span title="Event contribution (current MMR - baseline) ${freshnessNote}" style="color:${contrib >= 0 ? "#00ff66" : "#ff6b6b"};opacity:${stale ? ".45" : "1"};font-size:10px;font-weight:bold;font-family:monospace;">${contrib >= 0 ? "+" : ""}${contrib}</span>`)
                     : "";
                 return `
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;gap:6px;">
