@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      12.5
+// @version      12.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -34,6 +34,10 @@
         glowOpacity: 0.6,    // vibrancy
         glowColor1: "#ff7a00",
         glowColor2: "#00d4ff",
+        // OG Title: when true, the neutral HUD title shows "🚀 Rocket Goal HUD"
+        // (the original) instead of the ATLAS icon + name. Vibe-state titles
+        // (Flow State, ON FIRE, KING, etc.) are untouched either way.
+        ogTitle: false,
     };
 
     let settings = { ...DEFAULT_SETTINGS };
@@ -115,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -294,6 +298,7 @@
                 <div id="rgStatsView">
                     <div id="rgContent">Waiting for data...</div>
                     <div id="rgSettingsPanel" style="display:none;border-top:1px solid #00bfff44;margin-top:8px;padding-top:6px;">
+                        <div class="rgSettingRow"><span title="Bring back the original 🚀 Rocket Goal HUD title">OG Title</span><input type="checkbox" id="rgSetOgTitle"></div>
                         <div class="rgSettingRow"><span>Glow</span><input type="checkbox" id="rgSetGlow"></div>
                         <div class="rgSettingRow"><span>Speed</span><input type="range" id="rgSetSpeed" min="1" max="10" step="0.5"></div>
                         <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
@@ -441,7 +446,9 @@
         const setColor1 = document.getElementById("rgSetColor1");
         const setColor2 = document.getElementById("rgSetColor2");
 
+        const setOgTitle = document.getElementById("rgSetOgTitle");
         function syncSettingInputs() {
+            setOgTitle.checked = !!settings.ogTitle;
             setGlow.checked = settings.glowEnabled;
             setSpeed.value = settings.glowSpeed;
             setOpacity.value = settings.glowOpacity;
@@ -450,6 +457,11 @@
         }
         syncSettingInputs();
 
+        setOgTitle.onchange = () => {
+            settings.ogTitle = setOgTitle.checked;
+            saveSettings();
+            applyTitle(); // repaint immediately so users see the switch land
+        };
         setGlow.onchange = () => { settings.glowEnabled = setGlow.checked; saveSettings(); applyGlowSettings(); };
         setSpeed.oninput = () => { settings.glowSpeed = parseFloat(setSpeed.value); saveSettings(); applyGlowSettings(); };
         setOpacity.oninput = () => { settings.glowOpacity = parseFloat(setOpacity.value); saveSettings(); applyGlowSettings(); };
@@ -801,7 +813,9 @@
             case "flowState": return { text: "🏄 Flow State", color: "#b14bff" };
             case "onFire":    return { text: "🔥 ON FIRE", color: "#ff5b1f" };
             case "heatingUp": return { text: "🔥 Heating Up", color: "#ff9a3c" };
-            default:          return { text: atlasIconHtml() + "ATLAS", color: "#00bfff", html: true };
+            default:
+                if (settings.ogTitle) return { text: "🚀 Rocket Goal HUD", color: "#00bfff" };
+                return { text: atlasIconHtml() + "ATLAS", color: "#00bfff", html: true };
         }
     }
 
