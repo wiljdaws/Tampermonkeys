@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      12.4
+// @version      12.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -17,6 +17,14 @@
     'use strict';
 
     let hud;
+
+    // Custom ATLAS icon URL -- served from the same GitHub repo as the script,
+    // reused as both Tampermonkey icon (via @icon in the header) and inline
+    // in the HUD title bar. Rendered as an <img> so it stays crisp at any
+    // scale (unlike the 🚀 emoji it replaced, which pulled from the system
+    // font and looked flat/inconsistent across OSes).
+    const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png';
+    const atlasIconHtml = () => `<img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">`;
 
     // ---------- Settings (persisted in localStorage) ----------
 
@@ -107,7 +115,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -272,7 +280,7 @@
                 #rgHUD .rgNoUnderline { border-bottom: none; }
             </style>
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:8px;" id="rgDragHandle">
-                <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🚀 Rocket Goal HUD</span>
+                <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">ATLAS</span>
                 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
                     <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
                     <button id="rgClanBtn" class="rgIconBtn" title="Clans">🛡️</button>
@@ -793,15 +801,18 @@
             case "flowState": return { text: "🏄 Flow State", color: "#b14bff" };
             case "onFire":    return { text: "🔥 ON FIRE", color: "#ff5b1f" };
             case "heatingUp": return { text: "🔥 Heating Up", color: "#ff9a3c" };
-            default:          return { text: "🚀 Rocket Goal HUD", color: "#00bfff" };
+            default:          return { text: atlasIconHtml() + "ATLAS", color: "#00bfff", html: true };
         }
     }
 
     function applyTitle() {
         const titleEl = document.getElementById("rgTitle");
         if (!titleEl) return;
-        const { text, color } = resolveTitle();
-        titleEl.textContent = text;
+        const { text, color, html } = resolveTitle();
+        // html:true = trusted markup from resolveTitle (only path with images
+        // is our own ATLAS default). Emoji titles use textContent for safety.
+        if (html) titleEl.innerHTML = text;
+        else titleEl.textContent = text;
         titleEl.style.color = color;
     }
 
