@@ -1,8 +1,8 @@
-# Rocket Goal HUD
+# ATLAS 🏔️
 
-A live stats overlay for [Rocket Goal](https://rocketgoal.io) — shows your ratings, win rates, and equipped car right in the corner of the screen while you play.
+A free Tampermonkey script that turns [Rocket Goal](https://rocketgoal.io) into a live service game - stats HUD, community leaderboard, clans with events, and a full custom name editor. The devs stopped updating, so we did it ourselves.
 
-This guide assumes you've never used Tampermonkey before. Just follow the steps in order.
+This guide assumes you've never used Tampermonkey before. Just follow the steps in order. Full feature list is at the [bottom](#whats-actually-in-this-thing) if you want to see everything it does first.
 
 ---
 
@@ -42,9 +42,9 @@ Don't worry, this doesn't make your browser less safe. It just allows extensions
 
 ---
 
-## Step 4: Install the Rocket Goal HUD script
+## Step 4: Install ATLAS
 
-1. Click this link: **[Install Rocket Goal HUD](https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js)**
+1. Click this link: **[Install ATLAS](https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js)**
 2. Tampermonkey will open a new tab showing the script's code and an **Install** button.
 3. Click **Install**.
 
@@ -88,31 +88,85 @@ If you ever want to check for an update right now instead of waiting:
 2. Click the **Utilities** tab at the top
 3. Click **Check for userscript updates**
 
+If that doesn't grab the newest version (Tampermonkey can be stubborn), just click the [install link](https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js) again and hit **Reinstall**. Always works.
+
 ---
 
 ## Step 7: Confirm it's working
 
 1. Go to [rocketgoal.io](https://rocketgoal.io) and log in.
-2. You should see a small box in the top-right corner labeled **🚀 Rocket Goal HUD**.
+2. You should see a small box in the top-right corner labeled **ATLAS**.
 3. It'll say "Waiting for data..." for a second, then fill in with your ratings and stats.
 
 If you don't see the box at all:
 
-- Click the Tampermonkey icon — it should show a number badge if a script is active on the current page. If it doesn't, the script may not have installed correctly; try Step 4 again.
-- Make sure you only have **one** copy of "Rocket Goal HUD" installed. Go to Tampermonkey Dashboard → Installed Userscripts, and if you see more than one entry with that name, delete all but the newest one (trash can icon on the right).
-
----
-
-## What the buttons do
-
-- **Hide** — collapses the stats so they're out of the way
-- **✏️ Rename** — change the name that shows up on the public leaderboard
-- **📺 Sub** — opens the RootedEngineering YouTube channel
-- **🏆 Board** — opens the live Rocket Goal leaderboard site
-- **🐛 Bug** — report a problem with the script
+- Click the Tampermonkey icon - it should show a number badge if a script is active on the current page. If it doesn't, the script may not have installed correctly; try Step 4 again.
+- Make sure you only have **one** copy of the script installed. Go to Tampermonkey Dashboard → Installed Userscripts, and if you see more than one entry (old "Rocket Goal HUD" or standalone "Name Forge" copies count), delete all but the newest ATLAS entry (trash can icon on the right).
 
 ---
 
 ## Found a bug or have a suggestion?
 
-Click the **🐛 Bug** button in the HUD itself, or [open an issue here](https://github.com/wiljdaws/Tampermonkeys/issues/new) directly.
+[Open an issue here](https://github.com/wiljdaws/Tampermonkeys/issues/new) or ping us in the Discord.
+
+---
+---
+
+# What's actually in this thing
+
+Everything below ships in the one script. No paid tiers, no premium unlock, none of that. It's all free and community-run.
+
+## 📊 Stats HUD
+
+- Live ratings + win rates for 3v3 / 2v2 / 1v1 / casual
+- Session +/- so you know exactly how much MMR you've gained (or donated) since you sat down
+- Streak badges - 🔥 when you're hot, ❄️ when it's rough
+- Your live rank on the leaderboard per playlist. Hover it to see exactly how much MMR you need to pass the player above you
+- Hold any #1 and your title turns into **👑 Rocket Goal KING**. Get passed and you get a dethroned alert
+- The title also reacts to your session: *Heating Up* → *ON FIRE* → *Flow State* when you're locked in, *Ice Cold* when you're not. There's a couple easter eggs in there too
+- RGB glow you can customize (colors, speed, brightness) - and it speeds up when you're on fire
+- Miss the old 🚀 Rocket Goal HUD title? There's an **OG Title** toggle in settings
+- Drag it anywhere, minimize it, and it hides itself during matches automatically
+
+## 🏆 Community Leaderboard
+
+- Your stats auto-sync to the [community leaderboard](https://abuarqob.github.io/rgleaderboard/) after every match - nothing to do manually
+- Pick your own display name, rename whenever
+- The anti-cheat is real: server-side rules, device blacklisting, forged-stat detection, and old exploited versions get force-updated
+
+## 🛡️ Clans
+
+- Create one (name + 2-4 letter tag), browse the directory, request to join, leaders approve
+- Full roles: **Leader / Co-leader / Elder / Member** - promote, demote, kick (with an optional message), transfer leadership
+- If you get kicked, you actually get told in your HUD instead of just wondering
+- Clan tag styling: gradients, palettes, custom colors, bracket colors, bold/italic, wave and rotate effects. The leader designs it, every member can opt in to wear it in-game
+- The clan view is **live** - when your clanmate finishes a match, you see their contribution change on your screen within seconds. Hover a number to see when they last synced
+
+## ⚔️ Clan Clash Events
+
+- Scheduled clan vs clan events with a live countdown
+- Your baseline locks on your first match of the event - clan score = everyone's MMR gained since
+- Live standings, leader vs challenger view, per-member contribution tracking
+- **👑 Leading the Clash** title while your clan is on top
+- Event rules (joins, leaves, kicks, roster locks, clan size) are controlled server-side, so they can be adjusted mid-event without anyone needing to update
+
+## 🎨 Name Forge
+
+- Full in-game name editor with a live preview - what you see is what the game shows
+- Gradients with up to 5 stops, one-click palettes (Fire, Ocean, Rainbow, Sunset, Toxic, Ice), random roller, reverse
+- Solid colors with opacity
+- Bold, italic, underline, strikethrough, size, rotate, wave letters, highlight
+- The game's emoji sprites (0-15) - drop them anywhere in your name
+- A **title line** under your name with its own completely separate styling: own gradient, own palette, own bold/italic, size up to 180%, opacity. Your title doesn't have to match your name anymore
+- Control the "Scored!" text: hide it, shrink it, or style it
+- **Raw mode** pulls in your exact current name so you can edit the markup directly
+- ↺ button resets to your current in-game name any time
+- Clan tag prepends automatically when you opt in - no double tags
+- Presets: save your designs, load them, export/import JSON to share with friends. Overwrite protection so you can't lose one by accident
+- History of recently applied names with one-click re-apply, and you can save any of them as a preset
+- Per-account, so alt accounts don't leak names into each other
+- **Alt+N** opens it anywhere
+
+---
+
+*Update from the [install link](https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js) and go make a name so shiny the other team scores on themselves.* 🏔️
