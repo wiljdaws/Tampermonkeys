@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      12.9
+// @version      13.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -119,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "12.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -424,7 +424,7 @@
             // Sync Forge\'s Name field to this account\'s identity so a saved
             // state from a different account (or a fresh install) doesn\'t
             // greet the player with the wrong name.
-            if (RGNF.syncToCurrentPlayer) RGNF.syncToCurrentPlayer(myUserId(), myGameNamePlain() || myName(), lastKnownPlayerData?.Nickname ?? "");
+            if (RGNF.syncToCurrentPlayer) RGNF.syncToCurrentPlayer(myUserId(), myGameNamePlain() || myName(), stripLeadingClanTagMarkup(lastKnownPlayerData?.Nickname ?? ""));
             RGNF.mountIn(forgeView);
         };
 
@@ -3091,6 +3091,23 @@
     // Optional effects: bold, italic, wave (alternating rotate), rotate
     // (static). Gradient emits per-character <#RRGGBB> tags; when combined
     // with wave, each character also gets its own <rotate=±waveAmp>.
+    // Remove a leading styled [TAG] from a raw nickname when it matches the
+    // current clan's tag. The game's login response returns the name WITH the
+    // last-applied tag baked in; without this strip, the opt-in prefix would
+    // stack a second copy on top ([KING] [KING] ...). Tolerates any TMP
+    // markup interleaved between the letters (per-char gradients, rotate,
+    // bold/italic wrappers) since that's exactly what getClanTagPrefix emits.
+    function stripLeadingClanTagMarkup(raw) {
+        const tag = String(myClan?.tag ?? "").trim();
+        if (!raw || !tag) return raw || "";
+        const anyTags = "(?:<[^>]*>)*";
+        // Tag letters are A-Z only (sanitizeClanTag guarantees it), so no
+        // regex escaping needed per letter.
+        const letters = [...tag.toUpperCase()].map(ch => ch + anyTags).join("");
+        const re = new RegExp("^" + anyTags + "\\[" + anyTags + letters + "\\]" + anyTags + "\\s*", "i");
+        return raw.replace(re, "");
+    }
+
     function getClanTagPrefix() {
         if (!myClan || !myClan.tag || !useClanTagPref()) return "";
         const tag = String(myClan.tag).trim();
@@ -4284,7 +4301,7 @@
     style.textContent = css;
     document.head.appendChild(style);
 
-    const fab = el('button', { class: 'rgnf-fab', title: 'Name Forge (Alt+N) — drag to move', text: '??' });
+    const fab = el('button', { class: 'rgnf-fab', title: 'Name Forge (Alt+N) — drag to move', text: '🎨' });
     const panel = el('div', { class: 'rgnf-panel' });
 
 
@@ -4490,7 +4507,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         if (!t || !t.closest) return;
         if (t.closest('.rgnf-modebar') || t.closest('.rgnf-actions-sec')
             || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
-            || t.closest('.rgnf-head')) return;
+            || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-head')) return;
         state.rawCode = null;
         saveJSON(stateKey(), state);
         const bar = panel.querySelector('.rgnf-modebar');
@@ -4871,16 +4888,21 @@ _rgnfFab = fab; _rgnfPanel = panel;
     panel.appendChild(secScored);
 
     // ---- Presets ----
-    const secPresets = el('div', { class: 'rgnf-sec' });
+    // rgnf-presets-sec: marker class the raw-mode touch-to-exit listener uses
+    // to EXCLUDE this section. Clicking Save/Load/Delete here is not a
+    // styling edit -- without the exclusion, pressing "+ Save current as
+    // preset" in raw mode cleared rawCode BEFORE the save handler ran,
+    // silently capturing the styling controls instead of the previewed name.
+    const secPresets = el('div', { class: 'rgnf-sec rgnf-presets-sec' });
     secPresets.appendChild(el('h4', { text: 'Presets' }));
     const presets = loadJSON(STORE_KEY, []);
     const listWrap = el('div', { class: 'rgnf-presets' });
     presets.forEach((p, idx) => {
       listWrap.appendChild(el('div', { class: 'rgnf-preset' }, [
         el('span', { text: p.label }),
-        el('button', { class: 'rgnf-chip', text: 'Load', onclick: () => { state = Object.assign(defaultState(), p.state); render(panel); } }),
+        el('button', { class: 'rgnf-chip', text: 'Load', onclick: () => { state = Object.assign(defaultState(), p.state); /* WYSIWYG: restore exactly what was saved, raw snapshot included */ render(panel); } }),
         el('button', {
-          class: 'rgnf-chip', text: '??',
+          class: 'rgnf-chip', text: '🗑️', title: 'Delete preset',
           onclick: () => { presets.splice(idx, 1); saveJSON(STORE_KEY, presets); render(panel); },
         }),
       ]));
@@ -4890,7 +4912,21 @@ _rgnfFab = fab; _rgnfPanel = panel;
       onclick: () => {
         const label = prompt('Preset name:', state.name.replace(/<[^>]*>/g, '').slice(0, 30) || 'Preset');
         if (!label) return;
-        presets.push({ label, state: JSON.parse(JSON.stringify(state)) });
+        // WYSIWYG: the preset stores exactly what the preview shows. In raw
+        // mode that's the raw snapshot (rawCode); in rebuild mode rawCode is
+        // null and the styling state carries the look. Loading restores the
+        // same picture either way.
+        const snap = JSON.parse(JSON.stringify(state));
+        // Overwrite protection: a duplicate name never silently clobbers.
+        // Replace only on explicit confirm; otherwise keep both.
+        const existingIdx = presets.findIndex(x => x.label === label);
+        if (existingIdx >= 0) {
+          const replace = confirm('A preset named "' + label + '" already exists.\nOK = replace it, Cancel = keep both.');
+          if (replace) presets[existingIdx] = { label, state: snap };
+          else presets.push({ label: label + ' (2)', state: snap });
+        } else {
+          presets.push({ label, state: snap });
+        }
         saveJSON(STORE_KEY, presets);
         render(panel);
       },
@@ -4928,14 +4964,43 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }),
     ]));
 
-    // Recently applied history
+    // Recently applied history. AUTO-RECORDED on every Apply and capped at
+    // the newest 5 -- older entries rotate out silently. NOT the same thing
+    // as saved presets (which only you create and which never expire). The
+    // header says so, and the 💾 button promotes a history entry into a
+    // permanent preset before it can rotate away.
     const hist = loadJSON(HISTORY_KEY, []);
     if (hist.length) {
-      secPresets.appendChild(el('h4', { text: 'Recently applied' }));
+      secPresets.appendChild(el('h4', { text: 'Recently applied (auto — newest 5 only)' }));
       const histWrap = el('div', { class: 'rgnf-presets' });
       hist.forEach((h) => {
         histWrap.appendChild(el('div', { class: 'rgnf-preset' }, [
           el('span', { text: h.plain, title: h.code }),
+          el('button', {
+            class: 'rgnf-chip', text: '💾', title: 'Save this as a permanent preset',
+            onclick: () => {
+              const label = prompt('Preset name:', h.plain.slice(0, 30) || 'Preset');
+              if (!label) return;
+              // History stores the code WITH the clan-tag prefix baked in
+              // (it's the exact string that was applied). Strip the current
+              // prefix if it leads, so the preset stores the unprefixed body
+              // and the checkbox stays the single owner of the tag.
+              let code = h.code;
+              const pfx = _prefix();
+              if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
+              const snap = Object.assign(defaultState(), { rawCode: code });
+              const existingIdx = presets.findIndex(x => x.label === label);
+              if (existingIdx >= 0) {
+                const replace = confirm('A preset named "' + label + '" already exists.\nOK = replace it, Cancel = keep both.');
+                if (replace) presets[existingIdx] = { label, state: snap };
+                else presets.push({ label: label + ' (2)', state: snap });
+              } else {
+                presets.push({ label, state: snap });
+              }
+              saveJSON(STORE_KEY, presets);
+              render(panel);
+            },
+          }),
           el('button', {
             class: 'rgnf-chip', text: 'Re-apply',
             onclick: async (e) => {
@@ -4943,7 +5008,19 @@ _rgnfFab = fab; _rgnfPanel = panel;
               b.textContent = '…';
               try {
                 const r = await applyNickname(h.code);
-                b.textContent = r.ok ? '✓' : '✗';
+                if (r.ok) {
+                  // Success: load what was just applied into the preview
+                  // (raw mode) so the screen matches the live in-game name.
+                  // Strip the prefix if it leads -- the checkbox owns the tag.
+                  let code = h.code;
+                  const pfx = _prefix();
+                  if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
+                  state.rawCode = code;
+                  _lastRawNickname = code; // ↺ reset now returns to this
+                  render(panel); // rebuilds the panel; preview shows the applied name
+                  return;
+                }
+                b.textContent = '✗';
               } catch (err) { b.textContent = '✗'; }
               setTimeout(() => { b.textContent = 'Re-apply'; }, 1500);
             },
@@ -4970,7 +5047,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
         statusLine.textContent = '';
         try {
           const codeApplied = _prefix() + (state.rawCode ? state.rawCode : buildCode(state));
-          _lastRawNickname = codeApplied; // Reset now returns to what was just applied
+          // Store the UNPREFIXED body as the reset target: the checkbox owns
+          // the tag, so the snapshot must never contain it (double-tag fix).
+          _lastRawNickname = state.rawCode ? state.rawCode : buildCode(state);
           const result = await applyNickname(codeApplied);
           if (result.ok) {
             statusLine.className = 'rgnf-status ok';
