@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.0
+// @version      13.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -119,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -371,6 +371,12 @@
             const target = e.target.closest("[data-tip]");
             if (target) tooltipEl.style.opacity = "0";
         });
+        // Leaving the HUD box entirely always hides the tooltip -- catches
+        // the case where a re-render removed the hovered element mid-hover,
+        // which means its own mouseout never fires.
+        hud.addEventListener("mouseleave", () => {
+            tooltipEl.style.opacity = "0";
+        });
 
         document.getElementById("rgMinimize").onclick = () => manualToggle();
         document.getElementById("rgSub").onclick = () => {
@@ -421,11 +427,27 @@
             forgeView.style.display = "block";
             actionRow.style.display = "none"; // Forge context: hide unrelated leaderboard/sub actions
             if (RGNF.setPrefixProvider) RGNF.setPrefixProvider(getClanTagPrefix);
+            // Imposter roster: last game's player names, minus your own
+            // (by UserId when present, by exact name for the empty-uid local
+            // entry), minus anything profane -- every other name path in
+            // ATLAS blocks profanity, this one does too.
+            if (RGNF.setRosterProvider) RGNF.setRosterProvider(
+                () => lastGamePlayers
+                    .filter(p => !p.uid || p.uid !== myUserId())
+                    .filter(p => p.name !== (lastKnownPlayerData?.Nickname ?? ""))
+                    .filter(p => !containsProfanity(p.name.replace(/<[^>]*>/g, "")))
+                    .map(p => p.name)
+            );
             // Sync Forge\'s Name field to this account\'s identity so a saved
             // state from a different account (or a fresh install) doesn\'t
             // greet the player with the wrong name.
             if (RGNF.syncToCurrentPlayer) RGNF.syncToCurrentPlayer(myUserId(), myGameNamePlain() || myName(), stripLeadingClanTagMarkup(lastKnownPlayerData?.Nickname ?? ""));
             RGNF.mountIn(forgeView);
+            // Always repaint on open: syncToCurrentPlayer only renders on an
+            // account CHANGE, so without this a roster captured since the
+            // last visit (or any other externally-fed data) stays invisible
+            // until a styling control happens to trigger a render.
+            if (RGNF.refresh) RGNF.refresh();
         };
 
         // Settings panel wiring -- opening settings routes through showStatsOnly()
@@ -567,6 +589,14 @@
     function setAutoVisible(visible) {
         if (!hud) return;
         hud.style.display = visible ? "block" : "none";
+        if (!visible) {
+            // The tooltip is its own element on document.body, NOT inside the
+            // HUD -- hiding the HUD mid-hover strands it over the game (the
+            // mouseout that would hide it never fires once its trigger
+            // element disappears). Hide it explicitly.
+            const tip = document.getElementById("rgTooltip");
+            if (tip) tip.style.opacity = "0";
+        }
         // Now that it's visible with real dimensions, make sure it's actually
         // on-screen (covers the window having resized while it was hidden).
         if (visible) clampHudOnScreen();
@@ -1566,6 +1596,7 @@
 
             // Load event config (cheap, cached) so we know if a Clan Clash is on.
             await loadEventConfig(fb);
+            await loadClanRolePerms(fb);
 
             const prevMine = (myClan.members ?? []).find(m => m.userId === uid)?.mmr;
             if (prevMine !== myMMR) {
@@ -1735,6 +1766,38 @@
     // Track the currently equipped skin so partial-response endpoints (equipSkin) can update it
     let lastKnownPlayerData = null;
 
+    // ---------- Last-game lobby roster (feeds Forge's Imposter section) ----------
+    // The game logs one "[PlayerDataManager] Initialized stats for player X"
+    // line per player when a match forms. We collect those names while the
+    // match runs and freeze the list when it resolves (matchEnd, or return to
+    // lobby on early quit). Forge reads it through a provider, filtered so
+    // your own name doesn't offer to steal itself.
+    // Persisted in localStorage so a page refresh (or a Tampermonkey update,
+    // which requires one) doesn't wipe the roster before you get to Forge --
+    // that was exactly the failure mode on first test: match played, script
+    // updated, page refreshed, roster gone, Imposter showed the empty state.
+    let lastGamePlayers = [];   // frozen roster of the most recent match: [{name, uid}]
+    try { lastGamePlayers = JSON.parse(localStorage.getItem("rgHudLastRoster") ?? "[]"); } catch (e) {}
+    let _liveRoster = [];       // collecting for the in-progress match: [{name, uid}]
+    let _rosterCollecting = false;
+
+    function freezeRoster() {
+        if (_rosterCollecting && _liveRoster.length) {
+            lastGamePlayers = _liveRoster.slice();
+            try { localStorage.setItem("rgHudLastRoster", JSON.stringify(lastGamePlayers)); } catch (e) {}
+            console.log(`[RG HUD] Imposter roster captured: ${lastGamePlayers.length} player(s) from last match`);
+            // Forge already open? Repaint live so the fresh lobby appears in
+            // the Imposter section without touching anything. Safe from
+            // focus-stealing mid-edit: a roster can only freeze right after a
+            // match, and you can't be typing in Forge from inside a match.
+            const fv = document.getElementById("rgForgeView");
+            if (fv && fv.style.display !== "none" && typeof RGNF !== "undefined" && RGNF.refresh) {
+                RGNF.refresh();
+            }
+        }
+        _rosterCollecting = false;
+    }
+
     const API_HOST_FRAGMENT = "us-central1-rocketball-23c12.cloudfunctions.net";
 
     const oldFetch = window.fetch;
@@ -1750,6 +1813,7 @@
             if (url.includes("/v0304_player/matchEnd")) {
                 tryParseAndUpdate(text);
                 setAutoVisible(true); // match ended -> bring the whole HUD back
+                freezeRoster();       // lobby roster becomes "last game" for Imposter
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
             } else if (url.includes("/v0304_player/equipSkin")) {
@@ -1777,15 +1841,34 @@
             }
 
             // Only fires when a real match with real teams is forming --
-            // never for an empty party or just sitting in a lobby.
+            // never for an empty party or just sitting in a lobby. Doubles as
+            // the roster capture for Forge's Imposter section: one init line
+            // per player, name text after "player", collected until the match
+            // resolves.
             if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
                 setAutoVisible(false);
+                // Real line shape (verified from console):
+                //   ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
+                // Capture the name WITHOUT the trailing (UserId:, Team:) suffix,
+                // and grab the UserId so the provider can filter out our own
+                // entries by ID (the local player logs twice: once with an
+                // empty UserId before login resolves, once with the real one).
+                const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]*),\s*Team:\s*[^)]*\)\s*$/)
+                    || arg.match(/Initialized stats for player\s*:?\s*(.*)$/);
+                const nm = (m?.[1] ?? "").trim();
+                const uid = (m?.[2] ?? "").trim();
+                if (nm) {
+                    if (!_rosterCollecting) { _liveRoster = []; _rosterCollecting = true; }
+                    if (!_liveRoster.some(p => p.name === nm)) _liveRoster.push({ name: nm, uid });
+                }
             }
 
             // Back in a party/lobby room means not mid-match anymore.
-            // Catches early-quit cases where matchEnd never fires.
+            // Catches early-quit cases where matchEnd never fires. Freeze the
+            // roster here too so an early-quit lobby still counts as "last game".
             if (arg.includes("OnJoinedRoom Party")) {
                 setAutoVisible(true);
+                freezeRoster();
             }
         }
     };
@@ -1865,6 +1948,52 @@
         if (eventPhase() !== "active") return true;
         const p = eventConfig?.perms || EVENT_PERM_DEFAULTS;
         return p[key] !== false; // defaults are all "true or false"; missing key -> allow
+    }
+
+    // ---------- Clan role permissions (server-driven) ----------
+    // Which clan ROLE can do which action. Defaults below mirror the previous
+    // hardcoded behavior exactly, so the Firestore doc is optional and
+    // overrides-only. To change what a role can do, edit admin/clanPerms:
+    //   admin/clanPerms: {
+    //     elder:    { approve: true, kick: true },   // partial overrides fine
+    //     coleader: { tagStyle: true },
+    //   }
+    // Keys: editClanInfo (rename name/tag), tagStyle (clan tag styling),
+    // kick, approve (join requests), roleChange (promote/demote),
+    // transfer (leadership handoff -- still requires BEING the leader),
+    // disband (solo-leader disband -- still requires being the leader).
+    const CLAN_ROLE_PERM_DEFAULTS = {
+        leader:   { editClanInfo: true,  tagStyle: true,  kick: true,  approve: true,  roleChange: true,  transfer: true,  disband: true  },
+        coleader: { editClanInfo: false, tagStyle: false, kick: true,  approve: true,  roleChange: true,  transfer: false, disband: false },
+        elder:    { editClanInfo: false, tagStyle: false, kick: false, approve: true,  roleChange: false, transfer: false, disband: false },
+        member:   { editClanInfo: false, tagStyle: false, kick: false, approve: false, roleChange: false, transfer: false, disband: false },
+    };
+    let clanRolePerms = null;        // stored overrides from admin/clanPerms, or null
+    let clanRolePermsLoaded = false;
+
+    async function loadClanRolePerms(fb, force = false) {
+        if (clanRolePermsLoaded && !force) return;
+        try {
+            const snap = await fb.getDoc(fb.doc(fb.db, "admin", "clanPerms"));
+            clanRolePerms = snap.exists() ? snap.data() : null;
+            clanRolePermsLoaded = true;
+        } catch (e) {
+            console.warn("[RG HUD] Clan role perms load failed:", e);
+        }
+    }
+
+    // rolePerm(role, key): stored boolean wins; missing -> baked default.
+    // Unknown roles resolve as "member" (most restrictive).
+    function rolePerm(role, key) {
+        const r = (role && CLAN_ROLE_PERM_DEFAULTS[role]) ? role : "member";
+        const stored = clanRolePerms?.[r]?.[key];
+        if (typeof stored === "boolean") return stored;
+        return CLAN_ROLE_PERM_DEFAULTS[r][key] === true;
+    }
+
+    function myClanRole() {
+        const me = (myClan?.members ?? []).find(m => m.userId === myUserId());
+        return me?.role ?? "member";
     }
 
     // Best estimate of authoritative server time. We learn an offset from device
@@ -2188,9 +2317,9 @@
         return cachedDisplayNames.get(myUserId()) || cleanName(lastKnownPlayerData?.Nickname) || "Unknown";
     }
 
-    // Roles that can approve/reject join requests.
+    // Roles that can approve/reject join requests -- matrix-driven.
     function canManageRequests(role) {
-        return role === "leader" || role === "coleader" || role === "elder";
+        return rolePerm(role, "approve");
     }
 
     // Real-time clan doc listener. Attached while the Clan tab is visible,
@@ -2329,6 +2458,8 @@
         const body = document.getElementById("rgClanTagBody");
         if (!body || !myClan) return;
         const isLeader = myClan.leaderId === myUserId();
+        // Matrix-driven: whichever roles carry tagStyle see the full editor.
+        const canStyle = rolePerm(myClanRole(), "tagStyle");
         const st = myClan.tagStyle || {};
         const tagText = String(myClan.tag || "").trim();
 
@@ -2424,7 +2555,7 @@
         html += '<div style="background:radial-gradient(120% 140% at 50% 0%, #101a3a 0%, #070a16 70%);border:1px solid #00bfff44;border-radius:10px;padding:16px;text-align:center;min-height:60px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;">'
             + '<span id="rgTagPreviewInner">' + buildPreviewHtml() + '</span></div>';
 
-        if (isLeader && tagText) {
+        if (canStyle && tagText) {
             // Mode selector
             html += '<div style="font-size:10px;font-weight:bold;color:#00bfff;margin:6px 0 4px;">STYLE MODE</div>';
             html += '<div style="display:flex;gap:4px;">';
@@ -2494,7 +2625,7 @@
                 + '</div>';
 
             html += '<button id="rgTagSave" class="rgBtn" style="width:100%;margin-top:10px;">Save Tag Style</button>';
-        } else if (!isLeader && !tagText) {
+        } else if (!canStyle && !tagText) {
             html += '<div style="font-size:11px;color:#888;text-align:center;margin-top:4px;">Leader hasn\'t set a tag yet.</div>';
         }
 
@@ -2509,7 +2640,7 @@
         body.innerHTML = html;
 
         // ---- Wire live-update handlers ----
-        if (isLeader && tagText) {
+        if (canStyle && tagText) {
             // Mode buttons
             for (const btn of document.querySelectorAll(".rgTagMode")) {
                 btn.onclick = () => {
@@ -2785,6 +2916,12 @@
             showToast("Approvals are locked during this event.");
             return;
         }
+        // Role gate (matrix-driven): approving grows the roster, so the
+        // actor's role must carry the approve permission.
+        if (approve && !rolePerm(myClanRole(), "approve")) {
+            showToast("Your role can't approve join requests.");
+            return;
+        }
 
         try {
             const req = (myClan.joinRequests ?? []).find(r => r.userId === userId);
@@ -2823,9 +2960,12 @@
         try {
             const target = (myClan.members ?? []).find(m => m.userId === userId);
             if (!target || target.role === "leader") return; // never kick the leader
-            // Only leader/coleader may kick (defense in depth beyond the UI gating).
+            // Matrix-driven: the actor's role must carry kick permission, and
+            // the target must be strictly below the actor's rank (an elder
+            // granted kick still can't kick another elder or a coleader).
             const me = (myClan.members ?? []).find(m => m.userId === myUid);
-            if (!me || (me.role !== "leader" && me.role !== "coleader")) return;
+            if (!me || !rolePerm(me.role, "kick")) return;
+            if ((ROLE_RANK[target.role] ?? 0) >= (ROLE_RANK[me.role] ?? 0)) return;
 
             const members = (myClan.members ?? []).filter(m => m.userId !== userId);
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
@@ -2885,8 +3025,8 @@
     // Can `actorRole` set `targetCurrentRole` to `newRole`?
     function canSetRole(actorRole, targetCurrentRole, newRole) {
         const a = ROLE_RANK[actorRole] ?? -1;
-        // Only leader/coleader manage roles at all.
-        if (a < ROLE_RANK.coleader) return false;
+        // Matrix-driven: the actor's role must carry roleChange permission.
+        if (!rolePerm(actorRole, "roleChange")) return false;
         // Can't touch someone at or above your own rank (coleader can't touch coleader/leader).
         if ((ROLE_RANK[targetCurrentRole] ?? 0) >= a) return false;
         // Can't promote someone to at/above your own rank.
@@ -2934,7 +3074,7 @@
     async function editClan(newName, newTag) {
         const fb = await initFirebase();
         if (!fb || !myClan) return;
-        if (myClan.leaderId !== myUserId()) return; // leader only
+        if (!rolePerm(myClanRole(), "editClanInfo")) return; // role lacks permission (matrix)
 
         // Event lockdown: gated by allowRenameClan. Default FALSE -- clan
         // identity freezes during scoring so leaderboards don\'t get mid-event
@@ -2998,6 +3138,10 @@
         if (!fb || !myClan) return;
         const myUid = myUserId();
         if (myClan.leaderId !== myUid) return; // only the leader can transfer
+        if (!rolePerm(myClanRole(), "transfer")) {
+            showToast("Leadership transfers are currently disabled.");
+            return;
+        }
 
         // Event lockdown: gated by allowTransfer. Default FALSE -- leadership
         // handoff mid-event could obscure attribution.
@@ -3196,6 +3340,10 @@
                 showToast("Disbanding is locked during this event.");
                 return;
             }
+            if (isSoloLeader && !rolePerm(myClanRole(), "disband")) {
+                showToast("Disbanding is currently disabled.");
+                return;
+            }
             if (isLeader && (myClan.members ?? []).length > 1) {
                 showToast("Transfer leadership or remove others before leaving.");
                 return;
@@ -3231,6 +3379,7 @@
         await loadClanData(true);
         const fb = await initFirebase();
         if (fb) await loadEventConfig(fb, true);
+        if (fb) await loadClanRolePerms(fb, true);
 
         renderClanViewFromMemory();
         if (myClan) attachClanListener();
@@ -3352,8 +3501,9 @@
         const rank = [...clanDirectory].sort((a, b) => (b.totalMMR ?? 0) - (a.totalMMR ?? 0))
             .findIndex(c => c.id === myClan.id) + 1;
 
-        // Leaders and co-leaders can kick + manage roles. Can't act on yourself or the leader.
-        const canManage = (myRole === "leader" || myRole === "coleader");
+        // Manage menu (⋯) shows for anyone whose role can kick OR change
+        // roles (matrix-driven). Rank guards still apply per-target below.
+        const canManage = rolePerm(myRole, "kick") || rolePerm(myRole, "roleChange");
         // Per-member event contribution: current MMR minus their baseline
         // captured at first sync during this event. Only meaningful while the
         // event is active AND the baseline map belongs to the current event
@@ -3428,7 +3578,7 @@
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${myClan.tag ? `[${escapeHtml(myClan.tag)}] ` : ""}${escapeHtml(myClan.name)}</b>
                 <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-                    ${isLeader ? `<button id="rgEditClan" class="rgBtn" style="padding:1px 6px;font-size:10px;">✏️</button>` : ""}
+                    ${rolePerm(myRole, "editClanInfo") ? `<button id="rgEditClan" class="rgBtn" style="padding:1px 6px;font-size:10px;">✏️</button>` : ""}
                     <span style="color:#ffd700;font-size:11px;">Rank #${rank || "-"}</span>
                 </span>
             </div>
@@ -3452,7 +3602,7 @@
             <button id="rgLeaveClan" class="rgBtn" style="width:100%;margin-top:8px;">Leave Clan</button>
         `;
 
-        if (isLeader) {
+        if (rolePerm(myRole, "editClanInfo")) {
             const editBtn = document.getElementById("rgEditClan");
             if (editBtn) editBtn.onclick = showEditClanForm;
         }
@@ -3574,8 +3724,8 @@
             const verb = (ROLE_RANK[r] > ROLE_RANK[targetRole]) ? "Promote to" : "Demote to";
             actions.push({ label: `${verb} ${r}`, run: () => setMemberRole(userId, r) });
         }
-        // Transfer leadership: leader only.
-        if (actorIsLeader) {
+        // Transfer leadership: leader only, and only if the matrix allows it.
+        if (actorIsLeader && rolePerm(actorRole, "transfer")) {
             actions.push({ label: "👑 Transfer leadership", danger: true, run: async () => {
                 const sure = await showDialog({
                     message: `Make ${name} the clan leader? You'll become co-leader.`,
@@ -3584,8 +3734,8 @@
                 if (sure) transferLeadership(userId);
             }});
         }
-        // Kick.
-        actions.push({ label: "❌ Kick from clan", danger: true, run: async () => {
+        // Kick: only offered when the actor's role carries the permission.
+        if (rolePerm(actorRole, "kick")) actions.push({ label: "❌ Kick from clan", danger: true, run: async () => {
             const sure = await showDialog({ message: `Kick ${name} from the clan?`, okLabel: "Kick", cancelLabel: "Cancel" });
             if (!sure) { renderClanView(); return; }
             const msg = await showDialog({
@@ -4432,6 +4582,32 @@ _rgnfFab = fab; _rgnfPanel = panel;
   // <b> <i> <sub> (open/close), <size=N%>, <rotate=N>, <mark=#hex>, <br>,
   // <sprite=N> (shown via the SPRITES emoji map). Unknown tags are skipped
   // so preview shows the intent, never literal angle-bracket soup.
+  // Among Us-style role reveal: fired when a name is stolen. Full-screen
+  // dark flash, red title scaling in with expanding-then-settling letter
+  // spacing, the stolen name rendered underneath, all gone in ~1.6s.
+  // pointer-events:none + self-removal means it can never block the UI.
+  function showImposterReveal(raw) {
+    if (!document.getElementById('rgnfImposterKf')) {
+      const st = document.createElement('style');
+      st.id = 'rgnfImposterKf';
+      st.textContent = '@keyframes rgnfImpIn { 0% { opacity:0; transform:scale(.6); letter-spacing:.45em; } 20% { opacity:1; transform:scale(1.06); letter-spacing:.1em; } 30% { transform:scale(1); } 84% { opacity:1; } 100% { opacity:0; } } '
+        + '@keyframes rgnfImpBg { 0% { opacity:0; } 10% { opacity:1; } 84% { opacity:1; } 100% { opacity:0; } }';
+      document.head.appendChild(st);
+    }
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,6,12,.88);pointer-events:none;animation:rgnfImpBg 2.5s ease forwards;';
+    const title = document.createElement('div');
+    title.textContent = 'ඞ You are the Imposter';
+    title.style.cssText = 'color:#ef4444;font:800 34px/1.2 -apple-system,"Segoe UI",Roboto,sans-serif;text-shadow:0 0 26px rgba(239,68,68,.85);animation:rgnfImpIn 2.5s ease forwards;';
+    ov.appendChild(title);
+    const sub = document.createElement('div');
+    sub.style.cssText = 'margin-top:12px;font-size:18px;animation:rgnfImpIn 2.5s ease forwards;';
+    sub.appendChild(renderRawTMP(raw));
+    ov.appendChild(sub);
+    document.body.appendChild(ov);
+    setTimeout(() => ov.remove(), 2550);
+  }
+
   function renderRawTMP(raw) {
     const root = document.createElement('div');
     root.style.lineHeight = '1.35';
@@ -4507,7 +4683,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
         if (!t || !t.closest) return;
         if (t.closest('.rgnf-modebar') || t.closest('.rgnf-actions-sec')
             || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
-            || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-head')) return;
+            || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-imposter-sec')
+            || t.closest('.rgnf-head')) return;
         state.rawCode = null;
         saveJSON(stateKey(), state);
         const bar = panel.querySelector('.rgnf-modebar');
@@ -4555,8 +4732,16 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // -- this is how minor surgical edits to complex names happen (e.g.
     // deleting the [TAG] chunk) without rebuilding the whole design.
     const rawEdit = el('textarea', { class: 'rgnf-code' });
-    rawEdit.style.cssText = 'display:none;width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:#9fb3ff;';
+    rawEdit.style.cssText = 'display:none;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow:hidden;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:#9fb3ff;';
+    // Auto-size: grow and shrink to exactly fit the markup. Height resets to
+    // auto first so shrinking works (scrollHeight never reports smaller than
+    // the current fixed height otherwise).
+    const autosizeRawEdit = () => {
+      rawEdit.style.height = 'auto';
+      rawEdit.style.height = (rawEdit.scrollHeight + 2) + 'px';
+    };
     rawEdit.addEventListener('input', () => {
+      autosizeRawEdit();
       state.rawCode = rawEdit.value;
       const rawPfx = _prefix();
       pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
@@ -4587,6 +4772,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         codeDiv.style.display = 'none';
         rawEdit.style.display = 'block';
         if (rawEdit.value !== state.rawCode) rawEdit.value = state.rawCode;
+        autosizeRawEdit(); // fit content on programmatic loads (reset/steal/preset)
         charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
         const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
         letterSpan.textContent = `${[...plainLetters].length} letters`;
@@ -4886,6 +5072,73 @@ _rgnfFab = fab; _rgnfPanel = panel;
       secScored.appendChild(sliderRow(panel, 'Size', 'scoredSizePct', 25, 150, '%'));
     }
     panel.appendChild(secScored);
+
+    // ---- Imposter ----
+    // Names captured from the last match's lobby (teammates AND opponents),
+    // rendered with their exact markup. "Steal" loads one into raw mode so
+    // the preview shows it byte-for-byte; Apply makes it yours. Marker class
+    // excludes this section from the raw-mode touch-to-exit listener --
+    // stealing IS a raw-mode action, not a styling edit.
+    const secImposter = el('div', { class: 'rgnf-sec rgnf-imposter-sec' });
+    secImposter.appendChild(el('h4', { text: 'ඞ Imposter (last game lobby)' }));
+    const roster = _roster();
+    if (!roster.length) {
+      const hint = el('div', { text: 'Finish a match and the crew from that lobby shows up here. The Imposter could be anyone... even you. ඞ' });
+      hint.style.cssText = 'color:var(--rgnf-muted);font-size:12px;';
+      secImposter.appendChild(hint);
+    } else {
+      // Identity check: if the preview currently wears a stolen name, say so
+      // the way the source material would. Derived from state, no bookkeeping.
+      if (state.rawCode && roster.includes(state.rawCode)) {
+        const reveal = el('div', { text: 'You are the Imposter. ඞ' });
+        reveal.style.cssText = 'color:#ef4444;font-size:12px;font-weight:700;margin-bottom:6px;';
+        secImposter.appendChild(reveal);
+      }
+      const rosterWrap = el('div', { class: 'rgnf-presets' });
+      roster.slice(0, 8).forEach((raw) => {
+        const row = el('div', { class: 'rgnf-preset' });
+        const nameCell = el('span', { title: raw });
+        // Faithful mini-preview of their name, markup and all. Constrained
+        // so a multi-line name (title lines etc.) can't blow up the row.
+        nameCell.style.cssText = 'flex:1;overflow:hidden;max-height:44px;white-space:normal;';
+        nameCell.appendChild(renderRawTMP(raw));
+        row.appendChild(nameCell);
+        row.appendChild(el('button', {
+          class: 'rgnf-chip', text: 'ඞ Steal',
+          title: 'Steal AND apply instantly -- their name becomes yours in one click',
+          onclick: async (e) => {
+            const b = e.currentTarget;
+            b.textContent = '…';
+            b.disabled = true;
+            try {
+              // One-click heist: apply immediately (prefix included -- the
+              // clan-tag checkbox still owns your tag on top of the stolen
+              // body), then play the reveal over a name that is ALREADY live.
+              const codeApplied = _prefix() + raw;
+              const r = await applyNickname(codeApplied);
+              if (r.ok) {
+                state.rawCode = raw;
+                _lastRawNickname = raw; // ↺ reset now returns to the live stolen identity
+                const hist = loadJSON(HISTORY_KEY, []);
+                const plain = raw.replace(/<[^>]*>/g, '').trim().slice(0, 24) || '(markup only)';
+                hist.unshift({ code: codeApplied, plain, ts: Date.now() });
+                saveJSON(HISTORY_KEY, hist.slice(0, 5));
+                render(panel); // preview shows the stolen identity
+                showImposterReveal(raw); // role reveal -- no Apply step needed, it's done
+                return;
+              }
+              b.textContent = '✗';
+            } catch (err) { b.textContent = '✗'; }
+            // Failure path only: no reveal for a heist that didn't happen.
+            b.disabled = false;
+            setTimeout(() => { b.textContent = 'ඞ Steal'; }, 1500);
+          },
+        }));
+        rosterWrap.appendChild(row);
+      });
+      secImposter.appendChild(rosterWrap);
+    }
+    panel.appendChild(secImposter);
 
     // ---- Presets ----
     // rgnf-presets-sec: marker class the raw-mode touch-to-exit listener uses
@@ -5201,8 +5454,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
       // by buildCode()/renderPreview() so Forge stays clan-agnostic.
       let _prefixProvider = null;
       function _prefix() { try { return _prefixProvider ? _prefixProvider() : ""; } catch { return ""; } }
+      // Roster provider: HUD supplies last game's player names (raw TMP
+      // markup, own name filtered out) for the Imposter section.
+      let _rosterProvider = null;
+      function _roster() { try { return _rosterProvider ? _rosterProvider() : []; } catch { return []; } }
       return {
         setPrefixProvider(fn) { _prefixProvider = fn; },
+        setRosterProvider(fn) { _rosterProvider = fn; },
         // Re-render the Forge panel in place (e.g. after the clan-tag opt-in
         // toggles, so the prefix appears/disappears in the preview live).
         refresh() { if (_rgnfPanel) render(_rgnfPanel); },
