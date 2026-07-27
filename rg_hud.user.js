@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.1
+// @version      13.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -119,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -202,6 +202,11 @@
                     font-size: 12px;
                 }
                 #rgHUD input[type="range"] { width: 110px; }
+                /* Tall views (e.g. Clan Tag Style expanded) scroll inside the
+                   HUD instead of pushing buttons off the bottom of the screen.
+                   Without this, users drag the HUD up to reach buried buttons
+                   and strand the drag handle above the viewport. */
+                #rgBody { max-height: calc(100vh - 170px); overflow-y: auto; overflow-x: hidden; }
                 #rgHUD input[type="color"] {
                     width: 30px; height: 20px; padding: 0; border: none; background: none; cursor: pointer;
                 }
@@ -572,8 +577,18 @@
             const moveY = dy - e.clientY;
             dx = e.clientX;
             dy = e.clientY;
-            el.style.top = (el.offsetTop - moveY) + "px";
-            el.style.left = (el.offsetLeft - moveX) + "px";
+            // Live clamp: the title bar is the ONLY drag handle, so if it
+            // leaves the viewport the HUD is stranded until a reload (found
+            // the hard way by a user who dragged up chasing a tall panel).
+            // Top can never go negative; bottom/left/right keep a grabbable
+            // margin on screen.
+            const MARGIN = 40;
+            let newTop = el.offsetTop - moveY;
+            let newLeft = el.offsetLeft - moveX;
+            newTop = Math.max(0, Math.min(newTop, window.innerHeight - MARGIN));
+            newLeft = Math.max(MARGIN - el.offsetWidth, Math.min(newLeft, window.innerWidth - MARGIN));
+            el.style.top = newTop + "px";
+            el.style.left = newLeft + "px";
             el.style.right = "auto";
         }
     }
@@ -2770,7 +2785,7 @@
                             saveBtn.style.color = "";
                         }, 1800);
                     }
-                    showToast("Tag style saved -- members see it on their next clan tab visit.");
+                    showToast("Saved! Open 🎨 Forge and hit Apply to refresh YOUR name -- members do the same on theirs.");
                 } catch (e) { console.error("[RG HUD] Save tag style failed:", e); showToast("Save failed."); }
             };
         }
