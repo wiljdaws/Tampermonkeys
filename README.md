@@ -138,8 +138,10 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 
 - Create one (name + 2-4 letter tag), browse the directory, request to join, leaders approve
 - Full roles: **Leader / Co-leader / Elder / Member** - promote, demote, kick (with an optional message), transfer leadership
+- Tiered permissions like a real clan game: you can only kick or manage people below your own rank, nobody touches the leader, and leadership only changes hands through an actual transfer
+- Role permissions are server-controlled, so what each role can do (styling the tag, kicking, approving joins, etc.) can be adjusted without anyone updating their script
 - If you get kicked, you actually get told in your HUD instead of just wondering
-- Clan tag styling: gradients, palettes, custom colors, bracket colors, bold/italic, wave and rotate effects. The leader designs it, every member can opt in to wear it in-game
+- Clan tag styling: gradients, palettes, custom colors, bracket colors, bold/italic, wave and rotate effects. Whoever's allowed to designs it, every member can opt in to wear it in-game
 - The clan view is **live** - when your clanmate finishes a match, you see their contribution change on your screen within seconds. Hover a number to see when they last synced
 
 ## ⚔️ Clan Clash Events
@@ -159,13 +161,20 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 - The game's emoji sprites (0-15) - drop them anywhere in your name
 - A **title line** under your name with its own completely separate styling: own gradient, own palette, own bold/italic, size up to 180%, opacity. Your title doesn't have to match your name anymore
 - Control the "Scored!" text: hide it, shrink it, or style it
-- **Raw mode** pulls in your exact current name so you can edit the markup directly
+- **Raw mode** pulls in your exact current name so you can edit the markup directly. The box auto-sizes to whatever you paste in
 - ↺ button resets to your current in-game name any time
 - Clan tag prepends automatically when you opt in - no double tags
 - Presets: save your designs, load them, export/import JSON to share with friends. Overwrite protection so you can't lose one by accident
 - History of recently applied names with one-click re-apply, and you can save any of them as a preset
 - Per-account, so alt accounts don't leak names into each other
 - **Alt+N** opens it anywhere
+
+## ඞ Imposter
+
+- Grabs the exact names of everyone from your last match (teammates and opponents)
+- One click steals their name and applies it instantly - their exact colors, gradients, everything
+- Yes, there's an Among Us role reveal when you do it
+- Profane names get filtered out, and you can't accidentally steal your own name
 
 ---
 
