@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.3
+// @version      13.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -119,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1878,10 +1878,25 @@
                 }
             }
 
-            // Back in a party/lobby room means not mid-match anymore.
-            // Catches early-quit cases where matchEnd never fires. Freeze the
-            // roster here too so an early-quit lobby still counts as "last game".
-            if (arg.includes("OnJoinedRoom Party")) {
+            // Back in ANY room means not mid-match anymore. Was previously
+            // "OnJoinedRoom Party" only, which missed private matches and
+            // practice -- those emit a different room-join string on exit, so
+            // the HUD stayed hidden until reload. Matching the broader
+            // "OnJoinedRoom" covers every mode's return-to-lobby.
+            if (arg.includes("OnJoinedRoom")) {
+                setAutoVisible(true);
+                freezeRoster();
+            }
+            // Also restore on leaving a room outright (some modes log this
+            // instead of a fresh join when you back out to the menu).
+            if (arg.includes("OnLeftRoom") || arg.includes("OnDisconnected")) {
+                setAutoVisible(true);
+            }
+            // Practice and private matches emit NONE of the room strings above
+            // on exit (verified from logs) -- but the game re-pushes the
+            // nickname ("Starting SetNickname") when you land back at the menu.
+            // That's the reliable return-to-menu signal for those two modes.
+            if (arg.includes("Starting SetNickname")) {
                 setAutoVisible(true);
                 freezeRoster();
             }
@@ -4466,6 +4481,21 @@
     .rgnf-presets { display: flex; flex-direction: column; gap: 6px; }
     .rgnf-preset { display: flex; align-items: center; gap: 6px; }
     .rgnf-preset span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rgnf-picker-backdrop {
+      position: absolute; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+      background: rgba(4,6,12,.6); border-radius: 12px;
+    }
+    .rgnf-picker {
+      width: 82%; max-width: 320px; background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
+      border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    }
+    .rgnf-picker-title { font-weight: 700; font-size: 13px; color: var(--rgnf-text); }
+    .rgnf-picker-label { font-size: 11px; color: var(--rgnf-muted); margin-top: 2px; }
+    .rgnf-picker-select, .rgnf-picker-input {
+      width: 100%; box-sizing: border-box; background: var(--rgnf-bg); color: var(--rgnf-text);
+      border: 1px solid var(--rgnf-line); border-radius: 8px; padding: 8px; font-size: 13px;
+    }
   `;
 
   function el(tag, attrs = {}, children = []) {
@@ -4478,6 +4508,74 @@
     }
     for (const c of children) node.appendChild(c);
     return node;
+  }
+
+  // Inline folder picker: a styled overlay inside the Forge panel, NOT a
+  // native prompt(). Optionally collects a preset NAME as well (nameField +
+  // nameDefault), so the whole save flow is one clean panel. Shows a dropdown
+  // of existing folders plus a "new folder" text field. Resolves via onPick
+  // with ({ name, folder }) -- name is '' when nameField is false. Because the
+  // caller passes the folder list at call time, new folders always appear
+  // without a page refresh.
+  function openFolderPicker(panel, { title, existing, current, onPick, nameField = false, nameDefault = '', nameOnly = false }) {
+    const backdrop = el('div', { class: 'rgnf-picker-backdrop' });
+    const box = el('div', { class: 'rgnf-picker' });
+    box.appendChild(el('div', { class: 'rgnf-picker-title', text: title }));
+
+    // Optional name field (for Save / promote / rename flows)
+    let nameInput = null;
+    if (nameField) {
+      if (!nameOnly) box.appendChild(el('div', { class: 'rgnf-picker-label', text: 'Name' }));
+      nameInput = el('input', { type: 'text', class: 'rgnf-picker-input', value: nameDefault, placeholder: nameOnly ? 'Folder name' : 'Preset name' });
+      box.appendChild(nameInput);
+      if (!nameOnly) box.appendChild(el('div', { class: 'rgnf-picker-label', text: 'Folder' }));
+    }
+
+    // Dropdown of existing folders (+ Ungrouped + a "new folder" sentinel).
+    // Suppressed entirely for name-only calls (e.g. folder rename).
+    const sel = el('select', { class: 'rgnf-picker-select' });
+    sel.appendChild(el('option', { value: '', text: '📂 Ungrouped' }));
+    existing.filter(f => f && f !== 'Ungrouped').forEach(f => {
+      const o = el('option', { value: f, text: '📁 ' + f });
+      if (f === current) o.setAttribute('selected', 'selected');
+      sel.appendChild(o);
+    });
+    sel.appendChild(el('option', { value: '__new__', text: '➕ New folder…' }));
+    if (!nameOnly) box.appendChild(sel);
+
+    // New-folder text field, revealed when "New folder…" is chosen
+    const newWrap = el('div', { class: 'rgnf-row' });
+    newWrap.style.display = 'none';
+    const newInput = el('input', { type: 'text', placeholder: 'New folder name', class: 'rgnf-picker-input' });
+    newWrap.appendChild(newInput);
+    box.appendChild(newWrap);
+    sel.addEventListener('change', () => {
+      const isNew = sel.value === '__new__';
+      newWrap.style.display = isNew ? 'flex' : 'none';
+      if (isNew) newInput.focus();
+    });
+
+    const btnRow = el('div', { class: 'rgnf-row' });
+    const close = () => backdrop.remove();
+    btnRow.appendChild(el('button', {
+      class: 'rgnf-chip', text: 'Cancel', onclick: close,
+    }));
+    btnRow.appendChild(el('button', {
+      class: 'rgnf-chip rgnf-on', text: 'OK',
+      onclick: () => {
+        const folder = sel.value === '__new__' ? newInput.value.trim() : sel.value;
+        const name = nameInput ? nameInput.value.trim() : '';
+        if (nameField && !name) { nameInput.focus(); return; } // name required
+        close();
+        onPick(nameField ? { name, folder } : folder);
+        return;
+      },
+    }));
+    box.appendChild(btnRow);
+
+    backdrop.appendChild(box);
+    (panel || document.body).appendChild(backdrop);
+    (nameInput || sel).focus();
   }
 
   function buildUI() {
@@ -4759,14 +4857,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }
       secPreview.appendChild(hrow);
     }
-    const codeDiv = el('div', { class: 'rgnf-code', text: buildCode(state) });
-    secPreview.appendChild(codeDiv);
-    // Editable raw markup box: shown instead of the readonly code div while
-    // raw mode is active. Direct edits to the markup update the preview live
-    // -- this is how minor surgical edits to complex names happen (e.g.
-    // deleting the [TAG] chunk) without rebuilding the whole design.
+    // Single always-editable code box (no separate readonly div). You can
+    // hand-edit the markup in EITHER mode. Editing while in rebuild mode
+    // snapshots the current built code into rawCode and flips to raw mode, so
+    // your manual edits are never clobbered by a subsequent rebuild.
     const rawEdit = el('textarea', { class: 'rgnf-code' });
-    rawEdit.style.cssText = 'display:none;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow:hidden;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:#9fb3ff;';
+    rawEdit.style.cssText = 'display:block;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow:hidden;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:#9fb3ff;';
     // Auto-size: grow and shrink to exactly fit the markup. Height resets to
     // auto first so shrinking works (scrollHeight never reports smaller than
     // the current fixed height otherwise).
@@ -4776,6 +4872,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
     };
     rawEdit.addEventListener('input', () => {
       autosizeRawEdit();
+      // Hand-editing the box IS raw authoring: capturing the text as rawCode
+      // is itself what puts us in raw mode (refreshPreview keys off rawCode
+      // being non-null), so the styling controls stop overwriting it.
       state.rawCode = rawEdit.value;
       const rawPfx = _prefix();
       pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
@@ -4803,8 +4902,6 @@ _rgnfFab = fab; _rgnfPanel = panel;
         // will show it doubled -- the fix is deleting it in the box below.
         const rawPfx = _prefix();
         pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
-        codeDiv.style.display = 'none';
-        rawEdit.style.display = 'block';
         if (rawEdit.value !== state.rawCode) rawEdit.value = state.rawCode;
         autosizeRawEdit(); // fit content on programmatic loads (reset/steal/preset)
         charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
@@ -4813,11 +4910,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
         saveJSON(stateKey(), state);
         return;
       }
-      codeDiv.style.display = 'block';
-      rawEdit.style.display = 'none';
-      const code = _prefix() + buildCode(state);
+      // Rebuild mode: show the built code in the same editable box. Store it
+      // WITHOUT the prefix (matching rawCode convention) so if the user then
+      // hand-edits, the captured rawCode has no baked-in tag.
+      const built = buildCode(state);
+      const code = _prefix() + built;
       pv.replaceChildren(renderPreview(state));
-      codeDiv.textContent = code;
+      if (rawEdit.value !== built) rawEdit.value = built;
+      autosizeRawEdit();
       charSpan.textContent = `${code.length} chars`;
       letterSpan.textContent = `${[...state.name].length} letters`;
       saveJSON(stateKey(), state);
@@ -4954,7 +5054,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     });
     secStyle.appendChild(styleRow);
 
-    secStyle.appendChild(sliderRow(panel, 'Size', 'sizePct', 25, 200, '%'));
+    secStyle.appendChild(sliderRow(panel, 'Size', 'sizePct', 10, 500, '%'));
     secStyle.appendChild(sliderRow(panel, 'Rotate', 'rotateDeg', -45, 45, '°'));
 
     const waveRow = el('div', { class: 'rgnf-row' });
@@ -5071,7 +5171,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }
       // Size: cap raised to 180% so titles can go bigger than the name if the
       // player wants a headline-style tagline.
-      secTitle.appendChild(sliderRow(panel, 'Size', 'titleSizePct', 25, 180, '%'));
+      secTitle.appendChild(sliderRow(panel, 'Size', 'titleSizePct', 10, 500, '%'));
       // Style toggles: Bold/Italic/Underline/Strike + <sub> layout toggle
       const tStyle = el('div', { class: 'rgnf-row' });
       const tToggle = (key, label) => el('button', {
@@ -5103,7 +5203,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         el('label', { text: 'Color' }),
         el('input', { type: 'color', value: state.scoredColor, oninput: (e) => { state.scoredColor = e.target.value; render(panel); } }),
       ]));
-      secScored.appendChild(sliderRow(panel, 'Size', 'scoredSizePct', 25, 150, '%'));
+      secScored.appendChild(sliderRow(panel, 'Size', 'scoredSizePct', 10, 300, '%'));
     }
     panel.appendChild(secScored);
 
@@ -5188,38 +5288,130 @@ _rgnfFab = fab; _rgnfPanel = panel;
     secPresets.appendChild(el('h4', { text: 'Presets' }));
     const presets = loadJSON(STORE_KEY, []);
     const listWrap = el('div', { class: 'rgnf-presets' });
+
+    // Group presets by their optional `folder` field. Presets saved before
+    // folders existed have none -> they collect under "Ungrouped". Collapsed
+    // state per folder persists so a big library stays tidy between opens.
+    const collapseKey = 'rgNameForge.folderCollapse.v1';
+    const collapseState = loadJSON(collapseKey, {});
+    const groups = {};
     presets.forEach((p, idx) => {
-      listWrap.appendChild(el('div', { class: 'rgnf-preset' }, [
-        el('span', { text: p.label }),
-        el('button', { class: 'rgnf-chip', text: 'Load', onclick: () => { state = Object.assign(defaultState(), p.state); /* WYSIWYG: restore exactly what was saved, raw snapshot included */ render(panel); } }),
-        el('button', {
-          class: 'rgnf-chip', text: '🗑️', title: 'Delete preset',
-          onclick: () => { presets.splice(idx, 1); saveJSON(STORE_KEY, presets); render(panel); },
-        }),
-      ]));
+      const f = (p.folder && String(p.folder).trim()) || 'Ungrouped';
+      (groups[f] = groups[f] || []).push({ p, idx });
     });
+    // Stable folder order: named folders alphabetically, Ungrouped last.
+    const folderNames = Object.keys(groups).sort((a, b) => {
+      if (a === 'Ungrouped') return 1;
+      if (b === 'Ungrouped') return -1;
+      return a.localeCompare(b);
+    });
+
+    folderNames.forEach((folder) => {
+      const collapsed = collapseState[folder] === true;
+      const header = el('div', { class: 'rgnf-row' });
+      header.style.cssText = 'user-select:none;align-items:center;gap:6px;font-weight:600;';
+      const label = el('span', { text: (collapsed ? '▸' : '▾') + ' 📁 ' + folder + ` (${groups[folder].length})` });
+      label.style.cssText = 'cursor:pointer;flex:1;';
+      label.onclick = () => {
+        collapseState[folder] = !collapsed;
+        saveJSON(collapseKey, collapseState);
+        render(panel);
+      };
+      header.appendChild(label);
+      // Rename: only for real folders (not the synthetic "Ungrouped" bucket).
+      if (folder !== 'Ungrouped') {
+        header.appendChild(el('button', {
+          class: 'rgnf-chip', text: '✏️', title: 'Rename folder',
+          onclick: () => {
+            openFolderPicker(panel, {
+              title: 'Rename folder "' + folder + '"',
+              nameField: true,
+              nameOnly: true,
+              nameDefault: folder,
+              existing: [],
+              current: '',
+              onPick: ({ name: newName }) => {
+                const nn = (newName || '').trim();
+                if (!nn || nn === folder) return;
+                // Repoint every preset in this folder to the new name.
+                presets.forEach(pr => { if ((pr.folder || 'Ungrouped') === folder) pr.folder = nn; });
+                // Carry collapse state over to the new name.
+                if (collapseState[folder] !== undefined) {
+                  collapseState[nn] = collapseState[folder];
+                  delete collapseState[folder];
+                  saveJSON(collapseKey, collapseState);
+                }
+                saveJSON(STORE_KEY, presets);
+                render(panel);
+              },
+            });
+          },
+        }));
+        // Note: no explicit "delete folder" button is needed. Folders are
+        // derived from preset membership, so a folder disappears on its own
+        // the moment its last preset is moved out or deleted. Nothing to
+        // clean up manually.
+      }
+      listWrap.appendChild(header);
+
+      if (!collapsed) {
+        groups[folder].forEach(({ p, idx }) => {
+          const row = el('div', { class: 'rgnf-preset' });
+          row.style.marginLeft = '10px';
+          row.appendChild(el('span', { text: p.label }));
+          row.appendChild(el('button', { class: 'rgnf-chip', text: 'Load', onclick: () => { state = Object.assign(defaultState(), p.state); render(panel); } }));
+          // Move to another folder without re-saving the design.
+          row.appendChild(el('button', {
+            class: 'rgnf-chip', text: '📁', title: 'Move to folder',
+            onclick: () => {
+              openFolderPicker(panel, {
+                title: 'Move "' + p.label + '" to folder',
+                existing: folderNames,
+                current: p.folder || '',
+                onPick: (dest) => {
+                  presets[idx].folder = dest || undefined;
+                  saveJSON(STORE_KEY, presets);
+                  render(panel);
+                },
+              });
+            },
+          }));
+          row.appendChild(el('button', {
+            class: 'rgnf-chip', text: '🗑️', title: 'Delete preset',
+            onclick: () => { presets.splice(idx, 1); saveJSON(STORE_KEY, presets); render(panel); },
+          }));
+          listWrap.appendChild(row);
+        });
+      }
+    });
+
     listWrap.appendChild(el('button', {
       class: 'rgnf-chip', text: '+ Save current as preset',
       onclick: () => {
-        const label = prompt('Preset name:', state.name.replace(/<[^>]*>/g, '').slice(0, 30) || 'Preset');
-        if (!label) return;
-        // WYSIWYG: the preset stores exactly what the preview shows. In raw
-        // mode that's the raw snapshot (rawCode); in rebuild mode rawCode is
-        // null and the styling state carries the look. Loading restores the
-        // same picture either way.
         const snap = JSON.parse(JSON.stringify(state));
-        // Overwrite protection: a duplicate name never silently clobbers.
-        // Replace only on explicit confirm; otherwise keep both.
-        const existingIdx = presets.findIndex(x => x.label === label);
-        if (existingIdx >= 0) {
-          const replace = confirm('A preset named "' + label + '" already exists.\nOK = replace it, Cancel = keep both.');
-          if (replace) presets[existingIdx] = { label, state: snap };
-          else presets.push({ label: label + ' (2)', state: snap });
-        } else {
-          presets.push({ label, state: snap });
-        }
-        saveJSON(STORE_KEY, presets);
-        render(panel);
+        const defaultName = state.name.replace(/<[^>]*>/g, '').slice(0, 30) || 'Preset';
+        openFolderPicker(panel, {
+          title: 'Save preset',
+          nameField: true,
+          nameDefault: defaultName,
+          existing: folderNames,
+          current: '',
+          onPick: ({ name: label, folder }) => {
+            if (!label) return;
+            const entry = { label, state: snap };
+            if (folder) entry.folder = folder;
+            const existingIdx = presets.findIndex(x => x.label === label);
+            if (existingIdx >= 0) {
+              const replace = confirm('A preset named "' + label + '" already exists.\nOK = replace it, Cancel = keep both.');
+              if (replace) presets[existingIdx] = entry;
+              else { entry.label = label + ' (2)'; presets.push(entry); }
+            } else {
+              presets.push(entry);
+            }
+            saveJSON(STORE_KEY, presets);
+            render(panel);
+          },
+        });
       },
     }));
     secPresets.appendChild(listWrap);
@@ -5270,8 +5462,6 @@ _rgnfFab = fab; _rgnfPanel = panel;
           el('button', {
             class: 'rgnf-chip', text: '💾', title: 'Save this as a permanent preset',
             onclick: () => {
-              const label = prompt('Preset name:', h.plain.slice(0, 30) || 'Preset');
-              if (!label) return;
               // History stores the code WITH the clan-tag prefix baked in
               // (it's the exact string that was applied). Strip the current
               // prefix if it leads, so the preset stores the unprefixed body
@@ -5280,16 +5470,28 @@ _rgnfFab = fab; _rgnfPanel = panel;
               const pfx = _prefix();
               if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
               const snap = Object.assign(defaultState(), { rawCode: code });
-              const existingIdx = presets.findIndex(x => x.label === label);
-              if (existingIdx >= 0) {
-                const replace = confirm('A preset named "' + label + '" already exists.\nOK = replace it, Cancel = keep both.');
-                if (replace) presets[existingIdx] = { label, state: snap };
-                else presets.push({ label: label + ' (2)', state: snap });
-              } else {
-                presets.push({ label, state: snap });
-              }
-              saveJSON(STORE_KEY, presets);
-              render(panel);
+              openFolderPicker(panel, {
+                title: 'Save preset',
+                nameField: true,
+                nameDefault: h.plain.slice(0, 30) || 'Preset',
+                existing: folderNames,
+                current: '',
+                onPick: ({ name: label, folder }) => {
+                  if (!label) return;
+                  const entry = { label, state: snap };
+                  if (folder) entry.folder = folder;
+                  const existingIdx = presets.findIndex(x => x.label === label);
+                  if (existingIdx >= 0) {
+                    const replace = confirm('A preset named "' + label + '" already exists.\nOK = replace it, Cancel = keep both.');
+                    if (replace) presets[existingIdx] = entry;
+                    else { entry.label = label + ' (2)'; presets.push(entry); }
+                  } else {
+                    presets.push(entry);
+                  }
+                  saveJSON(STORE_KEY, presets);
+                  render(panel);
+                },
+              });
             },
           }),
           el('button', {
