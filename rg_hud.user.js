@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.2
+// @version      13.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -119,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -4306,6 +4306,21 @@
   // ------------------------------------------------------------------
   async function applyNickname(code) {
     const token = await getIdToken();
+    // Account guard: decode the JWT and confirm it belongs to the account
+    // the game says we are. The IndexedDB token fallback can serve a stale
+    // token in multi-account browsers -- which applies the nickname to the
+    // WRONG account, returns true, and looks exactly like "the apply
+    // succeeded but my name didn't change." Fail loudly instead.
+    let mismatch = null;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (_currentUserId && payload.user_id && payload.user_id !== _currentUserId) {
+        mismatch = payload.user_id;
+      }
+    } catch (e) { /* undecodable token: proceed, the server will judge it */ }
+    if (mismatch) {
+      throw new Error('Auth token belongs to a different account (' + mismatch.slice(0, 8) + '…). Refresh the page and try again.');
+    }
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: {
@@ -4315,6 +4330,10 @@
       body: new URLSearchParams({ nickname: code }),
     });
     const body = await res.text();
+    // Diagnostic trail for the "reveal played but name didn't change" report:
+    // every apply logs its true server verdict, so a recurrence tells us
+    // whether the server actually accepted it.
+    console.log('[RG HUD] nickname apply ->', res.status, body.trim().slice(0, 60));
     return { ok: res.ok && body.trim() === 'true', status: res.status, body };
   }
 
@@ -5140,6 +5159,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
                 saveJSON(HISTORY_KEY, hist.slice(0, 5));
                 render(panel); // preview shows the stolen identity
                 showImposterReveal(raw); // role reveal -- no Apply step needed, it's done
+                // Confirming re-apply: reported race where the first success
+                // occasionally didn't stick until a second manual steal. Same
+                // payload, ~1s later, silent -- idempotent insurance.
+                setTimeout(() => { applyNickname(codeApplied).catch(() => {}); }, 1000);
                 return;
               }
               b.textContent = '✗';
