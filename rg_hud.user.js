@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.4
+// @version      13.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -119,7 +119,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1794,13 +1794,44 @@
     let lastGamePlayers = [];   // frozen roster of the most recent match: [{name, uid}]
     try { lastGamePlayers = JSON.parse(localStorage.getItem("rgHudLastRoster") ?? "[]"); } catch (e) {}
     let _liveRoster = [];       // collecting for the in-progress match: [{name, uid}]
-    let _rosterCollecting = false;
+
+    // Single source of truth for "are we in a real match right now". Set when
+    // the first Initialized-stats line with a REAL UserId appears (warm-up
+    // self-inits log an empty UserId and don't count), cleared on matchEnd,
+    // LeaveRoom, or a fresh queue. Every HUD-restore signal is gated on this
+    // so a mid-match disconnect/reconnect storm can't resurrect the HUD --
+    // that was the v13.4 bug: includes("OnDisconnected") substring-matched the
+    // game's "PhotonConnector:OurOnDisconnected" lines and restored the HUD
+    // on every reconnect attempt.
+    let _inMatch = false;
+
+    // ---------- Debug logging ----------
+    // dbg() narrates every state decision with a timestamp, through oldLog so
+    // it can never re-enter our own console hook. A 300-line ring buffer is
+    // always retained even with RG_DEBUG off -- type rgDump() in the console
+    // to print a clean, timestamped, ATLAS-only timeline for bug reports.
+    const oldLog = console.log;
+    const RG_DEBUG = true; // set false before sharing builds with the clan
+    const _rgLogBuf = [];
+    function dbg(msg) {
+        const line = `[RG HUD ${(performance.now() / 1000).toFixed(2)}s] ${msg}`;
+        _rgLogBuf.push(line);
+        if (_rgLogBuf.length > 300) _rgLogBuf.shift();
+        if (RG_DEBUG) oldLog.call(console, line);
+    }
+    // Expose on the REAL page window (not the userscript sandbox) so
+    // rgDump() is callable from the default DevTools "top" context -- the
+    // sandboxed window is unreachable from the console dropdown in some
+    // Tampermonkey/browser combos, which made rgDump appear undefined even
+    // when the script was loaded and running (v13.5).
+    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).rgDump =
+        () => oldLog.call(console, _rgLogBuf.join("\n"));
 
     function freezeRoster() {
-        if (_rosterCollecting && _liveRoster.length) {
+        if (_liveRoster.length) {
             lastGamePlayers = _liveRoster.slice();
             try { localStorage.setItem("rgHudLastRoster", JSON.stringify(lastGamePlayers)); } catch (e) {}
-            console.log(`[RG HUD] Imposter roster captured: ${lastGamePlayers.length} player(s) from last match`);
+            dbg(`Imposter roster captured: ${lastGamePlayers.length} player(s): ${lastGamePlayers.map(p => p.name).join(", ")}`);
             // Forge already open? Repaint live so the fresh lobby appears in
             // the Imposter section without touching anything. Safe from
             // focus-stealing mid-edit: a roster can only freeze right after a
@@ -1809,8 +1840,11 @@
             if (fv && fv.style.display !== "none" && typeof RGNF !== "undefined" && RGNF.refresh) {
                 RGNF.refresh();
             }
+            // Clear after freezing so a stray second freeze signal (e.g. the
+            // matchEnd fetch AND its logged response) can't re-capture stale
+            // data; the next match resets it fresh via the !_inMatch branch.
+            _liveRoster = [];
         }
-        _rosterCollecting = false;
     }
 
     const API_HOST_FRAGMENT = "us-central1-rocketball-23c12.cloudfunctions.net";
@@ -1827,8 +1861,10 @@
 
             if (url.includes("/v0304_player/matchEnd")) {
                 tryParseAndUpdate(text);
-                setAutoVisible(true); // match ended -> bring the whole HUD back
+                dbg(`matchEnd response — roster at ${_liveRoster.length}, restoring HUD`);
+                _inMatch = false;     // authoritative match-over signal
                 freezeRoster();       // lobby roster becomes "last game" for Imposter
+                setAutoVisible(true); // match ended -> bring the whole HUD back
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
             } else if (url.includes("/v0304_player/equipSkin")) {
@@ -1844,61 +1880,80 @@
         return response;
     };
 
-    const oldLog = console.log;
     console.log = function (...args) {
         oldLog.apply(console, args);
         for (const arg of args) {
             if (typeof arg !== "string") continue;
 
+            // Ratings payload can also arrive via logged web-request text
+            // (login, and the echoed matchEnd response). tryParseAndUpdate
+            // dedupes internally, so double-seeing matchEnd is harmless.
             if (arg.includes('"ModesGlicko"')) {
                 const json = arg.substring(arg.indexOf("{"));
                 tryParseAndUpdate(json);
             }
 
-            // Only fires when a real match with real teams is forming --
-            // never for an empty party or just sitting in a lobby. Doubles as
-            // the roster capture for Forge's Imposter section: one init line
-            // per player, name text after "player", collected until the match
-            // resolves.
+            // ---- Field entry: queue warm-up OR real match forming ----
+            // Line shape (verified from console):
+            //   ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
+            // The UserId is the discriminator: queue warm-up logs the local
+            // player with an EMPTY UserId (verified 5x in the 7/27 log dump);
+            // real match inits always carry populated UserIds. So: real uid ->
+            // hide HUD + collect roster; empty uid -> ignore entirely (HUD
+            // stays visible while queuing, roster untouched -- the v13.4
+            // roster-clobber bug was warm-up inits restarting the list).
             if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
-                setAutoVisible(false);
-                // Real line shape (verified from console):
-                //   ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
-                // Capture the name WITHOUT the trailing (UserId:, Team:) suffix,
-                // and grab the UserId so the provider can filter out our own
-                // entries by ID (the local player logs twice: once with an
-                // empty UserId before login resolves, once with the real one).
-                const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]*),\s*Team:\s*[^)]*\)\s*$/)
-                    || arg.match(/Initialized stats for player\s*:?\s*(.*)$/);
+                const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]*),\s*Team:\s*[^)]*\)\s*$/);
                 const nm = (m?.[1] ?? "").trim();
                 const uid = (m?.[2] ?? "").trim();
-                if (nm) {
-                    if (!_rosterCollecting) { _liveRoster = []; _rosterCollecting = true; }
-                    if (!_liveRoster.some(p => p.name === nm)) _liveRoster.push({ name: nm, uid });
+                if (nm && uid) {
+                    setAutoVisible(false); // real match -> get out of the way
+                    if (!_inMatch) {
+                        _liveRoster = [];
+                        _inMatch = true;
+                        dbg(`match forming — roster reset, first player "${nm}"`);
+                    }
+                    // Dedup by uid, not name: names collide, and mid-match
+                    // backfills now ADD to the roster instead of restarting it.
+                    if (!_liveRoster.some(p => p.uid === uid)) {
+                        _liveRoster.push({ name: nm, uid });
+                        dbg(`roster +1 "${nm}" (${_liveRoster.length} total)`);
+                    }
+                } else if (nm) {
+                    dbg(`warm-up init "${nm}" (empty uid) — ignored, inMatch=${_inMatch}`);
+                } else {
+                    // Canary: if the game ever changes this line's format the
+                    // regex fails silently -- this makes it announce itself.
+                    dbg(`init line FAILED to parse — game format may have changed: ${arg.slice(0, 120)}`);
                 }
             }
 
-            // Back in ANY room means not mid-match anymore. Was previously
-            // "OnJoinedRoom Party" only, which missed private matches and
-            // practice -- those emit a different room-join string on exit, so
-            // the HUD stayed hidden until reload. Matching the broader
-            // "OnJoinedRoom" covers every mode's return-to-lobby.
-            if (arg.includes("OnJoinedRoom")) {
-                setAutoVisible(true);
-                freezeRoster();
+            // ---- Left the match some other way (rage-quit, back-out) ----
+            // A deliberate LeaveRoom or a fresh matchmaking queue can't
+            // coexist with being mid-match; freeze what we collected so the
+            // Imposter roster survives an early exit, then clear the flag.
+            if (arg.includes("PhotonNetwork:LeaveRoom") ||
+                arg.includes("Set player matchmaking start time")) {
+                if (_inMatch) {
+                    dbg(`left mid-match — roster frozen at ${_liveRoster.length}`);
+                    freezeRoster();
+                }
+                _inMatch = false;
             }
-            // Also restore on leaving a room outright (some modes log this
-            // instead of a fresh join when you back out to the menu).
-            if (arg.includes("OnLeftRoom") || arg.includes("OnDisconnected")) {
-                setAutoVisible(true);
-            }
-            // Practice and private matches emit NONE of the room strings above
-            // on exit (verified from logs) -- but the game re-pushes the
-            // nickname ("Starting SetNickname") when you land back at the menu.
-            // That's the reliable return-to-menu signal for those two modes.
-            if (arg.includes("Starting SetNickname")) {
-                setAutoVisible(true);
-                freezeRoster();
+
+            // ---- Return-to-menu / recovery signals ----
+            // These are the game's REAL log strings (the v13.4 triggers
+            // "OnJoinedRoom"/"OnLeftRoom" appear nowhere in actual game
+            // output, and "OnDisconnected" only ever matched as a substring
+            // of "OurOnDisconnected"). Restore is gated on !_inMatch so a
+            // mid-match reconnect storm leaves the HUD alone; the match-over
+            // paths above are what legitimately clear the flag first.
+            // "Starting SetNickname" stays as the return-to-menu signal for
+            // practice/private matches, which emit no room strings on exit.
+            if (arg.includes("OurOnDisconnected") || arg.includes("Starting SetNickname") ||
+                arg.includes("OurOnConnectedToMaster")) {
+                if (!_inMatch) setAutoVisible(true);
+                else dbg(`recovery signal suppressed (mid-match): ${arg.slice(0, 60)}`);
             }
         }
     };
@@ -3839,6 +3894,15 @@
   let _lastRawNickname = ''; // latest known in-game name markup, for the Reset button
   const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
   const HISTORY_KEY = 'rgNameForge.history.v1';
+  // Pending-steal receipt: written on a successful Steal, verified on the
+  // next boot. The game's boot-time SetNickname echo can push a STALE
+  // (pre-steal) nickname back to the server -- login read races the steal
+  // write -- silently undoing a steal the server had already accepted.
+  // That's the "steal, refresh, didn't take, steal again" double-steal bug.
+  // On boot we compare the login nickname to this receipt and re-apply once
+  // on mismatch, AFTER the game's echo lands, so our write is last.
+  const pendingStealKey = () => 'rgNameForge.pendingSteal.v1.' + (_currentUserId || 'anon');
+  const PENDING_STEAL_TTL_MS = 15 * 60 * 1000;
   const FABPOS_KEY = 'rgNameForge.fabPos.v1';
   const PALETTES = [
     { label: '🔥 Fire', stops: ['#FF4D00', '#FFB800', '#FF0000'] },
@@ -4350,6 +4414,43 @@
     // whether the server actually accepted it.
     console.log('[RG HUD] nickname apply ->', res.status, body.trim().slice(0, 60));
     return { ok: res.ok && body.trim() === 'true', status: res.status, body };
+  }
+
+  // One-shot per page load: verify the last steal actually survived the
+  // game's boot-time SetNickname echo. Called from syncToCurrentPlayer with
+  // the nickname the login response returned. Match -> receipt cleared,
+  // steal confirmed stuck. Mismatch -> the echo overwrote it; re-apply once
+  // after a 4s delay so the game's own push has already landed and our
+  // write wins. Idempotent and TTL-bound, so a stale receipt can't ping-pong
+  // names days later or fight a name the player changed on purpose.
+  let _stealVerified = false;
+  function verifyPendingSteal(rawNickname) {
+    if (_stealVerified) return;
+    _stealVerified = true;
+    const fdbg = (m) => { try { dbg(m); } catch (e) { console.log('[RG HUD] ' + m); } };
+    const pending = loadJSON(pendingStealKey(), null);
+    if (!pending || !pending.code) return;
+    if (Date.now() - (pending.ts || 0) > PENDING_STEAL_TTL_MS) {
+      saveJSON(pendingStealKey(), null);
+      fdbg('pending steal receipt expired — dropped');
+      return;
+    }
+    const nick = String(rawNickname || '');
+    if (nick && (nick === String(pending.body || '') || nick === String(pending.code))) {
+      saveJSON(pendingStealKey(), null);
+      fdbg('pending steal verified — stolen name stuck server-side');
+      return;
+    }
+    fdbg('pending steal MISMATCH — boot echo overwrote the stolen name, re-applying in 4s');
+    setTimeout(async () => {
+      try {
+        const r = await applyNickname(pending.code);
+        fdbg(`pending steal re-apply -> ${r.ok ? 'OK — refresh once more to see it in-game' : 'FAILED (' + r.status + ')'}`);
+        if (r.ok) saveJSON(pendingStealKey(), null);
+      } catch (err) {
+        fdbg('pending steal re-apply error: ' + (err && err.message ? err.message : err));
+      }
+    }, 4000);
   }
 
   // ------------------------------------------------------------------
@@ -5257,6 +5358,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
                 const plain = raw.replace(/<[^>]*>/g, '').trim().slice(0, 24) || '(markup only)';
                 hist.unshift({ code: codeApplied, plain, ts: Date.now() });
                 saveJSON(HISTORY_KEY, hist.slice(0, 5));
+                // Receipt for the boot-time verification: store BOTH forms.
+                // Login nicknames come back clan-tag-stripped, so the raw
+                // body (no prefix) is the primary match; codeApplied covers
+                // the no-clan-tag case where nothing gets stripped.
+                saveJSON(pendingStealKey(), { code: codeApplied, body: raw, ts: Date.now() });
                 render(panel); // preview shows the stolen identity
                 showImposterReveal(raw); // role reveal -- no Apply step needed, it's done
                 // Confirming re-apply: reported race where the first success
@@ -5719,6 +5825,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
           if (rawNickname) _lastRawNickname = String(rawNickname);
           const prevId = _currentUserId;
           _currentUserId = userId;
+          // Runs before the same-account early return below: verification
+          // must fire on EVERY boot, not just account switches. One-shot
+          // latch inside makes repeat sync calls in a session free.
+          verifyPendingSteal(rawNickname);
           if (prevId === userId) return;
           const perUser = loadJSON(stateKey(), null);
           if (perUser) {
