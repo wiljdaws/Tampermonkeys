@@ -129,7 +129,7 @@
         glowOpacity: 0.6,    // vibrancy
         glowColor1: "#ff7a00",
         glowColor2: "#00d4ff",
-        // brings back the old 🚀 Rocket Goal HUD title. vibe titles still override
+        // brings back the old 🚀 Rocket Goal HUD title
         ogTitle: false,
     };
 
