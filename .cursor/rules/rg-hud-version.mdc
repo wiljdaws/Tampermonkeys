@@ -1,0 +1,18 @@
+---
+description: Keep the RG HUD userscript version synchronized and increasing
+globs: rg_hud.user.js
+alwaysApply: false
+---
+
+# RG HUD Versioning
+
+Before committing or pushing any change to `rg_hud.user.js`:
+
+- Increment the release version for that change set.
+- Update both the `// @version` metadata value and the `SCRIPT_VERSION`
+  fallback string to the same version.
+- Keep versions decimal-orderly because `SCRIPT_VERSION_NUM` uses
+  `parseFloat`: advance `13.9` to `14.0`, never `13.10`.
+- Verify the two active version values match before committing.
+- Preserve historical comments such as `// v13.6`; they record when code was
+  introduced and are not active version declarations.
