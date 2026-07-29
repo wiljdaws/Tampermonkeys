@@ -165,6 +165,7 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 - ↺ button resets to your current in-game name any time
 - Clan tag prepends automatically when you opt in - no double tags
 - Presets: save your designs, load them, export/import JSON to share with friends. Overwrite protection so you can't lose one by accident
+- Organize presets into folders (collapsible), rename or move them around whenever your library gets messy
 - History of recently applied names with one-click re-apply, and you can save any of them as a preset
 - Per-account, so alt accounts don't leak names into each other
 - **Alt+N** opens it anywhere
@@ -175,6 +176,18 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 - One click steals their name and applies it instantly - their exact colors, gradients, everything
 - Yes, there's an Among Us role reveal when you do it
 - Profane names get filtered out, and you can't accidentally steal your own name
+
+## 🚗 Rocket Buddy
+
+- Your own animated tamagotchi that lives in the HUD. Give them a name and drag them along for the ride
+- 5 evolution stages: **Ignition → Rookie Booster → Ace Racer → Champion Ride → Legendary Fleet**. Later stages need both matches played *and* a high enough peak rank - a fresh install can't skip to the top just because you're already good
+- Only matches you play *after* installing ATLAS count toward your buddy - nothing is retroactive, no shortcuts
+- Moods react live to how you're playing: 🎯 Focused, 🔥 On fire, ❄ Frosty, 💤 Sleepy, 😢 Neglected - each with its own sprite animation
+- Energy bar that decays as you idle. Play a match or hit the **🫳 Pet** button (1-hour cooldown) to top it back up
+- Chatty status blurbs after wins, losses, streaks, evolutions, and long absences - so your buddy actually reacts to the session
+- Toast alerts and a banner when they evolve to the next stage
+- **Equip** them to pin a mini sprite next to your streak badge in the main HUD
+- 100% local to your device - no server sync, no leaderboard exposure, switch accounts and the same buddy stays with you
 
 ---
 
