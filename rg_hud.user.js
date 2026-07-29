@@ -887,6 +887,12 @@
         streakData.lastWins = totalWins;
         streakData.lastMatches = totalMatches;
         saveStreak();
+        return {
+            matches: matchDiff,
+            wins: Math.max(0, Math.min(matchDiff, winDiff)),
+            losses: Math.max(0, Math.min(matchDiff, losses)),
+            streak: streakData.streak,
+        };
     }
 
     function streakBadge() {
@@ -986,7 +992,7 @@
     ];
     const BUDDY_PET_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour between pets
     const BUDDY_STORAGE_KEY = "rgHudBuddy";
-    const BUDDY_SCHEMA_VERSION = 2;
+    const BUDDY_SCHEMA_VERSION = 3;
 
     let buddyState = null;
     let buddyRefreshTimer = null;
@@ -1012,6 +1018,9 @@
             equipped: false,
             bestRankByMode: {},
             lastSeenStage: null,
+            lastStatus: "",
+            lastStatusAt: 0,
+            lastMoodKey: "focused",
         };
     }
 
@@ -1096,6 +1105,11 @@
         } else if (currentStage.level > buddyState.lastSeenStage) {
             buddyState.lastSeenStage = currentStage.level;
             saveBuddyState();
+            setBuddyStatus(pickBuddyLine([
+                `${buddyDisplayName()} evolved into ${currentStage.name}. The garage insurance premium just moved.`,
+                `${buddyDisplayName()} unlocked ${currentStage.name}! Please admire the new hardware responsibly.`,
+                `${buddyDisplayName()} evolved! Somewhere, a tiny mechanic is crying happy tears.`,
+            ], currentStage.level));
             showBanner(`🚀 ${currentStage.name.toUpperCase()} UNLOCKED!`, currentStage.level >= 4 ? "#ffd700" : "#00bfff");
         }
     }
@@ -1161,6 +1175,119 @@
         return (buddyState?.name || "").trim() || "Unnamed";
     }
 
+    function pickBuddyLine(lines, seed = 0) {
+        const index = Math.abs(Number(seed) || 0) % lines.length;
+        return lines[index];
+    }
+
+    function setBuddyStatus(message, notify = true) {
+        ensureBuddy();
+        buddyState.lastStatus = String(message);
+        buddyState.lastStatusAt = Date.now();
+        saveBuddyState();
+        if (notify) showToast(buddyState.lastStatus);
+    }
+
+    function reportBuddyMoodTransition(mood) {
+        ensureBuddy();
+        if (!mood?.key || buddyState.lastMoodKey === mood.key) return;
+        buddyState.lastMoodKey = mood.key;
+
+        const name = buddyDisplayName();
+        let lines = null;
+        if (mood.key === "sleepy") {
+            lines = [
+                `${name} entered sleep mode. Snoring is now available in surround sound.`,
+                `${name} parked for a power nap and left the hazards on.`,
+                `${name} is dreaming of unlimited boost and suspiciously large snacks.`,
+            ];
+        } else if (mood.key === "neglected") {
+            lines = [
+                `${name} has started collecting dust as a hobby. A pet might help.`,
+                `${name} is composing a dramatic ballad titled "Where Did My Human Go?"`,
+                `${name} checked the garage door again. Still no snacks.`,
+            ];
+        }
+
+        if (lines) {
+            setBuddyStatus(pickBuddyLine(lines, Math.floor(Date.now() / (24 * 3600 * 1000))));
+        } else {
+            saveBuddyState();
+        }
+    }
+
+    function reportBuddyMatchStatus(result) {
+        if (!result?.matches) return;
+        ensureBuddy();
+        const name = buddyDisplayName();
+        const streak = result.streak ?? 0;
+        let lines;
+
+        if (result.wins > 0 && result.losses === 0) {
+            if (streak >= 8) {
+                lines = [
+                    `${name} has forgotten how losing works. Please do not remind them.`,
+                    `${name} is requesting a trophy-shaped parking spot.`,
+                    `${name} has achieved dangerous levels of zoom.`,
+                ];
+            } else if (streak >= 3) {
+                lines = [
+                    `${name} is ON FIRE! Keep flammable decals at a safe distance.`,
+                    `${name} is cooking. The recipe appears to be pure boost.`,
+                    `${name} has entered main-character mode.`,
+                ];
+            } else if (result.wins > 1) {
+                lines = [
+                    `${name} banked ${result.wins} wins. Turbo confidence engaged.`,
+                    `${name} collected ${result.wins} wins and would like them framed.`,
+                    `${name} just speed-ran ${result.wins} victories. Very normal behavior.`,
+                ];
+            } else {
+                lines = [
+                    `${name} is getting stronger! The garage is concerned.`,
+                    `${name} added one win and approximately twelve horsepower.`,
+                    `${name} found the boost button. This is getting dangerous.`,
+                    `${name} says that was calculated. It was not.`,
+                ];
+            }
+        } else if (result.losses > 0 && result.wins === 0) {
+            if (streak <= -8) {
+                lines = [
+                    `${name} is building character. So much character.`,
+                    `${name} has requested a tactical blanket and no follow-up questions.`,
+                    `${name} insists this is an extremely long training montage.`,
+                ];
+            } else if (streak <= -3) {
+                lines = [
+                    `${name} is Frosty. Warm-up laps and snacks have been prescribed.`,
+                    `${name} filed a formal complaint against matchmaking.`,
+                    `${name} needs encouragement, premium fuel, and perhaps a tiny scarf.`,
+                ];
+            } else if (result.losses > 1) {
+                lines = [
+                    `${name} survived ${result.losses} learning opportunities at supersonic speed.`,
+                    `${name} lost ${result.losses}, but the wheels are still emotionally attached.`,
+                    `${name} calls those ${result.losses} losses "extensive field research."`,
+                ];
+            } else {
+                lines = [
+                    `${name} hit a learning opportunity at supersonic speed.`,
+                    `${name} lost the match, not the plot. Probably.`,
+                    `${name} says the controller was slippery.`,
+                    `${name} is shaken, not stalled. Tiny comeback loading.`,
+                ];
+            }
+        } else {
+            lines = [
+                `${name} processed ${result.wins}W/${result.losses}L and now requires a tiny spreadsheet.`,
+                `${name} had a complicated session. The telemetry just sighed.`,
+                `${name} experienced both victory and character development.`,
+            ];
+        }
+
+        setBuddyStatus(pickBuddyLine(lines, buddyState.matchesDriven + Math.abs(streak) + result.matches));
+    }
+
     function petBuddy() {
         ensureBuddy();
         const now = Date.now();
@@ -1170,7 +1297,13 @@
             return false;
         }
         buddyState.lastPetAt = now;
-        saveBuddyState();
+        const name = buddyDisplayName();
+        setBuddyStatus(pickBuddyLine([
+            `${name} was just petted. Horsepower increased by emotionally significant amounts.`,
+            `${name} received head pats and is now legally unstoppable.`,
+            `${name} says "again." The cooldown says "absolutely not."`,
+            `${name} has been petted and is pretending not to love it.`,
+        ], buddyState.matchesDriven + Math.floor(now / BUDDY_PET_COOLDOWN_MS)));
         return true;
     }
 
@@ -1217,6 +1350,7 @@
         ensureBuddy();
         const stage = buddyStage();
         const mood = buddyMood();
+        reportBuddyMoodTransition(mood);
         const energy = buddyEnergy();
         const req = buddyNextStageRequirement();
 
@@ -1289,6 +1423,12 @@
                     <span>${bar} ${energy}%</span>
                 </div>
             </div>
+
+            ${buddyState.lastStatus ? `
+                <div style="font-size:11px;line-height:1.4;background:#ffd7000d;border-left:2px solid #ffd70088;border-radius:4px;padding:6px 8px;margin-bottom:8px;">
+                    <span aria-hidden="true">💬</span> ${escapeHtml(buddyState.lastStatus)}
+                </div>
+            ` : ""}
 
             ${isNewbie ? `
                 <div style="font-size:11px;opacity:0.85;background:#00bfff11;border-radius:6px;padding:8px;margin-bottom:8px;">
@@ -1637,8 +1777,11 @@
         createHUD();
         lastKnownPlayerData = data;
         captureSessionStart(data);
-        updateStreak(data);
+        const buddyMatchResult = updateStreak(data);
         updateMomentum();
+        if (buddyMatchResult) {
+            try { reportBuddyMatchStatus(buddyMatchResult); } catch (e) { dbg("reportBuddyMatchStatus threw: " + (e && e.message ? e.message : e)); }
+        }
         // v13.6: feed the buddy AFTER streak update so streakData is fresh
         // when buddyMood() reads it. Also runs on /login syncs (harmlessly
         // no-op if nothing changed) so a fresh install captures its baseline
