@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.7
+// @version      13.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -18,20 +18,13 @@
 
     let hud;
 
-    // Custom ATLAS icon URL -- served from the same GitHub repo as the script,
-    // reused as both Tampermonkey icon (via @icon in the header) and inline
-    // in the HUD title bar. Rendered as an <img> so it stays crisp at any
-    // scale (unlike the 🚀 emoji it replaced, which pulled from the system
-    // font and looked flat/inconsistent across OSes).
+    // img not emoji — stays crisp cross-OS
     const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png';
-    // Tamagotchi-style Rocket Buddy sheet (20×5 × 128px). Pin the asset to
-    // the commit that shipped this layout so a future main-branch sheet cannot
-    // silently break an older installed userscript's frame math.
+    // pinned to a commit so a sheet change can't break old installs
     const BUDDY_SHEET_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/e29161741cedca30b6a72be401a4dc51b50470a9/atlas/rocket_buddy_sheet.png';
     const atlasIconHtml = () => `<img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">`;
 
-    // buddyMood() keys → sprite-sheet mood block names. Default "focused"
-    // plays the idle bob loop; streak/idle moods map 1:1 to sheet columns.
+    // buddyMood() keys -> sheet mood block names
     const BUDDY_MOOD_SPRITE = {
         focused: "idle",
         onFire: "onFire",
@@ -132,13 +125,11 @@
 
     const DEFAULT_SETTINGS = {
         glowEnabled: true,
-        glowSpeed: 5,        // speed level 1-10, higher = faster
+        glowSpeed: 5,        // 1-10, higher = faster
         glowOpacity: 0.6,    // vibrancy
         glowColor1: "#ff7a00",
         glowColor2: "#00d4ff",
-        // OG Title: when true, the neutral HUD title shows "🚀 Rocket Goal HUD"
-        // (the original) instead of the ATLAS icon + name. Vibe-state titles
-        // (Flow State, ON FIRE, KING, etc.) are untouched either way.
+        // brings back the old 🚀 Rocket Goal HUD title
         ogTitle: false,
     };
 
@@ -157,7 +148,6 @@
         return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})`;
     }
 
-    // Regenerates the glow keyframes from current settings and applies them.
     function applyGlowSettings() {
         if (!hud) return;
         let styleEl = document.getElementById("rgGlowStyle");
@@ -188,8 +178,7 @@
         }
 
         styleEl.textContent = `@keyframes rgGlowSpin {\n${frames}}`;
-        // Speed level 1-10 maps to rotation duration 20s (crawl) down to ~1.5s (fast).
-        // Momentum applies a speed multiplier on top (on fire = faster, cold = slower).
+        // speed 1-10 -> ~20s..1.5s
         const baseDuration = 22 - (settings.glowSpeed * 2.05);
         const duration = baseDuration / momentumGlow.speedMult;
         hud.style.boxShadow = "";
@@ -197,11 +186,7 @@
     }
 
     // ---------- Device ID ----------
-    // Random per-installation UUID persisted in localStorage; sent with every
-    // Firestore write so cheaters can be blacklisted by device even after they
-    // burn through source user IDs. Not a real fingerprint -- clearing
-    // localStorage resets it, so it's friction, not a fortress. Paired with
-    // server-side rules in firestore.rules (admin/blacklist doc).
+    // per-install UUID for blacklisting. resets on localStorage clear — friction, not a fortress.
 
     function getDeviceId() {
         let id = null;
@@ -214,14 +199,8 @@
         return id;
     }
 
-    // Version sent with every Firestore write, two forms:
-    //  - SCRIPT_VERSION: the raw @version string (from Tampermonkey metadata,
-    //    so it can't drift from the header; the literal is only a fallback).
-    //  - SCRIPT_VERSION_NUM: parsed to a number so server rules can enforce
-    //    "minimum version X and everything after" with a plain >= compare.
-    //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
-    //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.7";
+    // num form lets server rules do >= checks. don't jump to 11.10 — parseFloat.
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -232,7 +211,6 @@
         hud = document.createElement("div");
         hud.id = "rgHUD";
 
-        // Restore last dragged position if saved
         let pos = { top: "110px", left: "", right: "20px" };
         try {
             const saved = JSON.parse(localStorage.getItem("rgHudPos") ?? "null");
@@ -304,10 +282,7 @@
                     font-size: 12px;
                 }
                 #rgHUD input[type="range"] { width: 110px; }
-                /* Tall views (e.g. Clan Tag Style expanded) scroll inside the
-                   HUD instead of pushing buttons off the bottom of the screen.
-                   Without this, users drag the HUD up to reach buried buttons
-                   and strand the drag handle above the viewport. */
+                /* scroll inside the HUD so buttons don't fall off the bottom */
                 #rgBody { max-height: calc(100vh - 170px); overflow-y: auto; overflow-x: hidden; }
                 #rgHUD input[type="color"] {
                     width: 30px; height: 20px; padding: 0; border: none; background: none; cursor: pointer;
@@ -453,9 +428,7 @@
         dragElement(hud, document.getElementById("rgDragHandle"));
         applyGlowSettings();
 
-        // Custom themed tooltip (replaces native title= tooltips, which can't be
-        // styled and have a slow show delay). One shared element, positioned near
-        // the cursor whenever hovering anything with a data-tip.
+        // one shared tooltip, replaces native title=
         let tooltipEl = document.getElementById("rgTooltip");
         if (!tooltipEl) {
             tooltipEl = document.createElement("div");
@@ -470,7 +443,7 @@
         });
         hud.addEventListener("mousemove", e => {
             if (tooltipEl.style.opacity !== "1") return;
-            // Position above-right of cursor, nudged to stay on screen.
+            // above-right of cursor, kept on-screen
             const pad = 14;
             let x = e.clientX + pad;
             let y = e.clientY - tooltipEl.offsetHeight - 6;
@@ -483,24 +456,15 @@
             const target = e.target.closest("[data-tip]");
             if (target) tooltipEl.style.opacity = "0";
         });
-        // Leaving the HUD box entirely always hides the tooltip -- catches
-        // the case where a re-render removed the hovered element mid-hover,
-        // which means its own mouseout never fires.
+        // re-renders can yank the hovered element mid-hover
         hud.addEventListener("mouseleave", () => {
             tooltipEl.style.opacity = "0";
         });
 
-        // v13.6: kick keyboard focus off any HUD button after a click, so
-        // hitting space in-queue triggers the game's jump/boost instead of
-        // reactivating whichever HUD icon the user last touched (which
-        // flipped Clan <-> Forge <-> Settings mid-queue). Delegated on the
-        // HUD root so it covers dynamically-added buttons in modals, clan
-        // rows, buddy view, etc., without needing per-button wiring.
+        // v13.6: blur buttons on mouse click so spacebar in queue hits the game
+        // not the last tab. keyboard clicks (detail === 0) keep focus for tab flow.
         hud.addEventListener("click", (e) => {
             const btn = e.target.closest("button");
-            // Mouse/touch clicks should not leave a control armed for the
-            // game's space bar. Keyboard-generated clicks have detail === 0;
-            // keep focus for those users so tab position is not discarded.
             if (btn && e.detail !== 0) btn.blur();
         });
 
@@ -509,7 +473,11 @@
             window.open("https://www.youtube.com/@RootedEngineering", "_blank", "noopener");
         };
         document.getElementById("rgLeaderboard").onclick = () => {
-            window.open("https://abuarqob.github.io/rgleaderboard/", "_blank", "noopener");
+            const onClanTab = document.getElementById("rgClanView")?.style.display !== "none";
+            const url = onClanTab
+                ? "https://wiljdaws.github.io/RG_Clan_Leaderboard/"
+                : "https://abuarqob.github.io/rgleaderboard/";
+            window.open(url, "_blank", "noopener");
         };
         document.getElementById("rgRename").onclick = () => {
             if (!lastKnownPlayerData) {
@@ -521,7 +489,6 @@
             submitToLeaderboard(lastKnownPlayerData);
         };
 
-        // Clan view toggle (shield icon) -- swaps stats view for clan view
         const statsView = document.getElementById("rgStatsView");
         const clanView = document.getElementById("rgClanView");
         const panel = document.getElementById("rgSettingsPanel");
@@ -540,8 +507,7 @@
             actionRow.style.display = "flex";
             body.scrollTop = 0;
             stopBuddyRefreshTimer();
-            // Detach the clan real-time listener when leaving Clan tab so we
-            // stop paying for updates the player isn\'t looking at anymore.
+            // drop clan listener when nobody's looking
             detachClanListener();
         }
         document.getElementById("rgClanBtn").onclick = () => {
@@ -550,20 +516,18 @@
             showStatsOnly();
             statsView.style.display = "none";
             clanView.style.display = "block";
-            renderClanView(); // listener attaches inside once myClan is known
+            renderClanView(); // listener attaches once myClan is known
         };
+
         document.getElementById("rgForgeBtn").onclick = () => {
             const showingForge = forgeView.style.display !== "none";
             if (showingForge) { showStatsOnly(); return; }
             showStatsOnly();
             statsView.style.display = "none";
             forgeView.style.display = "block";
-            actionRow.style.display = "none"; // Forge context: hide unrelated leaderboard/sub actions
+            actionRow.style.display = "none"; // hide leaderboard/sub in forge
             if (RGNF.setPrefixProvider) RGNF.setPrefixProvider(getClanTagPrefix);
-            // Imposter roster: last game's player names, minus your own
-            // (by UserId when present, by exact name for the empty-uid local
-            // entry), minus anything profane -- every other name path in
-            // ATLAS blocks profanity, this one does too.
+            // imposter roster: last game's players minus you, minus profanity
             if (RGNF.setRosterProvider) RGNF.setRosterProvider(
                 () => lastGamePlayers
                     .filter(p => !p.uid || p.uid !== myUserId())
@@ -571,21 +535,14 @@
                     .filter(p => !containsProfanity(p.name.replace(/<[^>]*>/g, "")))
                     .map(p => p.name)
             );
-            // Sync Forge\'s Name field to this account\'s identity so a saved
-            // state from a different account (or a fresh install) doesn\'t
-            // greet the player with the wrong name.
+            // fresh install / cached state can otherwise greet the wrong name
             if (RGNF.syncToCurrentPlayer) RGNF.syncToCurrentPlayer(myUserId(), myGameNamePlain() || myName(), stripLeadingClanTagMarkup(lastKnownPlayerData?.Nickname ?? ""));
             RGNF.mountIn(forgeView);
-            // Always repaint on open: syncToCurrentPlayer only renders on an
-            // account CHANGE, so without this a roster captured since the
-            // last visit (or any other externally-fed data) stays invisible
-            // until a styling control happens to trigger a render.
+            // syncToCurrentPlayer only renders on account change
             if (RGNF.refresh) RGNF.refresh();
         };
 
-        // v13.6: Rocket Buddy toggle (🚗 icon) -- new tab, same pattern as
-        // Clan and Forge. Renders on open so the mood/energy line reads the
-        // latest streak state. No listener to attach or detach.
+        // Buddy tab — same pattern as Clan/Forge
         document.getElementById("rgBuddyBtn").onclick = () => {
             const showingBuddy = buddyView.style.display !== "none";
             if (showingBuddy) { showStatsOnly(); return; }
@@ -593,16 +550,12 @@
             statsView.style.display = "none";
             buddyView.style.display = "block";
             buddyBtn.setAttribute("aria-expanded", "true");
-            actionRow.style.display = "none"; // Buddy tab hides unrelated actions
+            actionRow.style.display = "none";
             renderBuddyView();
             startBuddyRefreshTimer();
         };
 
-        // Settings panel wiring -- opening settings routes through showStatsOnly()
-        // so any other open tab (Clan, Forge) closes cleanly first, and the action
-        // row is correctly restored (matters when settings is opened from Forge,
-        // which had hidden the row). Closing settings returns to the clean Stats
-        // view. Without this, opening Settings from Forge left both views stacked.
+        // route through showStatsOnly so opening from Forge doesn't stack views
         document.getElementById("rgSettingsBtn").onclick = () => {
             const opening = panel.style.display === "none";
             showStatsOnly();
@@ -629,7 +582,7 @@
         setOgTitle.onchange = () => {
             settings.ogTitle = setOgTitle.checked;
             saveSettings();
-            applyTitle(); // repaint immediately so users see the switch land
+            applyTitle();
         };
         setGlow.onchange = () => { settings.glowEnabled = setGlow.checked; saveSettings(); applyGlowSettings(); };
         setSpeed.oninput = () => { settings.glowSpeed = parseFloat(setSpeed.value); saveSettings(); applyGlowSettings(); };
@@ -643,16 +596,9 @@
             applyGlowSettings();
         };
 
-        // v13.6: session recap on demand. Composes a small dialog from
-        // sessionStart, streakData, myClan (if event active). Non-modal;
-        // dismisses via the standard dialog OK.
         document.getElementById("rgSetRecap").onclick = () => showSessionRecap();
 
-        // v13.6: bundle debug state to clipboard for support requests.
-        // Everything the maintainers need to triage a "the HUD isn't
-        // working" ping without asking the user to paste console output.
-        // Player data is trimmed to the fields that matter (Id, Nickname,
-        // ModesGlicko, ModesData) so we don't leak the whole login blob.
+        // trim player data — don't dump the whole login blob
         document.getElementById("rgSetCopyDebug").onclick = async () => {
             try {
                 const trimmedPlayer = lastKnownPlayerData ? {
@@ -699,39 +645,27 @@
             }
         };
 
-        // Kick off the live countdown tick. Runs once for the lifetime of the
-        // HUD; the handler itself early-returns when no banner is on screen.
+        // handler early-returns when no banner is up
         if (!countdownIntervalId) {
             countdownIntervalId = setInterval(tickCountdown, 1000);
         }
     }
 
-    // Keeps the HUD reachable: if a saved/dragged position has pushed it (mostly)
-    // off-screen, pull it back so at least a good chunk of the title bar stays
-    // visible and grabbable. Prevents the "dragged off-screen and can't get it
-    // back because it reloads off-screen" trap.
     function clampHudOnScreen() {
         if (!hud) return;
-        // CRITICAL GUARD: while the HUD is hidden (display:none during
-        // matches), getBoundingClientRect returns all zeros. Without this
-        // guard, a window resize mid-match makes the clamp read the phantom
-        // (0,0) rect as "off-screen", move the HUD to the top-left, and
-        // PERSIST that -- so the HUD reappears top-left after every match.
-        // Skip while hidden; setAutoVisible re-clamps on show with real dims.
+        // hidden HUD returns zeros from getBoundingClientRect and we'd persist
+        // top-left as the "corrected" pos. setAutoVisible re-clamps on show.
         if (hud.style.display === "none" || hud.offsetWidth === 0) return;
         const rect = hud.getBoundingClientRect();
         const vw = window.innerWidth;
         const vh = window.innerHeight;
-        const MARGIN = 40; // keep at least this many px of the HUD on each edge
+        const MARGIN = 40;
 
         let left = rect.left;
         let top = rect.top;
 
-        // Horizontal: never fully off left/right.
-        if (left + rect.width < MARGIN) left = MARGIN - rect.width;   // too far left
-        if (left > vw - MARGIN) left = vw - MARGIN;                    // too far right
-        // Vertical: keep the title bar row on-screen (top can't go above 0 or
-        // below the viewport bottom minus a margin).
+        if (left + rect.width < MARGIN) left = MARGIN - rect.width;
+        if (left > vw - MARGIN) left = vw - MARGIN;
         if (top < 0) top = 0;
         if (top > vh - MARGIN) top = vh - MARGIN;
 
@@ -739,7 +673,6 @@
             hud.style.left = left + "px";
             hud.style.top = top + "px";
             hud.style.right = "auto";
-            // Persist the corrected position so it stays fixed next load too.
             try {
                 localStorage.setItem("rgHudPos", JSON.stringify({
                     top: hud.style.top,
@@ -753,7 +686,7 @@
         let dx = 0, dy = 0;
 
         handle.onmousedown = e => {
-            if (e.target.closest(".rgIconBtn")) return; // buttons handle their own clicks
+            if (e.target.closest(".rgIconBtn")) return;
             e.preventDefault();
             dx = e.clientX;
             dy = e.clientY;
@@ -776,11 +709,7 @@
             const moveY = dy - e.clientY;
             dx = e.clientX;
             dy = e.clientY;
-            // Live clamp: the title bar is the ONLY drag handle, so if it
-            // leaves the viewport the HUD is stranded until a reload (found
-            // the hard way by a user who dragged up chasing a tall panel).
-            // Top can never go negative; bottom/left/right keep a grabbable
-            // margin on screen.
+            // title bar is the only drag handle — off-screen = stranded til reload
             const MARGIN = 40;
             let newTop = el.offsetTop - moveY;
             let newLeft = el.offsetLeft - moveX;
@@ -804,15 +733,11 @@
         if (!hud) return;
         hud.style.display = visible ? "block" : "none";
         if (!visible) {
-            // The tooltip is its own element on document.body, NOT inside the
-            // HUD -- hiding the HUD mid-hover strands it over the game (the
-            // mouseout that would hide it never fires once its trigger
-            // element disappears). Hide it explicitly.
+            // tooltip lives on body — hide it or it strands over the game
             const tip = document.getElementById("rgTooltip");
             if (tip) tip.style.opacity = "0";
         }
-        // Now that it's visible with real dimensions, make sure it's actually
-        // on-screen (covers the window having resized while it was hidden).
+        // window may have resized while hidden
         if (visible) clampHudOnScreen();
     }
 
@@ -832,12 +757,8 @@
     }
 
     // ---------- Win/loss streak tracking ----------
-    // The game only gives cumulative totals, not per-match results. But by
-    // comparing this update's totals to the last, we can infer each match's
-    // outcome as it happens and chain them into a streak. Overall (any mode).
-    // A positive count = win streak (🔥), negative = loss streak (❄️). Persisted
-    // in localStorage keyed to the session so it survives refreshes but resets
-    // with the session / on account change.
+    // game only gives cumulative totals — diff between updates to get per-match.
+    // +ve = win streak, -ve = loss streak. resets on account change / session end.
 
     let streakData = null;
     try { streakData = JSON.parse(localStorage.getItem("rgHudStreak") ?? "null"); } catch (e) {}
@@ -856,8 +777,7 @@
         const totalWins = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
         const totalMatches = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
-        // First observation this session (or account change) -- establish a
-        // baseline without counting anything, since we don't know prior outcomes.
+        // first observation — baseline only
         if (!streakData || streakData.accountId !== data.Id) {
             resetStreak(data.Id, totalWins, totalMatches);
             return;
@@ -866,21 +786,15 @@
         const matchDiff = totalMatches - streakData.lastMatches;
         const winDiff = totalWins - streakData.lastWins;
 
-        if (matchDiff <= 0) return; // no new matches since last check
+        if (matchDiff <= 0) return;
 
-        // Resolve each newly-played match in order. Usually just one, but if two
-        // came in between updates we still tally them (all wins or all losses in
-        // that gap -- we can't know the interleaving, so treat the block by net).
+        // can't know the interleaving — pure blocks stay as blocks, mixed = net sign mag 1
         const losses = matchDiff - winDiff;
         if (winDiff > 0 && losses === 0) {
-            // pure win block
             streakData.streak = streakData.streak > 0 ? streakData.streak + winDiff : winDiff;
         } else if (losses > 0 && winDiff === 0) {
-            // pure loss block
             streakData.streak = streakData.streak < 0 ? streakData.streak - losses : -losses;
         } else {
-            // mixed block in one gap -- end on whichever was more recent is unknown,
-            // so settle on the net sign, magnitude 1 (conservative).
             streakData.streak = winDiff >= losses ? 1 : -1;
         }
 
@@ -906,12 +820,9 @@
 
     // ---------- Session deltas ----------
 
-    // A "session" is a continuous play run. It resets when: the account changes,
-    // OR there's been a gap of no activity longer than SESSION_IDLE_MS (e.g. you
-    // played last night, slept, and came back today). Stored in localStorage with
-    // a timestamp so a plain page refresh keeps the session, but a long break
-    // starts a fresh one -- which sessionStorage alone couldn't distinguish.
-    const SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2 hours
+    // one continuous play run. resets on account change or after SESSION_IDLE_MS
+    // idle. localStorage + timestamp — refresh keeps it, overnight starts fresh.
+    const SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
 
     let sessionStart = null;
     try { sessionStart = JSON.parse(localStorage.getItem("rgHudSessionStart") ?? "null"); } catch (e) {}
@@ -922,14 +833,13 @@
         const idledOut = sessionStart && (now - (sessionStart.lastSeen ?? 0)) > SESSION_IDLE_MS;
 
         if (sameAccount && !idledOut) {
-            // Continuing the same session -- just refresh the activity timestamp.
+            // same session — bump timestamp
             sessionStart.lastSeen = now;
             try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
             return;
         }
 
-        // New session: fresh baseline. Also clear the per-entry write cache and
-        // momentum so a new run doesn't inherit yesterday's state.
+        // new session — fresh baseline, drop inherited momentum
         sessionStart = {
             accountId: data.Id,
             startedAt: now,
@@ -942,18 +852,17 @@
         try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
         currentMomentumState = "neutral";
 
-        // New session -> fresh streak baseline (don't count pre-session matches).
+        // reset streak — don't count pre-session matches
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
         const tw = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
         const tm = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
         resetStreak(data.Id, tw, tm);
 
-        // Account/session changed -> invalidate clan cache so it reloads for the
-        // new account, and refresh the clan view if it's currently open.
+        // bust clan cache on account change
         clanLoaded = false;
         clanLoadedForAccount = null;
         myClan = null;
-        checkClanNotices(); // show any pending notice (e.g. kicked) for this account
+        checkClanNotices();
         const clanView = document.getElementById("rgClanView");
         if (clanView && clanView.style.display !== "none") {
             renderClanView();
@@ -970,19 +879,8 @@
     }
 
     // ---------- Rocket Buddy (v13.6) ----------
-    // Local-only tomogotchi-style companion. Feeds off session/streak state
-    // that already exists elsewhere; adds NO Firestore reads or writes. Old
-    // 13.5 clients don't know it exists, which is exactly the point during
-    // a live event -- ship without touching the shared clan/leaderboard
-    // shape. Persisted in localStorage per-device (not per-account) since
-    // "your buddy" is a device-flavored companion, not tied to a specific
-    // account -- switch accounts, same buddy still with you.
-    //
-    // Stage gates: matches driven THROUGH ATLAS (from installation),
-    // combined with rank floors for later stages. A player at rank #10 on
-    // a fresh install still has to grind their way up through the stages;
-    // rank alone doesn't unlock the top forms, and the top forms require
-    // both match count AND rank. Nothing is retroactive.
+    // local-only tamagotchi. per-device not per-account. no Firestore.
+    // stage gates: matches since install + rank floor at 3+. nothing retroactive.
     const BUDDY_STAGES = [
         { id: 1, name: "Ignition",         icon: "🛞", matches: 0,   rankTop: null },
         { id: 2, name: "Rookie Booster",   icon: "🏎️", matches: 50,  rankTop: null },
@@ -990,7 +888,7 @@
         { id: 4, name: "Champion Ride",    icon: "🏁", matches: 400, rankTop: 100 },
         { id: 5, name: "Legendary Fleet",  icon: "🚀", matches: 800, rankTop: 20  },
     ];
-    const BUDDY_PET_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour between pets
+    const BUDDY_PET_COOLDOWN_MS = 60 * 60 * 1000; // 1h between pets
     const BUDDY_STORAGE_KEY = "rgHudBuddy";
     const BUDDY_SCHEMA_VERSION = 3;
 
@@ -1008,9 +906,8 @@
             name: "",
             birthAt: Date.now(),
             matchesDriven: 0,
-            // Retained so existing saves remain readable. Schema v2 uses
-            // accountMatchTotals to add per-account deltas without letting an
-            // account switch reset or inflate the device-global companion.
+            // back-compat with v1 saves. v2+ uses accountMatchTotals to avoid
+            // account-switch inflation
             lifetimeMatchesAtBirth: null,
             accountMatchTotals: {},
             lastPetAt: 0,
@@ -1055,10 +952,7 @@
         }
     }
 
-    // Called from updateHUD after every ratings sync. Increments the match
-    // counter by however many new matches have appeared since the last sync
-    // (usually 1, but a resync after several offline matches will catch up
-    // all of them). Also refreshes bestRankByMode from cachedRanks.
+    // called on every ratings sync
     function tickBuddyFromData(data) {
         ensureBuddy();
         if (!data || !data.ModesData) return;
@@ -1068,8 +962,7 @@
         if (accountId) {
             const seen = buddyState.accountMatchTotals;
             if (!Object.prototype.hasOwnProperty.call(seen, accountId)) {
-                // First observation for this account establishes a baseline;
-                // pre-ATLAS matches never become retroactive Buddy credit.
+                // first sighting — baseline only, no retro credit
                 seen[accountId] = total;
                 if (buddyState.lifetimeMatchesAtBirth == null) buddyState.lifetimeMatchesAtBirth = total;
                 saveBuddyState();
@@ -1081,12 +974,10 @@
                     buddyState.lastMatchAt = Date.now();
                     saveBuddyState();
                 }
-                // A lower total is treated as an incomplete/reset response,
-                // not a new baseline; otherwise the next full response would
-                // double-credit the recovered matches.
+                // lower total = partial response. don't re-baseline or we double-count.
             }
         }
-        // Refresh best-rank floor per mode from the live rank cache.
+        // best-rank floor per mode
         const rankPlaylists = { "3v3": null, "2v2": null, "1v1": null };
         for (const p of Object.keys(rankPlaylists)) {
             const r = cachedRanks.get(p);
@@ -1120,9 +1011,7 @@
         const bestRank = Object.values(buddyState.bestRankByMode)
             .filter(r => typeof r === "number")
             .reduce((m, r) => Math.min(m, r), Infinity);
-        // Walk from highest to lowest; return the first stage whose gates
-        // this buddy has cleared. matches AND rank-floor (if any) both
-        // must pass -- stages 3+ need both.
+        // high -> low, first stage passing both gates wins
         for (let i = BUDDY_STAGES.length - 1; i >= 0; i--) {
             const s = BUDDY_STAGES[i];
             const matchOk = matches >= s.matches;
@@ -1132,13 +1021,11 @@
         return { ...BUDDY_STAGES[0], level: 1, bestRank };
     }
 
-    // Next-stage requirements, phrased for display. Returns the gap in
-    // matches and (if applicable) the rank floor still to reach. Returns
-    // null when already at max stage.
+    // null when maxed
     function buddyNextStageRequirement() {
         const cur = buddyStage();
         if (cur.level >= BUDDY_STAGES.length) return null;
-        const next = BUDDY_STAGES[cur.level]; // next by id (0-indexed lookup)
+        const next = BUDDY_STAGES[cur.level];
         const matchGap = Math.max(0, next.matches - buddyState.matchesDriven);
         const rankGap = next.rankTop == null || (cur.bestRank <= next.rankTop)
             ? null
@@ -1146,8 +1033,7 @@
         return { matches: matchGap, rankTop: rankGap, stageName: next.name };
     }
 
-    // Mood is a function of the live streak (already tracked by streakData)
-    // and time-since-last-match. Independent of stage.
+    // streak + idle time. independent of stage.
     function buddyMood() {
         ensureBuddy();
         const now = Date.now();
@@ -1160,9 +1046,7 @@
         return { key: "focused", label: "🎯 Focused", color: "#00bfff" };
     }
 
-    // Energy is a pure display metric: starts at 100 right after a match /
-    // pet, decays linearly to 0 over 24 idle hours. Pet button adds a bump
-    // (via lastPetAt) capped once per BUDDY_PET_COOLDOWN_MS.
+    // display only. 100 after match/pet, 0 after 24h idle.
     function buddyEnergy() {
         ensureBuddy();
         const now = Date.now();
@@ -1321,11 +1205,9 @@
                 stopBuddyRefreshTimer();
                 return;
             }
-            // A minimized/auto-hidden HUD keeps the Buddy view's own display
-            // value at "block"; offsetParent catches those hidden ancestors.
+            // minimized HUD keeps buddy view display=block. offsetParent catches that.
             if (!view.offsetParent) return;
-            // Do not destroy a keyboard user's currently-focused Buddy
-            // control. The next minute tick (or normal data update) catches up.
+            // don't yank a focused control — next tick catches up
             if (!view.contains(document.activeElement)) renderBuddyView();
         }, 60 * 1000);
     }
@@ -1340,10 +1222,7 @@
     }
 
     // ---- Buddy view render ----
-    // Same pattern as the other tabs: rebuild innerHTML on open (or after
-    // an action), no diffing needed since this tab is closed most of the
-    // time and re-renders are cheap. All values escaped where user input
-    // could reach them (buddy name).
+    // full innerHTML rebuild. escape anything user-controlled (name).
     function renderBuddyView() {
         const view = document.getElementById("rgBuddyView");
         if (!view) return;
@@ -1354,22 +1233,17 @@
         const energy = buddyEnergy();
         const req = buddyNextStageRequirement();
 
-        // Age in days, rounded down. New buddies show "born today" instead
-        // of "0 days" so the first-play experience feels welcoming.
+        // day-one edge case
         const ageDays = Math.floor((Date.now() - buddyState.birthAt) / (24 * 3600 * 1000));
         const ageStr = ageDays === 0 ? "born today" : `${ageDays} day${ageDays === 1 ? "" : "s"}`;
 
-        // Star row: filled for current level, empty for the rest.
         const stars = Array.from({ length: BUDDY_STAGES.length }, (_, i) =>
             i < stage.level ? "★" : "☆").join(" ");
 
-        // Best rank across all modes, formatted for the stats block. Only
-        // shown once the player has at least one ranked match observed.
         const bestRankStr = stage.bestRank === Infinity
             ? "—"
             : `#${stage.bestRank}`;
 
-        // Next-stage line. When maxed, celebrate.
         let nextLine;
         if (!req) {
             nextLine = `<span style="color:#ffd700;">Max stage reached 🏆</span>`;
@@ -1383,14 +1257,12 @@
             nextLine = `Ready to evolve!`;
         }
 
-        // Energy bar: 10 slots. Colored by level (low = red, mid = amber,
-        // high = green). Purely display -- no gameplay effect.
+        // 10-slot energy bar. red/amber/green
         const filled = Math.round(energy / 10);
         const barColor = energy < 20 ? "#ff6b6b" : (energy < 50 ? "#ffbb33" : "#00ff66");
         const bar = `<span style="color:${barColor};font-family:monospace;letter-spacing:-1px;">${"█".repeat(filled)}${"░".repeat(10 - filled)}</span>`;
 
-        // Animated sprite sheet (stage row × mood block). Mood art carries
-        // the vibe; stage 4/5 still get a soft radial flex ring behind.
+        // stage 4/5 get a radial ring behind
         ensureBuddySpriteStyles();
         ensureBuddySheetLoaded();
         const moodSprite = BUDDY_MOOD_SPRITE[mood.key] || "idle";
@@ -1451,7 +1323,7 @@
             </div>
         `;
 
-        // Pet: brief bounce animation on the sprite, cooldown-gated.
+        // bounce anim, cooldown-gated
         document.getElementById("rgBuddyPet").onclick = e => {
             const restoreFocus = e.detail === 0 ? "rgBuddyPet" : null;
             if (!petBuddy()) return;
@@ -1462,12 +1334,11 @@
                 sprite.style.transform = "scale(1.25)";
                 setTimeout(() => { sprite.style.transform = ""; }, 150);
             }
-            // Repaint the energy bar / mood after the pet -- lastPetAt
-            // just changed, energy shot back up.
+            // repaint — energy just jumped
             setTimeout(() => renderBuddyViewAndRestoreFocus(restoreFocus), reduceMotion ? 0 : 320);
         };
 
-        // Rename via themed prompt. Empty name reverts to "Unnamed".
+        // empty name -> "Unnamed"
         document.getElementById("rgBuddyRename").onclick = async e => {
             const restoreFocus = e.detail === 0 ? "rgBuddyRename" : null;
             const newName = await showDialog({
@@ -1489,14 +1360,12 @@
             renderBuddyViewAndRestoreFocus(restoreFocus);
         };
 
-        // Equip toggles a small pet-icon flair in the main stats view
-        // (rendered by updateHUD via buddyEquippedFlairHtml). Purely local.
+        // toggles the mini flair on the stats view
         document.getElementById("rgBuddyEquip").onclick = e => {
             const restoreFocus = e.detail === 0 ? "rgBuddyEquip" : null;
             buddyState.equipped = !buddyState.equipped;
             saveBuddyState();
-            // Also repaint the main HUD in case it's about to become visible
-            // again -- the equipped flair change should be reflected there.
+            // repaint so the flair reflects the toggle
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
             else renderBuddyView();
             if (restoreFocus) requestAnimationFrame(() => {
@@ -1505,8 +1374,7 @@
         };
     }
 
-    // Small icon shown next to the streak badge in the main stats view when
-    // the buddy is equipped. Local render only; no server visibility.
+    // mini buddy icon next to streak badge. local only.
     function buddyMiniVisualHtml(stage) {
         return buddySheetLoadState === "ready"
             ? `<span class="rg-buddy-mini" style="--rb-mini-stage:${stage.level - 1};" aria-hidden="true"></span>`
@@ -1529,23 +1397,20 @@
 
     // ---------- Ranks ----------
 
-    // playlist -> rank number; refreshed after our own data changes.
-    const cachedRanks = new Map();
-    // playlist -> mmr needed to pass the person one rank above you (null if #1).
-    const cachedMmrToNext = new Map();
+    const cachedRanks = new Map();      // playlist -> rank
+    const cachedMmrToNext = new Map();  // playlist -> mmr gap to next rank (null if #1)
 
     function rankBadge(playlist) {
         const r = cachedRanks.get(playlist);
         if (!r) return "";
 
-        // Tiered colors: gold for top 3, purple for top 10, cyan for top 25, gray beyond
+        // gold top 3, purple top 10, cyan top 25, gray beyond
         let color;
         if (r <= 3) color = "#ffd700";
         else if (r <= 10) color = "#c77dff";
         else if (r <= 25) color = "#00d4ff";
         else color = "#9aa5ad";
 
-        // Hover tooltip (custom-styled): how much MMR to pass the next rank up.
         const gap = cachedMmrToNext.get(playlist);
         let tip;
         if (r === 1) tip = "You're #1! 👑";
@@ -1556,24 +1421,22 @@
     }
 
     // ---------- Crown system ----------
-    // Title becomes KING while holding any #1; a coronation banner fires the
-    // moment a #1 is newly taken, and a dethroned alert fires when it's lost.
+    // KING title while holding any #1. banners on coronation + dethrone.
 
     const prevRanks = new Map(); // playlist -> last known rank
 
     // ---------- Momentum system ----------
-    // Based on net MMR gained/lost across all modes this session. Changes the
-    // title and the glow speed/intensity (NOT the user's chosen colors).
+    // net MMR gained/lost this session. tweaks title + glow speed/intensity only,
+    // never the user's chosen colors.
 
     const MOMENTUM_TIERS = {
-        flowState: 250,   // >= : "Flow State", the top tier -- fastest + most intense
-        onFire:    150,   // >= : "ON FIRE", fast + bright glow
-        heatingUp: 75,    // >= : "Heating Up", warmer/faster glow
-        cold:      -20,   // <= : "Ice Cold", slow + dim glow
-        shutEye:   -75,   // <= : easter egg
+        flowState: 250,
+        onFire:    150,
+        heatingUp: 75,
+        cold:      -20,
+        shutEye:   -75,
     };
 
-    // Rotating easter-egg messages so a rough session doesn't repeat. Ribbing, not mean.
     const SHUT_EYE_MESSAGES = [
         "😴 Maybe it's time for some shut-eye?",
         "😴 The ball will still be here tomorrow...",
@@ -1583,7 +1446,7 @@
     ];
     let shutEyeMessage = SHUT_EYE_MESSAGES[Math.floor(Math.random() * SHUT_EYE_MESSAGES.length)];
 
-    // Read by applyGlowSettings; momentum only changes speed & intensity, not colors.
+    // read by applyGlowSettings
     let momentumGlow = { speedMult: 1, intensity: 1 };
     let currentMomentumState = "neutral";
 
@@ -1608,7 +1471,7 @@
         return "neutral";
     }
 
-    // Title priority: individual #1 crown beats clan-clash lead beats momentum beats default.
+    // priority: crown > clash lead > momentum > default
     function resolveTitle() {
         const holdingAnyFirst = [...cachedRanks.values()].some(r => r === 1);
         if (holdingAnyFirst) return { text: "👑 Rocket Goal KING", color: "#ffd700" };
@@ -1630,8 +1493,7 @@
         const titleEl = document.getElementById("rgTitle");
         if (!titleEl) return;
         const { text, color, html } = resolveTitle();
-        // html:true = trusted markup from resolveTitle (only path with images
-        // is our own ATLAS default). Emoji titles use textContent for safety.
+        // html:true only for the ATLAS default (own img)
         if (html) titleEl.innerHTML = text;
         else titleEl.textContent = text;
         titleEl.style.color = color;
@@ -1712,13 +1574,11 @@
         for (const [playlist, rank] of cachedRanks) {
             const prev = prevRanks.get(playlist);
 
-            // Coronation: newly took #1 (only if we knew a previous, non-#1 rank --
-            // avoids firing just because a session started while already on top)
+            // need a prior non-#1 or this fires on session start
             if (rank === 1 && typeof prev === "number" && prev !== 1) {
                 showBanner(`👑 NEW #1 IN ${playlist.toUpperCase()}!`, "#ffd700");
             }
 
-            // Dethroned: was #1, now isn't
             if (prev === 1 && rank !== 1) {
                 showBanner(`⚔️ Dethroned in ${playlist.toUpperCase()}!`, "#ff6b6b");
             }
@@ -1726,17 +1586,13 @@
             prevRanks.set(playlist, rank);
         }
 
-        applyTitle(); // crown state may have changed
+        applyTitle();
     }
 
     // ---------- HUD content ----------
 
-    // v13.6: mini-bar that shows the user's own event contribution + their
-    // clan's live rank in the Clash Cup standings. Renders only when there's
-    // an active event AND the user is in a clan whose baseline was captured.
-    // Reuses data the snapshot listener already keeps fresh in `myClan` --
-    // no new Firestore reads or writes. Returns "" when nothing to show, so
-    // the HUD template can splice it in unconditionally.
+    // renders only when event active + in a clan with baseline. no extra reads.
+    // returns "" when nothing to show so callers can splice unconditionally.
     function clashMiniBarHtml() {
         try {
             if (typeof eventPhase !== "function" || eventPhase() !== "active") return "";
@@ -1746,7 +1602,7 @@
             const clanScore = computeClanEventScore(myClan);
             const standings = eventStandings();
             const rank = standings.findIndex(c => c.id === myClan.id) + 1;
-            if (!rank) return ""; // our clan's baseline hasn't landed yet
+            if (!rank) return ""; // baseline not landed yet
             const cSign = (contrib ?? 0) >= 0 ? "+" : "";
             const cColor = (contrib ?? 0) >= 0 ? "#00ff66" : "#ff6b6b";
             const clanSign = clanScore >= 0 ? "+" : "";
@@ -1767,7 +1623,7 @@
                 </div>
             `;
         } catch (e) {
-            // Clash mini-bar is decorative; never let it break the HUD render.
+            // decorative — never break render for this
             dbg("clashMiniBarHtml threw: " + (e && e.message ? e.message : e));
             return "";
         }
@@ -1782,13 +1638,9 @@
         if (buddyMatchResult) {
             try { reportBuddyMatchStatus(buddyMatchResult); } catch (e) { dbg("reportBuddyMatchStatus threw: " + (e && e.message ? e.message : e)); }
         }
-        // v13.6: feed the buddy AFTER streak update so streakData is fresh
-        // when buddyMood() reads it. Also runs on /login syncs (harmlessly
-        // no-op if nothing changed) so a fresh install captures its baseline
-        // total-matches-at-birth on first observation.
+        // buddyMood reads streakData — tick buddy after streak update
         try { tickBuddyFromData(data); } catch (e) { dbg("tickBuddyFromData threw: " + (e && e.message ? e.message : e)); }
-        // If the Buddy tab happens to be open when a new match lands, keep
-        // its view in sync with the newly-updated matchesDriven / bestRank.
+        // sync buddy tab if open
         const bv = document.getElementById("rgBuddyView");
         if (bv && bv.style.display !== "none") renderBuddyView();
 
@@ -1844,20 +1696,15 @@
     let lastProcessedKey = null;
 
     function tryParseAndUpdate(text) {
-        // Fast path: raw-string dedupe catches identical bodies from either
-        // hook cheaply.
+        // fast path — identical string
         if (text === lastProcessedText) return;
 
         try {
             const data = JSON.parse(text);
             if (!(data && data.ModesGlicko)) return;
 
-            // Slow path: fetch and console hooks can produce byte-different
-            // strings for the same underlying event (whitespace, encoding).
-            // Build a stable identity key from the actual player state so both
-            // paths dedupe to the same fingerprint. Set BEFORE submit fires,
-            // not after -- otherwise the two paths race past the guard while
-            // the first submit is still awaiting Firestore.
+            // fetch + console hooks can emit byte-different strings for the same
+            // event. build a stable key. set BEFORE submit fires or the paths race.
             const key = data.Id + "|"
                 + (data.ModesGlicko?.Competitive3v3?.displayRating ?? "") + "|"
                 + (data.ModesGlicko?.Competitive2v2?.displayRating ?? "") + "|"
@@ -1871,22 +1718,18 @@
 
             lastProcessedText = text;
             lastProcessedKey = key;
-            _lastValidRatingsAt = performance.now(); // watchdog signal (see fetch wrapper)
+            _lastValidRatingsAt = performance.now(); // watchdog signal
             updateHUD(data);
             submitToLeaderboard(data);
         } catch (e) {
-            // v13.6: was `catch (e) {}` -- widest silent swallow in the file.
-            // Any throw in updateHUD/submitToLeaderboard was invisible, so a
-            // rendering bug or SDK-sync throw looked like "the HUD stopped
-            // working" with zero signal. Log it so rgDump() surfaces it.
+            // 13.5 swallowed this silently
             dbg("tryParseAndUpdate threw: " + (e && e.message ? e.message : e));
         }
     }
 
     // ---------- Leaderboard submission ----------
 
-    // Pal's Firebase web config -- this is the public client config, not a secret.
-    // Set to null to disable all leaderboard submission.
+    // public client config, not a secret. null to disable submissions.
     const FIREBASE_CONFIG = {
         apiKey: "AIzaSyD29s2Jku_DZ42keIQAETgKg7HWt__QEwY",
         authDomain: "rgleaderboard.firebaseapp.com",
@@ -1897,13 +1740,11 @@
         measurementId: "G-JW3Q972P9T",
     };
 
-    // Raw per-player data dump, separate from the "leaderboard" collection the
-    // site renders. Keeps the full stats snapshot (all modes, xp, raw nickname,
-    // chosen displayName) as a record, while syncToRealLeaderboard below pushes
-    // just the site-shaped entries into the real "leaderboard" collection.
+    // full dump. site reads the trimmed "leaderboard" collection that
+    // syncToRealLeaderboard writes to.
     const LEADERBOARD_COLLECTION = "script_submissions";
 
-    let firestoreReady = null; // holds the loaded Firestore SDK handles once initialized
+    let firestoreReady = null;
 
     async function initFirebase() {
         if (!FIREBASE_CONFIG) return null;
@@ -1927,11 +1768,8 @@
     }
 
     // ---------- Force-update gate ----------
-    // admin/blacklist in Firestore holds { minVersion: 11.1 } (numeric).
-    // If our versionNum < minVersion, server rules reject every write anyway --
-    // so instead of spamming failed writes, check once per session, tell the
-    // user to update, and skip submissions entirely until they do. HUD display
-    // features keep working; only Firestore sync pauses.
+    // admin/blacklist has { minVersion }. rules reject writes below anyway.
+    // check once per session, skip submits if outdated. display stays on.
 
     let updateRequiredChecked = false;
     let updateRequired = false;
@@ -1939,9 +1777,7 @@
     async function isUpdateRequired(fb) {
         if (updateRequiredChecked) return updateRequired;
         try {
-            // minVersion lives on admin/blacklist (same doc the rules read, so
-            // server-side the version + blacklist checks cost one read). Any
-            // script version >= minVersion is allowed -- "X and everything after".
+            // one read covers version + blacklist
             const snap = await fb.getDoc(fb.doc(fb.db, "admin", "blacklist"));
             if (snap.exists()) {
                 const minV = snap.data().minVersion;
@@ -1952,14 +1788,13 @@
                 }
             }
         } catch (e) {
-            // Config unreadable -- don't lock the user out over a transient error.
+            // don't lock out on transient read error
         }
         updateRequiredChecked = true;
         return updateRequired;
     }
 
-    // Strips TextMeshPro rich-text tags (<#rrggbb>, <br>, <sub>, etc.) so a
-    // decorated in-game nickname has a sane plain-text fallback to suggest.
+    // strips TMP tags (<#rrggbb>, <br>, etc.)
     function cleanName(name) {
         return (name ?? "")
             .replace(/<[^>]*>/g, "")
@@ -1967,8 +1802,7 @@
             .trim();
     }
 
-    // Not exhaustive, but catches common attempts. Word-boundary matching so it
-    // doesn't falsely flag innocent words (e.g. "classic", "assassin").
+    // not exhaustive. \b avoids catching "classic" / "assassin".
     const PROFANITY_LIST = [
         // common curses
         "fuck", "fuk", "fvck", "fck", "shit", "sh1t", "shyt", "bitch", "b1tch",
@@ -1988,9 +1822,7 @@
     ];
     const PROFANITY_REGEX = new RegExp(`\\b(${PROFANITY_LIST.join("|")})\\b`, "i");
 
-    // Clan tags: LETTERS ONLY, ALWAYS UPPERCASE. Enforced on input (live
-    // filter as they type) AND on submit (defense in depth). Kept short so
-    // the styled prefix reads cleanly in-game.
+    // uppercase letters only. enforced on input and submit.
     function sanitizeClanTag(raw) {
         return String(raw || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
     }
@@ -1999,14 +1831,12 @@
         return PROFANITY_REGEX.test(text);
     }
 
-    // Rejects any name containing emoji / pictographic symbols, including all
-    // flag forms (regional-indicator pairs and tag-sequence subdivision flags).
+    // rejects any emoji / pictographic incl. flag sequences
     const EMOJI_REGEX = /\p{Extended_Pictographic}|\p{Emoji_Presentation}|\p{Regional_Indicator}|[\u{1F1E6}-\u{1F1FF}\u{1F3F3}\u{1F3F4}\u{E0020}-\u{E007F}\u{200D}]/u;
     function containsEmoji(text) {
         return EMOJI_REGEX.test(text);
     }
 
-    // Skip brand-new accounts that haven't played anything yet.
     function hasPlayedAnything(data) {
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
         return modes.some(m => (data.ModesData?.[m]?.matchesPlayed ?? 0) > 0);
@@ -2040,12 +1870,9 @@
         setTimeout(hideNameModal, 1600);
     }
 
-    // Unity captures keyboard events at the window level (capture phase) and
-    // preventDefaults printable characters, which kills typing in our input
-    // before the event ever reaches it. Intercept one step earlier: while our
-    // input is focused, stop the game from seeing keys at all.
-    // input is focused, stop the game from seeing keys at all. Applies to ANY
-    // text input inside the HUD (name modal, clan create form, etc.).
+    // Unity swallows printable keys in capture phase. intercept earlier —
+    // stopImmediatePropagation while a HUD input is focused so the game
+    // never sees the event.
     ["keydown", "keyup", "keypress"].forEach(type => {
         window.addEventListener(type, e => {
             const active = document.activeElement;
@@ -2072,20 +1899,17 @@
                 && active.type !== "checkbox" && active.type !== "range" && active.type !== "color";
             if (inHud) {
                 e.stopImmediatePropagation();
-                // Enter in the name modal saves it
+                // Enter saves the name modal
                 if (type === "keydown" && e.key === "Enter" && active.id === "rgNameInput") {
                     const saveBtn = document.getElementById("rgNameSave");
                     if (saveBtn && !saveBtn.disabled) saveBtn.click();
                 }
             }
-        }, true); // capture phase -- runs before the game's own listeners
+        }, true); // capture — must run before Unity's listener
     });
 
-    // Returns a promise that resolves with the chosen (validated) name.
-    // Checks whether a display name is already used by a DIFFERENT player.
-    // Best-effort: a Firestore read against existing leaderboard entries. Not
-    // race-proof (two people picking the same name simultaneously could both
-    // pass), but catches every normal collision.
+    // best-effort collision check. two simultaneous picks could both pass but
+    // that's fine, catches every normal case.
     async function isNameTaken(fb, name, ownSourceUserId) {
         try {
             const q = fb.query(
@@ -2093,10 +1917,10 @@
                 fb.where("name", "==", name)
             );
             const snap = await fb.getDocs(q);
-            // Taken only if some matching entry belongs to a different player.
+            // taken only if some entry belongs to another player
             return snap.docs.some(d => d.data().sourceUserId !== ownSourceUserId);
         } catch (e) {
-            // If the check itself fails, don't block the user -- let it through.
+            // don't block on check failure — let it through
             console.warn("[RG HUD] Name availability check failed:", e);
             return false;
         }
@@ -2132,7 +1956,7 @@
                     return;
                 }
 
-                // Name-taken check (async). Disable Save while checking.
+                // async availability check
                 errEl.style.color = "#7ec8ff";
                 errEl.textContent = "Checking availability...";
                 saveBtn.disabled = true;
@@ -2152,42 +1976,32 @@
 
             document.getElementById("rgNameCancel").onclick = () => {
                 hideNameModal();
-                resolve(null); // no name chosen -> nothing gets submitted this time
+                resolve(null); // cancel -> skip this submission
             };
 
-            // Key handling (including Enter-to-save) happens in the window-level
-            // capture listener above, which runs before the game's own handlers.
+            // Enter-to-save is wired in the window capture listener above
         });
     }
 
     // ---------- Write-reduction caches ----------
-    // Together these keep Firebase traffic to the minimum: nothing is read
-    // twice per session, and nothing is written unless it actually changed.
+    // read nothing twice per session, write nothing that hasn't changed.
 
-    // Running counter logged to console for every real Firestore write.
     let firestoreWriteCount = 0;
     function logWrite(label) {
         firestoreWriteCount++;
         console.log(`[RG HUD] Firestore write #${firestoreWriteCount} (${label})`);
     }
 
-    // Resolved display name per player (skips the getDoc re-read).
-    const cachedDisplayNames = new Map();
+    const cachedDisplayNames = new Map();  // player -> displayName
+    const lastSyncSnapshot = new Map();    // player -> last payload JSON
+    const knownDocIds = new Map();         // player+mode -> doc id
 
-    // Full payload snapshot per player (skips everything if nothing changed).
-    const lastSyncSnapshot = new Map();
-
-    // Real leaderboard doc ID per player+mode (skips the lookup query).
-    const knownDocIds = new Map();
-
-    // Safety-net cooldown: max one full sync per player per window.
     const SYNC_COOLDOWN_MS = 20000;
     const lastSyncTime = new Map();
 
     let forceRenamePrompt = false;
 
-    // Serializes submitToLeaderboard per player so near-simultaneous events
-    // can't race each other into double prompts or duplicate writes.
+    // serialize per-player so races can't double-prompt or double-write
     const submitLocks = new Map();
 
     async function submitToLeaderboard(data) {
@@ -2199,16 +2013,15 @@
     }
 
     async function submitToLeaderboardInner(data) {
-        if (!hasPlayedAnything(data)) return; // brand new account, nothing to show yet
+        if (!hasPlayedAnything(data)) return;
 
         const fb = await initFirebase();
-        if (!fb) return; // disabled or failed to load, silently skip
-        if (await isUpdateRequired(fb)) return; // outdated version -- rules would reject anyway
+        if (!fb) return;
+        if (await isUpdateRequired(fb)) return;
 
         const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, data.Id);
 
-        // Only ask for a display name once per player, ever -- unless Rename
-        // forces it. Cached in memory so repeat calls skip the Firestore read.
+        // ask for display name once per player unless Rename forces it
         let existingDisplayName = cachedDisplayNames.get(data.Id) ?? null;
 
         if (!existingDisplayName || forceRenamePrompt) {
@@ -2218,7 +2031,7 @@
                     existingDisplayName = existing.data().displayName;
                 }
             } catch (e) {
-                // couldn't read existing doc -- fall through and ask
+                // fall through and ask
             }
         }
 
@@ -2227,13 +2040,11 @@
         forceRenamePrompt = false;
 
         if (!displayName) {
-            // No saved name yet -- prompt with a suggestion, but a real name is
-            // required. If they cancel without entering one, we submit nothing
-            // and will ask again next time (no gibberish/default on the board).
+            // no saved name — prompt. cancel skips the submission (we'll ask next time)
             const cleaned = cleanName(data.Nickname).slice(0, 15);
             const suggestion = (cleaned && cleaned.toLowerCase() !== "player") ? cleaned : "";
             displayName = await askDisplayName(suggestion, isRename, fb, data.Id);
-            if (!displayName) return; // cancelled without picking a name -- skip this submission
+            if (!displayName) return;
         }
 
         cachedDisplayNames.set(data.Id, displayName);
@@ -2263,17 +2074,13 @@
             lastWriteAt: fb.serverTimestamp(),
         };
 
-        // Make sure clan membership is known before the change check below, so
-        // the clan tag can be part of the snapshot (otherwise a first-of-session
-        // sync wouldn't know the tag yet).
+        // load clan before the snapshot key or a first-of-session sync misses the tag
         if (!clanLoaded || clanLoadedForAccount !== data.Id) {
             await loadClanData(true);
         }
 
-        // Skip the actual network writes if nothing changed or synced very
-        // recently -- but never skip a deliberate Rename. The clan tag is part
-        // of the snapshot so a clan/tag change (which doesn't touch MMR or stats)
-        // still forces a resync instead of being seen as "unchanged".
+        // clan tag is part of the snapshot so a tag change alone forces a resync.
+        // Rename always bypasses the "unchanged" skip.
         const currentClanTag = (clanLoadedForAccount === data.Id && myClan) ? (myClan.tag ?? "") : "";
         const snapshotKey = JSON.stringify({
             displayName, ratings: payload.ratings, stats: payload.stats,
@@ -2285,7 +2092,7 @@
         const withinCooldown = (now - (lastSyncTime.get(data.Id) ?? 0)) < SYNC_COOLDOWN_MS;
 
         if (!isRename && (unchanged || withinCooldown)) {
-            // Still refresh ranks once per session even if the write is skipped.
+            // still refresh ranks once per session
             refreshRanks(fb, data);
             return;
         }
@@ -2294,9 +2101,8 @@
         try {
             logWrite("script_submissions");
             await fb.setDoc(docRef, payload, { merge: true });
-            // Cache the snapshot only AFTER a successful write -- otherwise a
-            // rules-rejected write would look "unchanged" next time and never
-            // be retried.
+            // cache AFTER success — otherwise a rejected write looks "unchanged"
+            // next time and never retries
             lastSyncTime.set(data.Id, now);
             lastSyncSnapshot.set(data.Id, snapshotKey);
             writeOk = true;
@@ -2306,25 +2112,21 @@
             showError("Stats submission failed -- check console");
         }
 
-        // Never publish a partial state to the public leaderboard, and leave
-        // the cooldown open so the next login/match can retry the raw write.
+        // don't publish partial state; leave cooldown open for a retry
         if (!writeOk) return;
         await syncToRealLeaderboard(fb, data, displayName);
         refreshRanks(fb, data, true);
-        refreshClanViewIfOpen(); // live-update event score/contribution, no extra reads
-        applyTitle(); // clan-lead status may have flipped since updateMomentum ran
+        refreshClanViewIfOpen();
+        applyTitle(); // clan-lead may have flipped since updateMomentum
     }
 
     const REAL_LEADERBOARD_COLLECTION = "leaderboard";
 
-    // Serializes calls per player+mode so two near-simultaneous writes for the
-    // same key can never race each other into creating two documents.
+    // serialize per player+mode so races can't create duplicate docs
     const upsertLocks = new Map();
 
-    // Finds this player's entry for one playlist by sourceUserId and updates it,
-    // whether created by the script OR a pre-existing manually-curated entry Pal
-    // tagged with a matching sourceUserId. merge:true means hand-set fields like
-    // flag/icons/glowColor are never touched. Creates a fresh entry if none match.
+    // finds this player's entry for one playlist by sourceUserId. merge:true
+    // preserves hand-set fields (flag, icons, glowColor). creates if missing.
     async function upsertPlaylistEntry(fb, sourceUserId, playlist, fields) {
         const lockKey = `${sourceUserId}_${playlist}`;
         const previous = upsertLocks.get(lockKey) || Promise.resolve();
@@ -2333,8 +2135,7 @@
             const cacheKey = `${sourceUserId}_${playlist}`;
             const cachedId = knownDocIds.get(cacheKey);
 
-            // Include identifying fields on EVERY write (not just doc creation),
-            // so the rules blacklist check has something to check on merge writes.
+            // identifying fields on every write so rules can blacklist-check merges
             const fullFields = {
                 ...fields,
                 sourceUserId,
@@ -2389,9 +2190,8 @@
         return current;
     }
 
-    // Last-written state per player+playlist. A 3v3 match only changes the 3v3
-    // and wins entries, so 1v1/2v2 skip their writes entirely. Backed by
-    // sessionStorage so a page refresh doesn't trigger a redundant full burst.
+    // last-written state per player+playlist. a 3v3 match only touches 3v3+wins,
+    // so 1v1/2v2 skip. sessionStorage-backed so refresh doesn't full-burst.
     const lastEntryState = new Map(
         (() => {
             try { return JSON.parse(sessionStorage.getItem("rgHudEntryState") ?? "[]"); }
@@ -2406,15 +2206,9 @@
     }
 
     // v13.6 -------- Match audit trail --------
-    // Append-only per-match receipt in a new `match_audits` collection.
-    // Every player who was in the same match writes their own audit, so a
-    // maintainer can later cross-check: three players' audits for the same
-    // match should describe the same lobby (same opponents/teammates on
-    // the roster, same mode, mutually-consistent MMR deltas). A single
-    // player fabricating a match will have no corroborating audits.
-    // Fire-and-forget: never blocks the HUD update path, silently drops
-    // on failure (feature degrades gracefully; Firestore rules may not
-    // permit writes to this collection yet and that's fine).
+    // append-only receipt in match_audits. every player in the match writes
+    // their own — a fabricated match has no corroborating audits.
+    // fire-and-forget, non-fatal on failure (rules may not allow it yet).
     async function writeMatchAudit(prevRatings, opponents) {
         try {
             if (!lastKnownPlayerData) return;
@@ -2433,11 +2227,11 @@
                     anyChange = true;
                 }
             }
-            if (!anyChange) return; // nothing changed -- probably a non-ranked match
+            if (!anyChange) return; // non-ranked or resync with no change
             const opponentList = (Array.isArray(opponents) ? opponents : [])
                 .filter(p => p && p.uid && p.uid !== lastKnownPlayerData.Id)
                 .map(p => ({ uid: String(p.uid).slice(0, 64), name: String(p.name || "").slice(0, 64) }))
-                .slice(0, 8); // 3v3 max is 6 -- 8 is generous headroom
+                .slice(0, 8); // 3v3 max is 6, leave headroom
             const audit = {
                 sourceUserId: lastKnownPlayerData.Id,
                 deviceId: getDeviceId(),
@@ -2452,8 +2246,7 @@
             await fb.addDoc(fb.collection(fb.db, "match_audits"), audit);
             dbg(`match audit written (${Object.keys(deltas).length} mode deltas, ${opponentList.length} opponents)`);
         } catch (e) {
-            // Best-effort. Rules may deny writes until we roll them out;
-            // that's fine, the HUD keeps working, we just don't audit.
+            // best-effort. HUD keeps working, we just skip the audit.
             dbg("match audit write failed (non-fatal): " + (e && e.message ? e.message : e));
         }
     }
@@ -2461,8 +2254,7 @@
     async function syncToRealLeaderboard(fb, data, displayName) {
         const sourceUserId = data.Id;
 
-        // Determine clan tag (if any) to prefix on the leaderboard name, and
-        // opportunistically keep the clan's stored MMR for this member current.
+        // piggy-back: refresh this member's MMR in the clan doc, get tag back
         const clanInfo = await updateMyClanMMR(fb, data);
         const shownName = clanInfo?.tag ? `[${clanInfo.tag}] ${displayName}` : displayName;
 
@@ -2474,7 +2266,7 @@
 
         for (const [mode, playlist] of Object.entries(modeToPlaylist)) {
             const mmr = data.ModesGlicko?.[mode]?.displayRating;
-            if (typeof mmr !== "number") continue; // player hasn't played this mode -- skip it
+            if (typeof mmr !== "number") continue; // never played this mode
             await upsertIfChanged(fb, sourceUserId, playlist, { name: shownName, mmr });
         }
 
@@ -2489,19 +2281,15 @@
         });
     }
 
-    // If this player is in a clan, refresh their stored ranked MMR within the
-    // clan's members array and recompute the clan total (one extra write, only
-    // for clan members, piggybacked on the match sync). Returns { tag } if in a
-    // clan so the caller can prefix the leaderboard name. Best-effort.
+    // refresh my ranked MMR in the clan doc + recompute totalMMR.
+    // returns { tag } for the leaderboard name prefix. best-effort.
     async function updateMyClanMMR(fb, data) {
         const uid = data.Id;
         try {
-            // Use cached directory to find my clan cheaply (no extra read if warm).
             if (!clanLoaded || clanLoadedForAccount !== uid) await loadClanData(true);
             if (!myClan) return null;
 
-            // Capture the tag up front -- this is what the leaderboard name needs,
-            // and it must NOT depend on the MMR write below succeeding.
+            // capture tag first — leaderboard prefix must not depend on the MMR write
             const tag = myClan.tag ?? "";
 
             const g = data.ModesGlicko;
@@ -2509,31 +2297,27 @@
             const myMMR = rankedModes.reduce((s, m) =>
                 s + (typeof g?.[m]?.displayRating === "number" ? g[m].displayRating : 0), 0);
 
-            // Load event config (cheap, cached) so we know if a Clan Clash is on.
             await loadEventConfig(fb);
             await loadClanRolePerms(fb);
 
             const prevMine = (myClan.members ?? []).find(m => m.userId === uid)?.mmr;
             if (prevMine !== myMMR) {
                 try {
-                    // syncedAt: client ms timestamp on MY member entry, so
-                    // teammates can render per-member freshness ("2m ago").
-                    // Client clock is fine for display; serverTimestamp() is
-                    // not allowed inside Firestore array elements anyway.
+                    // syncedAt: client ms on my member entry so teammates get
+                    // per-member freshness ("2m ago"). serverTimestamp() isn't
+                    // allowed inside array elements anyway.
                     const members = (myClan.members ?? []).map(m =>
                         m.userId === uid ? { ...m, mmr: myMMR, syncedAt: Date.now() } : m
                     );
                     const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
-                    // Stamp an unforgeable server time; we read it back to learn the
-                    // authoritative clock for event-window decisions.
+                    // stamp server time — we read it back to calibrate serverNow()
                     const writeClanMMR = () => fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
                         { members, totalMMR, lastSyncAt: fb.serverTimestamp() }, { merge: true });
                     try {
                         await writeClanMMR();
                     } catch (firstErr) {
-                        // One retry after 5s: a transient failure here used to
-                        // stall this member's visible contribution until their
-                        // NEXT match. One cheap retry closes most of that gap.
+                        // one retry — otherwise a transient fail stalled visible
+                        // contribution until the NEXT match
                         console.warn("[RG HUD] Clan MMR write failed, retrying in 5s:", firstErr);
                         await new Promise(r => setTimeout(r, 5000));
                         await writeClanMMR();
@@ -2541,10 +2325,7 @@
                     myClan.members = members;
                     myClan.totalMMR = totalMMR;
 
-                    // Read back the server time we just wrote, to calibrate
-                    // serverNow(). The offset doesn't drift within a session,
-                    // so one calibration is enough -- skipping repeats saves a
-                    // read on every subsequent match.
+                    // one-time serverNow calibration per session
                     if (serverNowOffset === null) {
                         try {
                             const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
@@ -2553,21 +2334,18 @@
                         } catch (e) {}
                     }
 
-                    // Routine MMR tick: throttled rebuild (patches my own view
-                    // in memory instantly, hits Firestore at most every 3 min).
+                    // throttled directory rebuild — instant local, Firestore at most every 3m
                     await refreshDirectoryThrottled(fb);
                 } catch (writeErr) {
-                    // MMR sync is best-effort; a failure here must not strip the tag.
+                    // best-effort — never strip the tag on failure
                     console.warn("[RG HUD] Clan MMR write failed (tag still applies):", writeErr);
-                    // v13.6: surface persistent clan sync failures. Silent
-                    // ones broke the entire event score loop for the session
-                    // with no user-visible signal.
+                    // v13.6: surface persistent failures. 13.5 was silent and
+                    // broke the whole event score loop for the session.
                     showError("Clan sync failing — event score may be stale");
                 }
             }
 
-            // Event baseline: capture this member's starting MMR on their first
-            // sync during an active event (uses server-authoritative timing).
+            // capture event baseline on first sync during an active event
             await maybeCaptureEventBaseline(fb, uid, myMMR);
 
             return { tag };
@@ -2582,13 +2360,12 @@
         const newState = JSON.stringify(fields);
 
         if (lastEntryState.get(stateKey) === newState) {
-            return; // nothing about this entry changed -- skip the write entirely
+            return; // unchanged — skip
         }
 
         const ok = await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
-        // Only remember this state if the write actually succeeded -- otherwise a
-        // failed write (e.g. rules rejection) would poison the cache and stop us
-        // ever retrying with the same data.
+        // only cache on success — a failed write would poison the cache and
+        // prevent any future retry
         if (ok) {
             lastEntryState.set(stateKey, newState);
             saveEntryState();
@@ -2596,18 +2373,15 @@
     }
 
     // ---------- Rank lookup ----------
-    // Uses Firestore count aggregation: "how many entries in this playlist have
-    // a higher mmr than mine" is a single cheap server-side count, not a full
-    // collection download. Refreshed after our own data changes (force=true),
-    // plus once per session as a baseline; cached in between.
+    // count aggregation: "how many entries have higher mmr than mine" = 1 cheap
+    // server-side count, not a collection download. cached; force=true after
+    // our own writes, otherwise once per session.
     //
-    // Read-cost note: we only re-query the modes whose MMR actually CHANGED
-    // since last refresh. Your rank in a mode you didn't play can't move due
-    // to your own actions -- someone else's climb could shuffle it, but that
-    // rare drift isn't worth 4 reads/match. Cold session refreshes all modes.
+    // we only re-query modes whose MMR actually moved since last check. someone
+    // else climbing could shuffle you, but that drift isn't worth 4 reads/match.
 
     let ranksFetchedThisSession = false;
-    const lastRankedMMR = new Map(); // playlist -> mmr at time of last rank query
+    const lastRankedMMR = new Map(); // playlist -> mmr at last query
 
     async function refreshRanks(fb, data, force = false) {
         if (!force && ranksFetchedThisSession) return;
@@ -2656,7 +2430,7 @@
                             cachedMmrToNext.set(playlist, Math.max(0, nextMmr - mmr + 1));
                         }
                     } catch (e) {
-                        // gap is a nice-to-have on top of rank -- ignore if it fails
+                        // gap is nice-to-have, ignore failures
                     }
                 } else {
                     cachedMmrToNext.delete(playlist);
@@ -2667,52 +2441,43 @@
 
             checkRankTransitions();
 
-            // Re-render with fresh ranks
+            // re-render with fresh ranks
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
         } catch (e) {
-            // Rank display is nice-to-have -- never let it break anything else.
+            // rank display is nice-to-have, don't crash on failure
             console.warn("[RG HUD] Rank lookup failed:", e);
         }
     }
 
     // ---------- Network capture ----------
 
-    // Track the currently equipped skin so partial-response endpoints (equipSkin) can update it
+    // last-known equipped skin — needed by partial equipSkin responses
     let lastKnownPlayerData = null;
 
     // ---------- Last-game lobby roster (feeds Forge's Imposter section) ----------
-    // The game logs one "[PlayerDataManager] Initialized stats for player X"
-    // line per player when a match forms. We collect those names while the
-    // match runs and freeze the list when it resolves (matchEnd, or return to
-    // lobby on early quit). Forge reads it through a provider, filtered so
-    // your own name doesn't offer to steal itself.
-    // Persisted in localStorage so a page refresh (or a Tampermonkey update,
-    // which requires one) doesn't wipe the roster before you get to Forge --
-    // that was exactly the failure mode on first test: match played, script
-    // updated, page refreshed, roster gone, Imposter showed the empty state.
-    let lastGamePlayers = [];   // frozen roster of the most recent match: [{name, uid}]
+    // game logs "Initialized stats for player X" for each player when a match
+    // forms. we collect names while the match runs, freeze on matchEnd /
+    // LeaveRoom. persisted so a page refresh (Tampermonkey update needs one)
+    // doesn't wipe the roster before the user opens Forge — 13.4 shipped that
+    // bug and Imposter always showed empty state.
+    let lastGamePlayers = [];   // frozen roster of the last match: [{name, uid}]
     try { lastGamePlayers = JSON.parse(localStorage.getItem("rgHudLastRoster") ?? "[]"); } catch (e) {}
-    let _liveRoster = [];       // collecting for the in-progress match: [{name, uid}]
+    let _liveRoster = [];       // in-progress match: [{name, uid}]
 
-    // Single source of truth for "are we in a real match right now". Set when
-    // the first Initialized-stats line with a REAL UserId appears (warm-up
-    // self-inits log an empty UserId and don't count), cleared on matchEnd,
-    // LeaveRoom, or a fresh queue. Every HUD-restore signal is gated on this
-    // so a mid-match disconnect/reconnect storm can't resurrect the HUD --
-    // that was the v13.4 bug: includes("OnDisconnected") substring-matched the
-    // game's "PhotonConnector:OurOnDisconnected" lines and restored the HUD
-    // on every reconnect attempt.
+    // "are we actually in a real match right now". set on the first init line
+    // with a REAL UserId (warm-up self-inits log empty UserId), cleared on
+    // matchEnd/LeaveRoom/new queue. all HUD-restore signals gate on this so
+    // a reconnect storm can't resurrect the HUD mid-match.
+    // v13.4 bug: includes("OnDisconnected") substring-matched
+    // "PhotonConnector:OurOnDisconnected" and restored the HUD on every
+    // reconnect attempt.
     let _inMatch = false;
 
-    // v13.6 watchdog timestamps. `_lastInitLineAt` is when we last saw a real
-    // per-player init log (proof the console hook is still receiving game
-    // events). `_lastRecoverySignalAt` is when we last saw a menu/reconnect
-    // signal. `_lastValidRatingsAt` is when we last successfully parsed a
-    // ModesGlicko payload (proof `matchEnd` responses are still shaped as we
-    // expect). The `_inMatch` watchdog (below in boot) uses these to break out
-    // of stuck-true states after unrecoverable disconnects, and the matchEnd
-    // watchdog uses `_lastValidRatingsAt` to detect payload-shape changes
-    // between game updates.
+    // v13.6 watchdog timestamps.
+    //   _lastInitLineAt      : last real init line — proves console hook is alive
+    //   _lastRecoverySignalAt: last menu/reconnect signal
+    //   _lastValidRatingsAt  : last successful ModesGlicko parse — proves matchEnd
+    //                          shape hasn't changed
     let _lastInitLineAt = 0;
     let _lastRecoverySignalAt = 0;
     let _lastValidRatingsAt = 0;
@@ -2720,12 +2485,11 @@
     let _matchEndWatchdogTimer = null;
 
     // ---------- Debug logging ----------
-    // dbg() narrates every state decision with a timestamp, through oldLog so
-    // it can never re-enter our own console hook. A 300-line ring buffer is
-    // always retained even with RG_DEBUG off -- type rgDump() in the console
-    // to print a clean, timestamped, ATLAS-only timeline for bug reports.
+    // dbg() routes through the ORIGINAL console.log so it never re-enters our
+    // own hook. 300-line ring buffer always kept — call rgDump() for a
+    // timestamped ATLAS-only timeline for bug reports.
     const oldLog = console.log;
-    const RG_DEBUG = true; // set false before sharing builds with the clan
+    const RG_DEBUG = true; // flip before sharing builds
     const _rgLogBuf = [];
     function dbg(msg) {
         const line = `[RG HUD ${(performance.now() / 1000).toFixed(2)}s] ${msg}`;
@@ -2733,10 +2497,9 @@
         if (_rgLogBuf.length > 300) _rgLogBuf.shift();
         if (RG_DEBUG) oldLog.call(console, line);
     }
-    // v13.6: like dbg() but also flips a yellow "something might be off" dot
-    // in the HUD title bar. Reserve red (showError) for confirmed hard
-    // failures; yellow is for "I couldn't parse this, might be a game update".
-    // Tooltip shows the last warning message so users don't need DevTools.
+    // v13.6: dbg + yellow warn dot in the title bar. red = hard failure,
+    // yellow = "couldn't parse this, might be a game update". tooltip shows
+    // the last warning so no DevTools needed.
     const _rgWarnBuf = [];
     function dbgWarn(msg) {
         dbg("[WARN] " + msg);
@@ -2748,11 +2511,9 @@
             dot.title = _rgWarnBuf.map(w => new Date(w.at).toLocaleTimeString() + " — " + w.msg).join("\n");
         }
     }
-    // Expose on the REAL page window (not the userscript sandbox) so
-    // rgDump() is callable from the default DevTools "top" context -- the
-    // sandboxed window is unreachable from the console dropdown in some
-    // Tampermonkey/browser combos, which made rgDump appear undefined even
-    // when the script was loaded and running (v13.5).
+    // expose on the real page window (not the sandbox) so DevTools "top"
+    // context can call rgDump(). 13.5 shipped without unsafeWindow and
+    // rgDump appeared undefined in some Tampermonkey/browser combos.
     (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).rgDump =
         () => oldLog.call(console, _rgLogBuf.join("\n"));
 
@@ -2761,17 +2522,14 @@
             lastGamePlayers = _liveRoster.slice();
             try { localStorage.setItem("rgHudLastRoster", JSON.stringify(lastGamePlayers)); } catch (e) {}
             dbg(`Imposter roster captured: ${lastGamePlayers.length} player(s): ${lastGamePlayers.map(p => p.name).join(", ")}`);
-            // Forge already open? Repaint live so the fresh lobby appears in
-            // the Imposter section without touching anything. Safe from
-            // focus-stealing mid-edit: a roster can only freeze right after a
-            // match, and you can't be typing in Forge from inside a match.
+            // repaint Forge live if it's open. can't focus-steal here — you
+            // can't be typing in Forge while in a match.
             const fv = document.getElementById("rgForgeView");
             if (fv && fv.style.display !== "none" && typeof RGNF !== "undefined" && RGNF.refresh) {
                 RGNF.refresh();
             }
-            // Clear after freezing so a stray second freeze signal (e.g. the
-            // matchEnd fetch AND its logged response) can't re-capture stale
-            // data; the next match resets it fresh via the !_inMatch branch.
+            // clear so a stray second freeze (matchEnd fetch + logged response)
+            // can't re-capture stale data
             _liveRoster = [];
         }
     }
@@ -2789,12 +2547,9 @@
             const text = await clone.text();
 
             if (url.includes("/v0304_player/matchEnd")) {
-                // v13.6: arm a watchdog BEFORE parsing. If tryParseAndUpdate
-                // finds a ModesGlicko-shaped body it stamps _lastValidRatingsAt.
-                // If 30 seconds pass with no valid parse, the game likely
-                // changed the response shape (renamed `ModesGlicko`, restructured
-                // ratings) -- announce that publicly instead of letting the HUD
-                // silently freeze on stale numbers.
+                // v13.6: watchdog. if no valid ratings parse within 30s the
+                // game probably changed the response shape — surface it
+                // instead of letting the HUD freeze on stale numbers.
                 _matchEndArmedAt = performance.now();
                 if (_matchEndWatchdogTimer) clearTimeout(_matchEndWatchdogTimer);
                 _matchEndWatchdogTimer = setTimeout(() => {
@@ -2803,9 +2558,8 @@
                         showError("Match ratings parse failed — game may have updated. Check rgDump().");
                     }
                 }, 30 * 1000);
-                // v13.6: snapshot ratings + opponents BEFORE the update path
-                // mutates `lastKnownPlayerData` and BEFORE freezeRoster empties
-                // `_liveRoster`, so writeMatchAudit can diff cleanly.
+                // snapshot ratings + opponents before update path mutates them,
+                // so writeMatchAudit can diff cleanly
                 const prevRatings = {
                     Competitive3v3: lastKnownPlayerData?.ModesGlicko?.Competitive3v3?.displayRating,
                     Competitive2v2: lastKnownPlayerData?.ModesGlicko?.Competitive2v2?.displayRating,
@@ -2815,28 +2569,24 @@
                 const opponentsSnapshot = _liveRoster.slice();
                 tryParseAndUpdate(text);
                 dbg(`matchEnd response — roster at ${_liveRoster.length}, restoring HUD`);
-                _inMatch = false;     // authoritative match-over signal
-                freezeRoster();       // lobby roster becomes "last game" for Imposter
-                setAutoVisible(true); // match ended -> bring the whole HUD back
-                // Fire-and-forget the audit write. Non-blocking; failure is
-                // logged to dbg() but doesn't affect any HUD state.
+                _inMatch = false;
+                freezeRoster();
+                setAutoVisible(true);
+                // fire-and-forget audit write
                 writeMatchAudit(prevRatings, opponentsSnapshot);
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
-                // v13.6: fire the pending-steal verifier here too, not just
-                // on Forge open. The /login response carries the game's raw
-                // nickname (before any local processing), which is exactly
-                // what verifyPendingSteal needs. Guarded so it's harmless
-                // when the RGNF module hasn't fully booted yet.
+                // fire the pending-steal verifier here too — login carries
+                // the raw nickname before any local processing
                 try {
                     const loginData = JSON.parse(text);
                     const rawNick = loginData?.Nickname ?? "";
                     if (rawNick && typeof RGNF !== "undefined" && RGNF.verifyStolenName) {
                         RGNF.verifyStolenName(rawNick);
                     }
-                } catch (e) { /* login parse fail already logged via tryParseAndUpdate */ }
+                } catch (e) { /* already logged */ }
             } else if (url.includes("/v0304_player/equipSkin")) {
-                // response is just a bare quoted skin id, e.g. "body.2"
+                // response is a bare quoted skin id, e.g. "body.2"
                 try {
                     const skinId = JSON.parse(text);
                     if (lastKnownPlayerData) {
@@ -2845,8 +2595,7 @@
                 } catch (e) {}
             }
         } catch (e) {
-            // v13.6: was `catch (e) {}` -- swallowed clone.text() failures,
-            // freezeRoster throws, everything downstream. Log it.
+            // 13.5 swallowed clone.text() throws silently. log them.
             dbg("fetch wrapper threw: " + (e && e.message ? e.message : e));
         }
         return response;
@@ -2854,50 +2603,42 @@
 
     console.log = function (...args) {
         oldLog.apply(console, args);
-        // v13.6: wrap the whole scan in try/catch. Previously a throw in ANY
-        // branch (bad regex input, missing hud element, etc.) unwound the
-        // for-loop and every state transition after the throwing branch was
-        // silently missed for that batch. Now the throw gets logged and the
-        // remaining args in the batch still get processed on the next call.
+        // 13.5: a throw in any branch below unwound the for-loop and every
+        // state transition after it was silently missed. wrap it.
         try {
             for (const arg of args) {
                 if (typeof arg !== "string") continue;
 
-                // Ratings payload can also arrive via logged web-request text
-                // (login, and the echoed matchEnd response). tryParseAndUpdate
-                // dedupes internally, so double-seeing matchEnd is harmless.
+                // ratings payload also arrives via logged web-request text
+                // (login, echoed matchEnd). tryParseAndUpdate dedupes.
                 if (arg.includes('"ModesGlicko"')) {
                     const json = arg.substring(arg.indexOf("{"));
                     tryParseAndUpdate(json);
                 }
 
                 // ---- Field entry: queue warm-up OR real match forming ----
-                // Line shape (verified from console):
+                // line shape:
                 //   ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
-                // The UserId is the discriminator: queue warm-up logs the local
-                // player with an EMPTY UserId (verified 5x in the 7/27 log dump);
-                // real match inits always carry populated UserIds. So: real uid ->
-                // hide HUD + collect roster; empty uid -> ignore entirely (HUD
-                // stays visible while queuing, roster untouched -- the v13.4
-                // roster-clobber bug was warm-up inits restarting the list).
+                // UserId is the discriminator. warm-up logs the local player
+                // with an EMPTY UserId (verified 5x in 7/27 log dump); real
+                // match inits always populate it.
+                // v13.4 bug: warm-up inits restarted the roster mid-queue.
                 if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
-                    // v13.6: dropped the `$` anchor and strict Team: requirement.
-                    // Anchor only on the stable "for player:" + "(UserId:..." core,
-                    // so an appended field or spacing tweak in a future game patch
-                    // doesn't silently kill roster/state-machine detection.
+                    // v13.6: anchor only on "for player:" + "(UserId:..." so a
+                    // future patch adding a field / tweaking spacing doesn't
+                    // silently kill roster detection.
                     const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]+)/);
                     const nm = (m?.[1] ?? "").trim();
                     const uid = (m?.[2] ?? "").trim();
                     if (nm && uid) {
-                        _lastInitLineAt = performance.now(); // watchdog signal
-                        setAutoVisible(false); // real match -> get out of the way
+                        _lastInitLineAt = performance.now();
+                        setAutoVisible(false); // real match — hide HUD
                         if (!_inMatch) {
                             _liveRoster = [];
                             _inMatch = true;
                             dbg(`match forming — roster reset, first player "${nm}"`);
                         }
-                        // Dedup by uid, not name: names collide, and mid-match
-                        // backfills now ADD to the roster instead of restarting it.
+                        // dedupe by uid — names collide, mid-match backfills should ADD
                         if (!_liveRoster.some(p => p.uid === uid)) {
                             _liveRoster.push({ name: nm, uid });
                             dbg(`roster +1 "${nm}" (${_liveRoster.length} total)`);
@@ -2905,19 +2646,16 @@
                     } else if (nm) {
                         dbg(`warm-up init "${nm}" (empty uid) — ignored, inMatch=${_inMatch}`);
                     } else {
-                        // Canary: if the game ever changes this line's format the
-                        // regex fails silently -- this makes it announce itself.
-                        // v13.6: also flip the yellow warn dot so users don't need
-                        // DevTools to see that parsing broke.
+                        // canary: if this line ever fails, the game format changed.
+                        // yellow dot so users notice without DevTools.
                         dbgWarn(`init line FAILED to parse — game format may have changed`);
                         dbg(`init line raw: ${arg.slice(0, 120)}`);
                     }
                 }
 
-                // ---- Left the match some other way (rage-quit, back-out) ----
-                // A deliberate LeaveRoom or a fresh matchmaking queue can't
-                // coexist with being mid-match; freeze what we collected so the
-                // Imposter roster survives an early exit, then clear the flag.
+                // ---- Left match another way (rage-quit, back-out) ----
+                // LeaveRoom / fresh queue can't coexist with mid-match. freeze
+                // and clear so Imposter survives early exits.
                 if (arg.includes("PhotonNetwork:LeaveRoom") ||
                     arg.includes("Set player matchmaking start time")) {
                     if (_inMatch) {
@@ -2928,22 +2666,17 @@
                 }
 
                 // ---- Return-to-menu / recovery signals ----
-                // These are the game's REAL log strings (the v13.4 triggers
-                // "OnJoinedRoom"/"OnLeftRoom" appear nowhere in actual game
-                // output, and "OnDisconnected" only ever matched as a substring
-                // of "OurOnDisconnected"). Restore is gated on !_inMatch so a
-                // mid-match reconnect storm leaves the HUD alone; the match-over
-                // paths above are what legitimately clear the flag first.
-                // "Starting SetNickname" stays as the return-to-menu signal for
-                // practice/private matches, which emit no room strings on exit.
-                //
-                // v13.6: word-boundary anchors on the two "Our*" strings. Same
-                // guard against the v13.4-class substring bug (matching them
-                // inside a longer wrapper log line). "Starting SetNickname" is
-                // already unique enough that a raw includes() is safe.
+                // v13.4 used "OnJoinedRoom"/"OnLeftRoom" (never appear) and
+                // "OnDisconnected" (only matched as substring of
+                // "OurOnDisconnected"). these are the actual log strings.
+                // gate restore on !_inMatch or a reconnect storm respawns the HUD.
+                // "Starting SetNickname" covers practice/private, which emit
+                // no room strings on exit.
+                // v13.6: word-boundaries on Our* to guard against the same
+                // substring-match class of bug.
                 if (/\bOurOnDisconnected\b/.test(arg) || arg.includes("Starting SetNickname") ||
                     /\bOurOnConnectedToMaster\b/.test(arg)) {
-                    _lastRecoverySignalAt = performance.now(); // watchdog signal
+                    _lastRecoverySignalAt = performance.now();
                     if (!_inMatch) setAutoVisible(true);
                     else dbg(`recovery signal suppressed (mid-match): ${arg.slice(0, 60)}`);
                 }
@@ -2954,40 +2687,27 @@
     };
 
     // ---------- Clan events (Clan Clash) ----------
-    // Event config lives in Firestore (events/current), editable by admin only,
-    // so events can be scheduled/rescheduled without a script update. Timing uses
-    // Firestore serverTimestamp() -- unforgeable, immune to device-clock spoofing.
-    // Each member's baseline MMR is captured on THEIR first sync after the event
-    // starts (fresh, not stale); event score = sum of (current - baseline) across
-    // members, which can go negative.
+    // config lives in events/current (admin-only). timing uses serverTimestamp
+    // so device clocks can't spoof it. each member's baseline MMR is captured
+    // on their first sync after the event starts. score = sum(current - baseline).
 
     let eventConfig = null;       // { name, startTime(ms), endTime(ms) } or null
     let eventConfigLoaded = false;
-    let serverNowOffset = null;   // (serverTime - deviceTime) learned from a write, ms
+    let serverNowOffset = null;   // (serverTime - deviceTime), ms
 
-    // Event-time permission defaults. Every flag is checked via eventPerm()
-    // below so an old-shape event doc (no `perms` field) still gets safe,
-    // documented behavior. To change how an active event behaves, edit
-    // events/current in Firestore -- no script redeploy needed.
-    //   allowJoin        : new members can request+get approved to a clan
-    //   allowLeave       : members can walk out of their clan
-    //   allowKick        : leader (or eligible role) can remove a member
-    //   allowApprove     : leader can accept pending join requests
-    //   allowDisband     : solo-leader can disband their own clan
-    //   allowRoleChange  : promote/demote (co-leader, elder, etc.)
-    //   allowTransfer    : hand off leadership to another member
-    //   allowRenameClan  : change clan name or tag string
-    //   allowClanCreate  : anyone can spin up a brand-new clan mid-event
+    // event-time perms — edit events/current in Firestore, no redeploy.
+    // missing keys fall back to these defaults.
+    //   allowJoin/Leave/Kick/Approve/Disband/RoleChange/Transfer/RenameClan/ClanCreate
     const EVENT_PERM_DEFAULTS = {
-        allowJoin:        true,   // people CAN join mid-event (was locked; opened per feedback)
-        allowLeave:       false,  // but they CAN'T leave -- can't dodge a losing team
-        allowKick:        true,   // leaders keep the ability to remove problem members
-        allowApprove:     true,   // approvals fine since joining is fine
-        allowDisband:     false,  // freezes rosters even for solo leaders
-        allowRoleChange:  false,  // role changes = attribution changes, freeze during scoring
-        allowTransfer:    false,  // no leadership handoff mid-event
-        allowRenameClan:  false,  // clan identity freezes during event
-        allowClanCreate:  true,   // new clans don\'t affect anyone else\'s roster
+        allowJoin:        true,   // opened mid-event per feedback
+        allowLeave:       false,  // can't dodge a losing team
+        allowKick:        true,
+        allowApprove:     true,
+        allowDisband:     false,  // freeze rosters
+        allowRoleChange:  false,  // role changes shift attribution — freeze
+        allowTransfer:    false,
+        allowRenameClan:  false,
+        allowClanCreate:  true,   // new clans don't affect anyone else
     };
 
     async function loadEventConfig(fb, force = false) {
@@ -2996,16 +2716,13 @@
             const snap = await fb.getDoc(fb.doc(fb.db, "events", "current"));
             if (snap.exists()) {
                 const d = snap.data();
-                // Merge stored perms over defaults so a partial `perms` object
-                // (only overriding one or two keys) still gets safe values
-                // for everything else. Undefined perms field -> all defaults.
+                // merge over defaults so partial perms still get safe fallbacks
                 const storedPerms = (d.perms && typeof d.perms === "object") ? d.perms : {};
                 eventConfig = {
                     name: d.name ?? "Clan Event",
                     startTime: d.startTime?.toMillis ? d.startTime.toMillis() : (d.startTime ?? 0),
                     endTime: d.endTime?.toMillis ? d.endTime.toMillis() : (d.endTime ?? 0),
-                    // Top-level (not inside perms) because it applies always,
-                    // not just during an active event window.
+                    // applies outside the event window too
                     maxMembers: (typeof d.maxMembers === "number") ? d.maxMembers : null,
                     perms: { ...EVENT_PERM_DEFAULTS, ...storedPerms },
                 };
@@ -3019,29 +2736,16 @@
         return eventConfig;
     }
 
-    // eventPerm(key): true when the action is allowed RIGHT NOW.
-    //   - Outside an active event, everything is allowed (no lockdown).
-    //   - Inside an active event, look up the flag; missing -> default.
-    // Every clan-mutation guard should route through this so the source of
-    // truth is one Firestore doc that a maintainer can edit live.
+    // true = allowed now. outside an active event, everything is allowed.
     function eventPerm(key) {
         if (eventPhase() !== "active") return true;
         const p = eventConfig?.perms || EVENT_PERM_DEFAULTS;
-        return p[key] !== false; // defaults are all "true or false"; missing key -> allow
+        return p[key] !== false;
     }
 
     // ---------- Clan role permissions (server-driven) ----------
-    // Which clan ROLE can do which action. Defaults below mirror the previous
-    // hardcoded behavior exactly, so the Firestore doc is optional and
-    // overrides-only. To change what a role can do, edit admin/clanPerms:
-    //   admin/clanPerms: {
-    //     elder:    { approve: true, kick: true },   // partial overrides fine
-    //     coleader: { tagStyle: true },
-    //   }
-    // Keys: editClanInfo (rename name/tag), tagStyle (clan tag styling),
-    // kick, approve (join requests), roleChange (promote/demote),
-    // transfer (leadership handoff -- still requires BEING the leader),
-    // disband (solo-leader disband -- still requires being the leader).
+    // Defaults match the old hardcoded behavior. admin/clanPerms can override
+    // any subset — e.g. { elder: { kick: true } }.
     const CLAN_ROLE_PERM_DEFAULTS = {
         leader:   { editClanInfo: true,  tagStyle: true,  kick: true,  approve: true,  roleChange: true,  transfer: true,  disband: true  },
         coleader: { editClanInfo: false, tagStyle: false, kick: true,  approve: true,  roleChange: true,  transfer: false, disband: false },
@@ -3062,8 +2766,7 @@
         }
     }
 
-    // rolePerm(role, key): stored boolean wins; missing -> baked default.
-    // Unknown roles resolve as "member" (most restrictive).
+    // stored bool wins; missing = default. unknown role -> member (most restrictive).
     function rolePerm(role, key) {
         const r = (role && CLAN_ROLE_PERM_DEFAULTS[role]) ? role : "member";
         const stored = clanRolePerms?.[r]?.[key];
@@ -3076,9 +2779,7 @@
         return me?.role ?? "member";
     }
 
-    // Best estimate of authoritative server time. We learn an offset from device
-    // time whenever a write round-trips a serverTimestamp; until then we fall back
-    // to device time (only affects the cosmetic countdown, never scoring).
+    // offset learned from serverTimestamp round-trips. cosmetic only, never scoring.
     function serverNow() {
         return Date.now() + (serverNowOffset ?? 0);
     }
@@ -3094,10 +2795,7 @@
         return "active";
     }
 
-    // Capture this member's baseline the first time they sync during an active
-    // event. Stored on the clan doc: eventBaseline[userId] = mmrAtFirstSync.
-    // A stable id for the current event window, so baselines from a previous
-    // event are recognized as stale and re-captured rather than reused.
+    // startTime doubles as an event id so old baselines are recognized as stale.
     function currentEventId() {
         return eventConfig ? String(eventConfig.startTime) : null;
     }
@@ -3106,13 +2804,12 @@
         if (!myClan || eventPhase() !== "active") return;
         const evId = currentEventId();
 
-        // If the stored baseline belongs to a different (old) event, wipe it so
-        // this event starts fresh for everyone.
+        // baseline from a previous event -> wipe
         let baseline = myClan.eventBaseline ?? {};
         if (myClan.eventId !== evId) {
-            baseline = {}; // stale from a previous event -- reset
+            baseline = {};
         }
-        if (baseline[uid] != null && myClan.eventId === evId) return; // already captured this event
+        if (baseline[uid] != null && myClan.eventId === evId) return;
 
         try {
             baseline[uid] = currentMMR;
@@ -3122,13 +2819,11 @@
             myClan.eventId = evId;
         } catch (e) {
             console.warn("[RG HUD] Event baseline capture failed:", e);
-            // v13.6: silent failure here meant the event contribution stayed
-            // at 0 forever for the member, invisibly. Flag it.
+            // v13.6: without this alert, the member's contribution silently stays at 0
             showError("Event baseline capture failed — your contribution won't count until this recovers");
         }
     }
 
-    // A clan's baseline only counts if it belongs to the current event.
     function clanBaselineForCurrentEvent(clan) {
         if (!clan || !clan.eventBaseline) return null;
         if (clan.eventId !== currentEventId()) return null; // stale -> no score yet
@@ -3154,8 +2849,7 @@
         return me.mmr - base;
     }
 
-    // Human-readable countdown string. Always includes seconds so the 1s tick
-    // has something to change even during multi-day windows.
+    // always includes seconds so the 1s tick has something to change
     function formatCountdown(targetMs) {
         let ms = targetMs - serverNow();
         if (ms < 0) ms = 0;
@@ -3169,10 +2863,8 @@
         return `${s}s`;
     }
 
-    // 1s tick: updates the countdown text in place and triggers a full banner
-    // re-render on phase transitions (upcoming -> active -> ended). Reads the
-    // target time and phase from data-* attrs on the countdown span, so it's a
-    // no-op when the span isn't in the DOM (clan view closed / no event).
+    // 1s tick. target/phase live on data-* attrs so it no-ops when the span
+    // isn't in the DOM. crossing a phase boundary triggers a full re-render.
     let countdownIntervalId = null;
     function tickCountdown() {
         const el = document.getElementById("rgEventCountdown");
@@ -3182,8 +2874,6 @@
         if (!Number.isFinite(targetMs)) return;
         const phase = el.getAttribute("data-phase");
 
-        // Crossed the phase boundary -- structure of the banner (and possibly
-        // the HUD title) needs to change, so trigger a full re-render.
         if (serverNow() >= targetMs && (phase === "upcoming" || phase === "active")) {
             refreshClanViewIfOpen();
             applyTitle();
@@ -3196,8 +2886,7 @@
         if (el.textContent !== next) el.textContent = next;
     }
 
-    // Standings for the current event, ranked by eventScore desc. Only clans
-    // whose baseline belongs to the current event count.
+    // sorted by eventScore desc. only clans with a baseline in this event count.
     function eventStandings() {
         const evId = currentEventId();
         return clanDirectory
@@ -3206,9 +2895,7 @@
             .sort((a, b) => (b.eventScore ?? 0) - (a.eventScore ?? 0));
     }
 
-    // True if there's an active event AND our clan is #1 in the current
-    // standings. Drives the "👑 Leading the Clash" HUD title, mirroring the
-    // "👑 Rocket Goal KING" treatment used for individual-mode #1s.
+    // drives the "👑 Leading the Clash" title (clan-version of KING)
     function isMyClanLeadingClash() {
         if (eventPhase() !== "active") return false;
         if (!myClan) return false;
@@ -3216,10 +2903,8 @@
         return standings.length > 0 && standings[0].id === myClan.id;
     }
 
-    // Builds the event banner HTML for the clan tab. `clan` may be null (shown to
-    // clanless players too, minus the personal/score bits). Returns "" if no event.
-    // Layout: header row (title + countdown) then a two-column body during active
-    // phase. Left column = your clan's numbers, right column = leader or challenger.
+    // `clan` may be null (clanless players see the banner without their numbers).
+    // returns "" when there's no event.
     function eventBannerHtml(clan, uid) {
         const phase = eventPhase();
         if (phase === "none") return "";
@@ -3228,9 +2913,6 @@
         const standings = eventStandings();
         const leader = standings[0];
 
-        // Header row: title left, live-ticking countdown right -- one line.
-        // The countdown span carries data-* attrs that tickCountdown reads to
-        // update the text every second (and to detect phase transitions).
         let countdownSpan;
         if (phase === "upcoming") {
             countdownSpan = `<span id="rgEventCountdown" data-target-ms="${eventConfig.startTime}" data-phase="upcoming" data-prefix="Starts in " data-suffix="">Starts in ${formatCountdown(eventConfig.startTime)}</span>`;
@@ -3260,9 +2942,7 @@
                 const myRank = standings.findIndex(c => c.id === clan.id) + 1;
                 const leaderIsMe = leader && leader.id === clan.id;
 
-                // Rank badge with hover tooltip -- mirrors the main-HUD rankBadge
-                // pattern but on clan-event standings. Tooltip shows event-score
-                // (MMR delta) needed to catch the clan directly above you.
+                // mirrors main-HUD rankBadge but on clan-event standings
                 let rankBadgeHtml = "";
                 if (myRank > 0) {
                     let rankColor;
@@ -3278,8 +2958,7 @@
                         const gap = (ahead.eventScore ?? 0) - score;
                         tip = `+${gap} MMR to reach #${myRank - 1}`;
                     }
-                    // Show total ("of N") only when there's actually competition;
-                    // "#1/1" is meaningless clutter when you're alone in the event.
+                    // hide "of N" when alone — "#1/1" is just clutter
                     const totalPart = standings.length > 1
                         ? `<span style="opacity:.55;font-weight:normal;"> of ${standings.length}</span>`
                         : "";
@@ -3299,7 +2978,7 @@
                     }
                 `;
 
-                // Right column: leader (if not you) or challenger (if you lead) or lonely-message.
+                // right col: leader if not you, challenger if you lead, else lonely
                 let rightCol;
                 if (leaderIsMe && standings.length > 1) {
                     const challenger = standings[1];
@@ -3337,7 +3016,7 @@
                     </div>
                 `;
             } else if (leader) {
-                // Clanless viewer: single line showing who's on top.
+                // clanless viewer: single line for who's on top
                 body = `
                     <div style="font-size:11px;margin-top:4px;">
                         👑 ${leader.tag ? `[${escapeHtml(leader.tag)}] ` : ""}<b>${escapeHtml(leader.name)}</b>
@@ -3369,11 +3048,7 @@
     let clanLoaded = false;
     let clanLoadedForAccount = null; // which account the above was loaded for
 
-    // Clan max member cap. Reads events/current.maxMembers with 5 as the
-    // fallback default, so a maintainer can change the cap live in Firestore
-    // (raise to 6, drop to 4, etc.) without a script redeploy. Kept as a
-    // function call rather than a captured constant so late-arriving event
-    // config picks up automatically on next render.
+    // reads events/current.maxMembers so the cap can be changed live
     const DEFAULT_CLAN_MAX_MEMBERS = 5;
     function clanMaxMembers() {
         const n = eventConfig?.maxMembers;
@@ -3382,11 +3057,8 @@
 
     function myUserId() { return lastKnownPlayerData?.Id ?? null; }
 
-    // Plain-text letters of the player's ACTUAL in-game name: first line of
-    // the raw nickname from the game's login response, TMP tags stripped,
-    // leading [TAG] clan prefix removed (the clan-tag prefix feature owns
-    // that separately now). This is what Name Forge should seed its Name
-    // field with -- the in-game name, not the leaderboard display name.
+    // plain in-game name (first line, TMP tags stripped, [TAG] prefix removed).
+    // used to seed Name Forge — not the leaderboard display name.
     function myGameNamePlain() {
         const raw = String(lastKnownPlayerData?.Nickname ?? "");
         if (!raw) return "";
@@ -3400,29 +3072,19 @@
         return cachedDisplayNames.get(myUserId()) || cleanName(lastKnownPlayerData?.Nickname) || "Unknown";
     }
 
-    // Roles that can approve/reject join requests -- matrix-driven.
     function canManageRequests(role) {
         return rolePerm(role, "approve");
     }
 
-    // Real-time clan doc listener. Attached while the Clan tab is visible,
-    // detached when it closes. Firestore bills listeners 1 read on attach and
-    // 1 read per actual change -- idle time is free -- so this is strictly
-    // cheaper than polling PROVIDED the callback never refetches. The
-    // callback therefore renders from memory only (the snapshot already
-    // carries the fresh doc); calling the fetching renderClanView() here
-    // would triple the cost and was the flaw in the first implementation.
+    // live clan-doc listener. attach while Clan tab is open, detach on close.
+    // callback must render from the snapshot — no refetching, or costs triple.
     let _clanUnsub = null;
-    let _clanListenerId = null; // which clan doc the live listener serves
-    let _clanAttaching = false; // v13.6: in-flight guard against re-entry during init await
+    let _clanListenerId = null;
+    let _clanAttaching = false; // v13.6: guard against re-entry during init await
 
-    // v13.6: normalize a clan doc's user-editable style fields on the way in.
-    // A modified client could have written HTML-shaped strings into
-    // `tagStyle.color` etc., which then splat unescaped into innerHTML at
-    // render time and executed as script in every clan member's browser
-    // (stored XSS via the live snapshot listener). Hex-validate all four
-    // color slots at the trust boundary; drop bad values so downstream
-    // renderers see only known-safe shapes.
+    // v13.6: sanitize user-editable style fields at the trust boundary.
+    // a modified client could push HTML-shaped strings into tagStyle.color
+    // and land stored XSS in every member's browser via the snapshot listener.
     function sanitizeClanDoc(clan) {
         if (!clan) return clan;
         const hexOk = v => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
@@ -3449,17 +3111,13 @@
 
     async function attachClanListener() {
         if (!myClan) return;
-        if (_clanUnsub && _clanListenerId === myClan.id) return; // already live
-        // v13.6: guard against re-entry during the async initFirebase gap.
-        // Without this, two rapid calls (e.g. renderClanView -> onSnapshot
-        // callback -> refreshClanViewIfOpen -> attachClanListener) both pass
-        // the null-unsub check, both await init, and both call onSnapshot.
-        // The second overwrote _clanUnsub, leaking the first listener and
-        // doubling every render pass. Idempotent: same-clan reentry no-ops.
+        if (_clanUnsub && _clanListenerId === myClan.id) return;
+        // v13.6: without this reentry guard two rapid calls both await init
+        // then both call onSnapshot, leaking the first listener.
         if (_clanAttaching) return;
         _clanAttaching = true;
         try {
-            detachClanListener(); // clan changed since attach -> resubscribe
+            detachClanListener();
             const fb = await initFirebase();
             if (!fb || !myClan) return;
             const clanId = myClan.id;
@@ -3468,36 +3126,24 @@
                 fb.doc(fb.db, "clans", clanId),
                 (snap) => {
                     const uid = myUserId();
-                    // Doc deleted (disband) or we're no longer on the roster
-                    // (left / kicked): drop local clan state and show the browse
-                    // view live. This also means a kicked player SEES the kick
-                    // happen in real time instead of a stale roster.
+                    // doc gone (disband) or we're off the roster (left/kicked).
+                    // this is also how a kicked player sees it happen live.
                     const stillMember = snap.exists()
                         && ((snap.data().members ?? []).some(m => m.userId === uid));
                     if (!stillMember) {
                         detachClanListener();
                         myClan = null;
-                        clanLoaded = false; // force a real reload next tab open
+                        clanLoaded = false;
                         refreshClanViewIfOpen();
                         return;
                     }
-                    // v13.6: sanitize tagStyle at the trust boundary so no
-                    // downstream renderer sees an HTML-shaped color value.
                     myClan = sanitizeClanDoc({ id: snap.id, ...snap.data() });
-                    // Zero-read repaint from the data we were just handed.
                     refreshClanViewIfOpen();
-                    // v13.6: repaint the main stats view too, so the Clash
-                    // mini-bar updates live when a teammate's MMR write
-                    // arrives via this snapshot. Guarded so a snapshot
-                    // arriving before the first login response is a no-op.
+                    // v13.6: repaint main stats too so Clash mini-bar updates live
                     if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
                 },
                 (err) => {
-                    // v13.6: previously no onError callback. When permissions
-                    // were revoked mid-session (kick, rules change) the
-                    // listener silently stopped; UI froze at last-known state
-                    // showing a clan the user was no longer in. Now: red-dot,
-                    // detach, and let the next tab open reattach fresh.
+                    // v13.6: without onError, revoked perms froze the UI silently
                     console.warn("[RG HUD] Clan listener error:", err);
                     showError("Clan updates disconnected — reopen the Clan tab to refresh");
                     detachClanListener();
@@ -3522,7 +3168,7 @@
         const uid = myUserId();
         if (!uid) return;
 
-        // Account changed since last load -> force a fresh load and clear stale state.
+        // new account since last load — reset
         if (clanLoadedForAccount !== uid) {
             force = true;
             myClan = null;
@@ -3535,16 +3181,13 @@
         if (!fb) return;
 
         try {
-            // Directory: one read for the browse list.
             const dirSnap = await fb.getDoc(fb.doc(fb.db, "clans_directory", "index"));
             clanDirectory = dirSnap.exists() ? (dirSnap.data().clans ?? []) : [];
 
-            // Find my clan (if any) by scanning the directory for my membership.
             myClan = null;
             const mine = clanDirectory.find(c => (c.memberIds ?? []).includes(uid));
             if (mine) {
                 const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", mine.id));
-                // v13.6: sanitize at the trust boundary -- see sanitizeClanDoc.
                 if (clanSnap.exists()) myClan = sanitizeClanDoc({ id: mine.id, ...clanSnap.data() });
             }
             clanLoaded = true;
@@ -3554,17 +3197,11 @@
         }
     }
 
-    // Rebuild the directory doc from scratch off current clans -- simple and
-    // safe for a small number of clans. Called after any membership change.
-    //
-    // COST NOTE: this reads EVERY clan doc + 1 write. Fine for structural
-    // changes (create/join/kick/leave -- rare), too expensive to run on every
-    // match's MMR tick. Routine MMR updates go through
-    // refreshDirectoryThrottled below instead.
+    // COST: refreshDirectory reads EVERY clan doc + 1 write. fine for structural
+    // changes (create/join/kick/leave). routine per-match MMR ticks go through
+    // refreshDirectoryThrottled instead.
 
-    // Patch only MY clan's entry in the in-memory directory: zero reads, keeps
-    // my own standings/title/event views instantly fresh between throttled
-    // Firestore rebuilds.
+    // zero-read patch of my own entry in the in-memory directory
     function patchMyClanInDirectory() {
         if (!myClan) return;
         const entry = clanDirectory.find(c => c.id === myClan.id);
@@ -3576,13 +3213,11 @@
         entry.totalMMR = myClan.totalMMR ?? 0;
         entry.eventScore = computeClanEventScore(myClan);
         entry.eventId = myClan.eventId ?? null;
-        applyTitle(); // clan-lead status may have flipped
+        applyTitle(); // clan-lead flip
     }
 
-    // Throttled directory rebuild for routine per-match MMR changes. Other
-    // players and Pal's site see standings at most DIR_REFRESH_THROTTLE_MS
-    // stale; my own HUD stays live via patchMyClanInDirectory. Structural
-    // changes still call refreshDirectory directly (immediate).
+    // throttled rebuild for routine MMR updates. structural changes still call
+    // refreshDirectory directly. my own HUD stays live via patchMyClanInDirectory.
     let lastDirRefreshAt = 0;
     const DIR_REFRESH_THROTTLE_MS = 3 * 60 * 1000;
 
@@ -3595,22 +3230,16 @@
     }
 
 
-    // Renders the Tag Style panel with a big Forge-style preview, palette
-    // chips, gradient endpoints, bold/italic, wave (alternating rotate),
-    // static rotate slider. Every control updates the preview live so leaders
-    // can dial in the exact look before hitting Save. Members see just the
-    // preview + opt-in checkbox.
     function renderClanTagPanel() {
         const body = document.getElementById("rgClanTagBody");
         if (!body || !myClan) return;
         const isLeader = myClan.leaderId === myUserId();
-        // Matrix-driven: whichever roles carry tagStyle see the full editor.
+        // roles with tagStyle perm see the full editor; others see preview + opt-in
         const canStyle = rolePerm(myClanRole(), "tagStyle");
         const st = myClan.tagStyle || {};
         const tagText = String(myClan.tag || "").trim();
 
-        // Working copy separate from myClan.tagStyle so live edits don't feel
-        // committed. Sync back on Save.
+        // working copy — live edits don't commit until Save
         const work = {
             mode: st.mode || (st.color ? "solid" : Array.isArray(st.stops) || st.paletteKey ? "gradient" : "none"),
             color: st.color || "#00bfff",
@@ -3666,7 +3295,7 @@
                 if (work.mode === "solid") return work.color;
                 return null;
             };
-            // Bracket color: use bracketColor if set, else defer to mode
+            // bracket color: bracketColor if set, else defer to mode
             const bracketC = bracketColor
                 ? bracketColor
                 : stops
@@ -3746,8 +3375,7 @@
                 + '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="rgTagItalic"' + (work.italic ? " checked" : "") + '> <i>Italic</i></label>'
                 + '</div>';
 
-            // Brackets: optional separate color for [ and ]. When cleared,
-            // brackets follow the main style (participate in gradient/solid).
+            // cleared bracket color -> brackets follow the main style
             html += '<div style="font-size:10px;font-weight:bold;color:#00bfff;margin:10px 0 4px;">BRACKETS</div>';
             html += '<div style="display:flex;gap:8px;align-items:center;font-size:11px;">'
                 + 'Color: <input type="color" id="rgTagBracketColor" value="' + (work.bracketColor || "#ffffff") + '" style="width:40px;height:24px;padding:0;border:none;background:transparent;cursor:pointer;">'
@@ -3756,7 +3384,7 @@
                 + '<span style="opacity:.6;font-size:10px;">' + (work.bracketColor ? work.bracketColor : "matches") + '</span>'
                 + '</div>';
 
-            // Effects: wave + static rotate. Wave overrides static rotate.
+            // wave overrides static rotate
             html += '<div style="font-size:10px;font-weight:bold;color:#00bfff;margin:10px 0 4px;">EFFECTS</div>';
             html += '<label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer;">'
                 + '<input type="checkbox" id="rgTagWave"' + (work.waveOn ? " checked" : "") + '> Wave'
@@ -3903,8 +3531,7 @@
                     if (!fb) return;
                     await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { tagStyle: newStyle }, { merge: true });
                     myClan.tagStyle = newStyle;
-                    // Inline confirmation on the button itself -- the bottom
-                    // toast is easy to miss from deep in a scrolled panel.
+                    // inline confirm — toast is easy to miss when scrolled deep
                     const saveBtn = document.getElementById("rgTagSave");
                     if (saveBtn) {
                         saveBtn.textContent = "✓ Saved for the clan!";
@@ -3926,9 +3553,7 @@
         if (useTagCb) {
             useTagCb.onchange = () => {
                 setUseClanTagPref(useTagCb.checked);
-                // The prefix reaches the actual in-game name only when the
-                // player hits Apply in Name Forge -- say so, so the checkbox
-                // doesn't feel like it silently did nothing.
+                // prefix only reaches the in-game name after Apply in Name Forge
                 showToast(useTagCb.checked
                     ? "Tag armed! Open 🎨 Name Forge and hit Apply to update your name."
                     : "Tag prefix off -- hit Apply in 🎨 Name Forge to update your name.");
@@ -3951,8 +3576,7 @@
                     memberCount: (d.members ?? []).length,
                     memberIds: (d.members ?? []).map(m => m.userId),
                     totalMMR: d.totalMMR ?? 0,
-                    // Event score for the current event (0 if their baseline is
-                    // stale/absent), so standings can rank clans by event gain.
+                    // 0 if their baseline is stale/absent
                     eventScore: computeClanEventScore({ ...d, id: docSnap.id }),
                     eventId: d.eventId ?? null,
                 });
@@ -3962,12 +3586,11 @@
         } catch (e) {
             console.warn("[RG HUD] Directory refresh failed:", e);
         }
-        // Directory drives the clan-lead HUD title; refresh it so any standings
-        // change flips the title in/out of "Leading the Clash" immediately.
+        // repaint title in case standings flipped clan-lead status
         applyTitle();
     }
 
-    // Sum of this player's 3v3+2v2+1v1 displayRatings (no casual).
+    // sum of 3v3+2v2+1v1 displayRatings (no casual)
     function myRankedMMR() {
         const g = lastKnownPlayerData?.ModesGlicko;
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1"];
@@ -3980,15 +3603,12 @@
         const uid = myUserId();
         if (!uid) return;
 
-        // Event lockdown: gated by allowClanCreate. Default TRUE (creating a
-        // new clan doesn\'t affect existing rosters), but a maintainer can
-        // freeze it in events/current if needed.
         if (!eventPerm("allowClanCreate")) {
             showToast("New clans can\'t be created during this event.");
             return;
         }
 
-        // Uniqueness check against directory (best-effort).
+        // best-effort uniqueness check
         if (clanDirectory.some(c => c.name.toLowerCase() === name.toLowerCase())) {
             showToast("A clan with that name already exists.");
             return;
@@ -4021,9 +3641,6 @@
         const uid = myUserId();
         if (!uid) return;
 
-        // Event lockdown: gated by allowJoin. Default is TRUE (join is open),
-        // but a maintainer can flip it off in events/current if a specific
-        // event needs frozen rosters.
         if (!eventPerm("allowJoin")) {
             showToast("Clan joins are locked during this event.");
             return;
@@ -4048,7 +3665,6 @@
             renderClanView();
         } catch (e) {
             console.error("[RG HUD] Request join failed:", e);
-            // v13.6: user-initiated action -- silence was misleading UX.
             showToast("Couldn't send join request — see console.");
         }
     }
@@ -4057,15 +3673,11 @@
         const fb = await initFirebase();
         if (!fb || !myClan) return;
 
-        // Event lockdown: approvals gated by allowApprove. Default TRUE now.
-        // Denies (approve === false) are always allowed since removing a
-        // stale request never grows the roster.
+        // denies are always allowed — they don't grow the roster
         if (approve && !eventPerm("allowApprove")) {
             showToast("Approvals are locked during this event.");
             return;
         }
-        // Role gate (matrix-driven): approving grows the roster, so the
-        // actor's role must carry the approve permission.
         if (approve && !rolePerm(myClanRole(), "approve")) {
             showToast("Your role can't approve join requests.");
             return;
@@ -4088,7 +3700,6 @@
             renderClanView();
         } catch (e) {
             console.error("[RG HUD] Approve request failed:", e);
-            // v13.6: user-initiated action -- surface failures.
             showToast(approve ? "Couldn't approve — see console." : "Couldn't deny — see console.");
         }
     }
@@ -4098,10 +3709,6 @@
         if (!fb || !myClan) return;
         const myUid = myUserId();
 
-        // Event lockdown: gated by allowKick. Default TRUE (leaders keep the
-        // ability to remove problem members even mid-event -- a scored player
-        // shouldn\'t be trapped in a clan). Flip off if you want fully frozen
-        // rosters during a specific event.
         if (!eventPerm("allowKick")) {
             showToast("Kicking is locked during this event.");
             return;
@@ -4109,10 +3716,8 @@
 
         try {
             const target = (myClan.members ?? []).find(m => m.userId === userId);
-            if (!target || target.role === "leader") return; // never kick the leader
-            // Matrix-driven: the actor's role must carry kick permission, and
-            // the target must be strictly below the actor's rank (an elder
-            // granted kick still can't kick another elder or a coleader).
+            if (!target || target.role === "leader") return;
+            // must have perm AND outrank the target (elder can't kick elder)
             const me = (myClan.members ?? []).find(m => m.userId === myUid);
             if (!me || !rolePerm(me.role, "kick")) return;
             if ((ROLE_RANK[target.role] ?? 0) >= (ROLE_RANK[me.role] ?? 0)) return;
@@ -4121,7 +3726,7 @@
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
             myClan.members = members;
 
-            // Leave a one-time notice the kicked player's HUD will show + clear.
+            // one-time notice picked up + cleared by the kicked player's HUD
             const notice = {
                 type: "kicked",
                 clanName: myClan.name,
@@ -4138,8 +3743,7 @@
         }
     }
 
-    // On load, check if this player has a pending clan notice (e.g. was kicked)
-    // and show it once, then clear it.
+    // show + clear any pending kick notice
     async function checkClanNotices() {
         const fb = await initFirebase();
         if (!fb) return;
@@ -4165,23 +3769,21 @@
         }
     }
 
-    // ---------- Role management (Stage 2) ----------
-    // Hierarchy: leader > coleader > elder > member. Clash-style: multiple
-    // coleaders/elders allowed. Permission gating (who can change whom) is
-    // enforced here in-script (honor system).
+    // ---------- Role management ----------
+    // leader > coleader > elder > member. multiple coleaders/elders allowed.
+    // gating enforced client-side (honor system).
 
     const ROLE_RANK = { leader: 3, coleader: 2, elder: 1, member: 0 };
 
-    // Can `actorRole` set `targetCurrentRole` to `newRole`?
+    // can `actorRole` set `targetCurrentRole` to `newRole`?
     function canSetRole(actorRole, targetCurrentRole, newRole) {
         const a = ROLE_RANK[actorRole] ?? -1;
-        // Matrix-driven: the actor's role must carry roleChange permission.
         if (!rolePerm(actorRole, "roleChange")) return false;
-        // Can't touch someone at or above your own rank (coleader can't touch coleader/leader).
+        // can't touch someone at/above your own rank
         if ((ROLE_RANK[targetCurrentRole] ?? 0) >= a) return false;
-        // Can't promote someone to at/above your own rank.
+        // can't promote someone to at/above your own rank
         if ((ROLE_RANK[newRole] ?? 0) >= a) return false;
-        // Nobody assigns "leader" via this path -- that's transferLeadership only.
+        // leader can only be assigned via transferLeadership
         if (newRole === "leader") return false;
         return true;
     }
@@ -4194,9 +3796,7 @@
         const target = (myClan.members ?? []).find(m => m.userId === userId);
         if (!me || !target) return;
 
-        // Event lockdown: gated by allowRoleChange. Default FALSE -- role
-        // changes shift attribution and could confuse the "who contributed
-        // what" audit during scoring.
+        // frozen by default during events — role changes muddy the contribution audit
         if (!eventPerm("allowRoleChange")) {
             showToast("Role changes are locked during this event.");
             return;
@@ -4224,17 +3824,15 @@
     async function editClan(newName, newTag) {
         const fb = await initFirebase();
         if (!fb || !myClan) return;
-        if (!rolePerm(myClanRole(), "editClanInfo")) return; // role lacks permission (matrix)
+        if (!rolePerm(myClanRole(), "editClanInfo")) return;
 
-        // Event lockdown: gated by allowRenameClan. Default FALSE -- clan
-        // identity freezes during scoring so leaderboards don\'t get mid-event
-        // rebrands.
+        // frozen during events so leaderboards don't see mid-event rebrands
         if (!eventPerm("allowRenameClan")) {
             showToast("Clan renames are locked during this event.");
             return;
         }
 
-        // Uniqueness (ignore our own clan).
+        // uniqueness — ignore our own clan
         const nameClash = clanDirectory.some(c => c.id !== myClan.id && (c.name ?? "").toLowerCase() === newName.toLowerCase());
         const tagClash = clanDirectory.some(c => c.id !== myClan.id && (c.tag ?? "").toLowerCase() === newTag.toLowerCase());
         if (nameClash) { showToast("A clan with that name already exists."); return; }
@@ -4287,14 +3885,12 @@
         const fb = await initFirebase();
         if (!fb || !myClan) return;
         const myUid = myUserId();
-        if (myClan.leaderId !== myUid) return; // only the leader can transfer
+        if (myClan.leaderId !== myUid) return;
         if (!rolePerm(myClanRole(), "transfer")) {
             showToast("Leadership transfers are currently disabled.");
             return;
         }
 
-        // Event lockdown: gated by allowTransfer. Default FALSE -- leadership
-        // handoff mid-event could obscure attribution.
         if (!eventPerm("allowTransfer")) {
             showToast("Leadership transfers are locked during this event.");
             return;
@@ -4303,7 +3899,7 @@
         try {
             const members = (myClan.members ?? []).map(m => {
                 if (m.userId === userId) return { ...m, role: "leader" };
-                if (m.userId === myUid) return { ...m, role: "coleader" }; // old leader -> coleader
+                if (m.userId === myUid) return { ...m, role: "coleader" };
                 return m;
             });
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members, leaderId: userId }, { merge: true });
@@ -4319,11 +3915,8 @@
 
 
     // ---------- Clan tag styling ----------
-    // Leader owns clan.tagStyle: { color?: hex, bold?: bool, wrap: 'brackets'|'angle'|'none' }
-    // Each member opts in via localStorage (no server writes per-member so the
-    // clan doc doesn't inflate). When a member has opted in AND their clan has
-    // a tag string set, getClanTagPrefix() returns the TMP-formatted markup to
-    // prepend before their in-game nickname (via Name Forge's apply path).
+    // leader owns clan.tagStyle. members opt in via localStorage so the clan
+    // doc doesn't balloon. getClanTagPrefix() returns TMP markup used at Apply.
 
     const CLAN_TAG_OPTIN_KEY = "rgHudUseClanTag";
 
@@ -4334,7 +3927,6 @@
         try { localStorage.setItem(CLAN_TAG_OPTIN_KEY, on ? "1" : "0"); } catch {}
     }
 
-    // Interpolate two #RRGGBB hex colors at t in [0,1].
     function _interpHex(a, b, t) {
         const ar = parseInt(a.slice(1,3),16), ag = parseInt(a.slice(3,5),16), ab_ = parseInt(a.slice(5,7),16);
         const br = parseInt(b.slice(1,3),16), bg = parseInt(b.slice(3,5),16), bb = parseInt(b.slice(5,7),16);
@@ -4342,8 +3934,7 @@
         return '#' + r.toString(16).padStart(2,'0') + g.toString(16).padStart(2,'0') + bl.toString(16).padStart(2,'0');
     }
 
-    // Sample an N-stop gradient at t in [0,1]. Stops are evenly spaced.
-    // Same math Name Forge uses so tag gradients match name gradients.
+    // same math Name Forge uses so tag/name gradients look the same
     function _sampleStops(stops, t) {
         if (!stops || stops.length === 0) return "#ffffff";
         if (stops.length === 1) return stops[0];
@@ -4352,9 +3943,7 @@
         return _interpHex(stops[i], stops[i + 1], scaled - i);
     }
 
-    // Palette presets (mirrors Name Forge). start/end stored on tagStyle for
-    // arbitrary user gradients; palette selection just overwrites those with
-    // a preset\'s stop array (stored as tagStyle.stops when a preset picked).
+    // mirrors Name Forge palettes
     const CLAN_TAG_PALETTES = [
         { key: 'fire',    label: '🔥 Fire',    stops: ['#FF4D00', '#FFB800', '#FF0000'] },
         { key: 'ocean',   label: '🌊 Ocean',   stops: ['#00FFFF', '#00CFFF'] }, // exact [KING] shimmer: K,I,N,G sample to #00FFFF,#00EFFF,#00DFFF,#00CFFF
@@ -4364,9 +3953,7 @@
         { key: 'ice',     label: '❄️ Ice',     stops: ['#E0FFFF', '#7DD3FC', '#2563EB'] },
     ];
 
-    // Effective color stops for the tag: palette stops if a palette is picked,
-    // otherwise the two user-picked gradient endpoints. Returns null if not
-    // in a gradient mode.
+    // palette stops if picked, else user-picked endpoints. null if not gradient.
     function _tagStops(st) {
         if (!st) return null;
         if (st.paletteKey) {
@@ -4380,23 +3967,14 @@
         return null;
     }
 
-    // Returns the TMP-formatted markup for this member\'s clan tag prefix.
-    // Always uses [TAG] wrapping. Mode: 'none' | 'solid' | 'gradient'.
-    // Optional effects: bold, italic, wave (alternating rotate), rotate
-    // (static). Gradient emits per-character <#RRGGBB> tags; when combined
-    // with wave, each character also gets its own <rotate=±waveAmp>.
-    // Remove a leading styled [TAG] from a raw nickname when it matches the
-    // current clan's tag. The game's login response returns the name WITH the
-    // last-applied tag baked in; without this strip, the opt-in prefix would
-    // stack a second copy on top ([KING] [KING] ...). Tolerates any TMP
-    // markup interleaved between the letters (per-char gradients, rotate,
-    // bold/italic wrappers) since that's exactly what getClanTagPrefix emits.
+    // strip a leading styled [TAG] from a raw nickname when it matches our tag.
+    // without this, the opt-in prefix stacks a second copy ([KING] [KING] ...).
+    // tolerates any TMP markup interleaved between the letters.
     function stripLeadingClanTagMarkup(raw) {
         const tag = String(myClan?.tag ?? "").trim();
         if (!raw || !tag) return raw || "";
         const anyTags = "(?:<[^>]*>)*";
-        // Tag letters are A-Z only (sanitizeClanTag guarantees it), so no
-        // regex escaping needed per letter.
+        // sanitizeClanTag guarantees A-Z only, no escaping needed
         const letters = [...tag.toUpperCase()].map(ch => ch + anyTags).join("");
         const re = new RegExp("^" + anyTags + "\\[" + anyTags + letters + "\\]" + anyTags + "\\s*", "i");
         return raw.replace(re, "");
@@ -4415,10 +3993,8 @@
         const rotateDeg = Math.max(-45, Math.min(45, st.rotateDeg ?? 0));
         const bracketColor = /^#[0-9a-fA-F]{6}$/.test(st.bracketColor || "") ? st.bracketColor.toUpperCase() : null;
 
-        // Emits color+wave markup for one character at "gradient position" gi
-        // out of total-1. When bracketColor is set for gradient mode, gi runs
-        // over TAG LETTERS ONLY so the blend distributes cleanly inside the
-        // brackets. Brackets themselves use bracketColor.
+        // when bracketColor is set, gi runs over letters only so the gradient
+        // distributes cleanly inside the brackets
         function emitChar(ch, gi, giMax, forceColor, waveIdx) {
             let piece = "";
             if (waveOn) piece += "<rotate=" + (waveIdx % 2 === 0 ? waveAmp : -waveAmp) + ">";
@@ -4428,11 +4004,8 @@
                 const t = giMax === 0 ? 0 : gi / giMax;
                 piece += "<" + _sampleStops(stops, t).toUpperCase() + ">";
             } else if (mode === "solid" && /^#[0-9a-fA-F]{6}$/.test(st.color || "")) {
-                // Always emit the solid color for letters in the per-char path:
-                // the bracket's color tag persists in TMP until changed, so a
-                // letter without its own tag wears the bracket color. (This
-                // was gated on waveOn before -- solid + bracket color + no
-                // wave rendered the whole tag bracket-colored.)
+                // must emit every letter — bracket color tag persists in TMP
+                // until changed. was gated on waveOn before which broke solid+bracket.
                 piece += "<" + st.color.toUpperCase() + ">";
             }
             return piece + ch;
@@ -4441,20 +4014,17 @@
         let out = "";
         if (!waveOn && rotateDeg !== 0) out += "<rotate=" + rotateDeg + ">";
 
-        // Fast path: solid color, no wave, no separate bracket color -- one wrap
+        // fast path: solid, no wave, no bracket color -> one wrap
         if (mode === "solid" && /^#[0-9a-fA-F]{6}$/.test(st.color || "") && !waveOn && !bracketColor) {
             out += "<" + st.color.toUpperCase() + ">[" + tag + "]";
         } else {
-            let wi = 0; // wave index counts every emitted char including brackets
-            // Opening bracket
+            let wi = 0;
             out += emitChar("[", 0, Math.max(0, tagChars.length - 1), bracketColor, wi++);
-            // Tag letters: gradient distributes over these when bracketColor set
             for (let i = 0; i < tagChars.length; i++) {
                 const gi = bracketColor ? i : i + 1;
                 const giMax = bracketColor ? Math.max(0, tagChars.length - 1) : tagChars.length + 1;
                 out += emitChar(tagChars[i], gi, giMax, null, wi++);
             }
-            // Closing bracket
             out += emitChar("]", Math.max(0, tagChars.length - 1),
                              Math.max(0, tagChars.length - 1), bracketColor, wi++);
             if (waveOn) out += "<rotate=0>";
@@ -4471,9 +4041,7 @@
         if (!fb || !myClan) return;
         const uid = myUserId();
 
-        // Event lockdown: members can't leave mid-event unless allowLeave is
-        // explicitly turned on in the event doc. Leader isn't checked here --
-        // sole-leader disband is a separate action gated by allowDisband.
+        // leader path handled below (disband/transfer)
         if (!eventPerm("allowLeave") && myClan.leaderId !== uid) {
             showToast("Can't leave during an active event -- ask leader to kick.");
             return;
@@ -4482,10 +4050,7 @@
         try {
             const isLeader = myClan.leaderId === uid;
             const isSoloLeader = isLeader && (myClan.members ?? []).length === 1;
-            // Event lockdown: solo leader disband gated by allowDisband. Default
-            // FALSE -- disbanding mid-event would erase every contribution the
-            // clan has scored so far. Non-solo leaders hit the transfer flow
-            // below, which is gated by allowTransfer instead.
+            // disband would erase every contribution the clan has scored
             if (isSoloLeader && !eventPerm("allowDisband")) {
                 showToast("Disbanding is locked during this event.");
                 return;
@@ -4499,8 +4064,8 @@
                 return;
             }
             if (isLeader) {
-                // Last member & leader -> disband.
-                detachClanListener(); // stop listening before the doc vanishes
+                // solo leader = disband
+                detachClanListener();
                 await fb.deleteDoc(fb.doc(fb.db, "clans", myClan.id));
             } else {
                 const members = (myClan.members ?? []).filter(m => m.userId !== uid);
@@ -4511,10 +4076,7 @@
             renderClanView();
         } catch (e) {
             console.error("[RG HUD] Leave clan failed:", e);
-            // v13.6: user-initiated action -- surface failures. Local state
-            // was already partially wiped above (detachClanListener +
-            // myClan=null), which could leave the UI in a weird half-state
-            // if the write failed. Toast + suggest a refresh.
+            // v13.6: local state is already partially wiped above — surface it
             showToast("Couldn't leave clan — refresh the page to retry.");
         }
     }
@@ -4546,25 +4108,18 @@
         if (myClan) attachClanListener();
     }
 
-    // Re-renders the clan tab from whatever's already in myClan/clanDirectory --
-    // no Firestore reads. Called after a match sync (which already refreshed
-    // myClan in memory) so the event score updates live, piggybacking on data
-    // we already have instead of reading again.
+    // zero-read repaint from in-memory myClan
     function renderClanViewFromMemory() {
         const view = document.getElementById("rgClanView");
         if (!view) return;
         myClan ? renderMyClan(view) : renderNoClan(view);
     }
 
-    // If the clan tab is currently open, refresh it in place (no reads).
+    // refresh clan tab in place if it's open
     function refreshClanViewIfOpen() {
         const view = document.getElementById("rgClanView");
         if (view && view.style.display !== "none") {
             renderClanViewFromMemory();
-            // Keep the live listener aligned with whatever clan is now shown.
-            // Idempotent: no-ops when already subscribed to this clan; swaps
-            // subscription when the clan changed; detached state stays
-            // detached only when there is no clan at all.
             if (myClan) attachClanListener();
         }
     }
@@ -4632,8 +4187,7 @@
         [nameEl, tagEl].forEach(el => {
             el.addEventListener("keydown", e => e.stopPropagation(), true);
         });
-        // Live tag hygiene: uppercase and letter-only as they type, so the
-        // visual field never shows an illegal character even for a moment.
+        // uppercase + letter-only as they type
         tagEl.style.textTransform = "uppercase";
         tagEl.addEventListener("input", () => {
             const clean = sanitizeClanTag(tagEl.value);
@@ -4662,13 +4216,9 @@
         const rank = [...clanDirectory].sort((a, b) => (b.totalMMR ?? 0) - (a.totalMMR ?? 0))
             .findIndex(c => c.id === myClan.id) + 1;
 
-        // Manage menu (⋯) shows for anyone whose role can kick OR change
-        // roles (matrix-driven). Rank guards still apply per-target below.
+        // ⋯ menu — per-target rank guards still apply below
         const canManage = rolePerm(myRole, "kick") || rolePerm(myRole, "roleChange");
-        // Per-member event contribution: current MMR minus their baseline
-        // captured at first sync during this event. Only meaningful while the
-        // event is active AND the baseline map belongs to the current event
-        // (clanBaselineForCurrentEvent handles the staleness guard).
+        // current MMR minus per-member baseline (only during active event)
         const eventActive = eventPhase() === "active";
         const eventBaselines = eventActive ? (clanBaselineForCurrentEvent(myClan) || {}) : {};
         const contribFor = (member) => {
@@ -4685,9 +4235,7 @@
                 const actable = canManage && m.userId !== uid && m.role !== "leader"
                     && (ROLE_RANK[m.role] ?? 0) < (ROLE_RANK[myRole] ?? 0);
                 const contrib = contribFor(m);
-                // Freshness: how old is this member's last synced MMR? Turns
-                // "why is Xuuya +0?!" into "ah, Xuuya last synced 2h ago" --
-                // distinguishing staleness from zero effort at a glance.
+                // shows staleness so "+0" vs "last synced 2h ago" is clear
                 const ageMs = typeof m.syncedAt === "number" ? Date.now() - m.syncedAt : null;
                 const ageLabel = ageMs == null ? null
                     : ageMs < 90e3 ? "just now"
@@ -4695,9 +4243,8 @@
                     : ageMs < 86400e3 ? `${Math.round(ageMs / 3600e3)}h ago`
                     : `${Math.round(ageMs / 86400e3)}d ago`;
                 const freshnessNote = ageLabel ? `· last synced ${ageLabel}` : "· sync age unknown (teammate needs v12.9+)";
-                const stale = ageMs != null && ageMs > 3600e3; // >1h: dim the chip
-                // Contribution chip: green for gain, red for loss, gray dash for
-                // "hasn't played this event yet." Only shown during active event.
+                const stale = ageMs != null && ageMs > 3600e3;
+                // green gain, red loss, gray dash = hasn't played this event
                 const contribHtml = eventActive
                     ? (contrib == null
                         ? `<span title="Hasn't played during this event yet" style="opacity:.4;font-size:10px;font-family:monospace;">—</span>`
@@ -4768,8 +4315,7 @@
             if (editBtn) editBtn.onclick = showEditClanForm;
         }
 
-        // Members list is collapsed by default to reserve HUD vertical space;
-        // clicking the header (or the little arrow) toggles it.
+        // collapsed by default to save HUD height
         const mHeader = document.getElementById("rgMembersHeader");
         if (mHeader) {
             mHeader.onclick = () => {
@@ -4780,9 +4326,7 @@
                 arrow.textContent = open ? "▶" : "▼";
             };
         }
-        // Clan Tag Style collapsible toggle -- mirrors Members. Collapsed by
-        // default; renderClanTagPanel() still runs so the body is ready when
-        // the header is clicked open (and its live preview stays warm too).
+        // renderClanTagPanel still runs so the preview is ready when opened
         const tHeader = document.getElementById("rgClanTagHeader");
         if (tHeader) {
             tHeader.onclick = () => {
@@ -4803,8 +4347,7 @@
             await showManageMemberMenu(tUid, tName, tRole, myRole, myClan.leaderId === uid);
         });
         renderClanTagPanel();
-        // Event lockdown UI: gray out Leave button for non-leader members
-        // when allowLeave is off. Leader\'s own leave/disband is separate.
+        // gray out Leave for non-leader members when allowLeave is off
         if (!eventPerm("allowLeave") && myClan && myClan.leaderId !== myUserId()) {
             const lb = document.getElementById("rgLeaveClan");
             if (lb) {
@@ -4821,7 +4364,7 @@
         };
     }
 
-    // Themed replacements for native alert/confirm/prompt.
+    // themed alert/confirm/prompt
     let toastTimeout = null;
     function showToast(msg) {
         createHUD();
@@ -4837,9 +4380,7 @@
         }, 2800);
     }
 
-    // Themed confirm/prompt. Returns a promise:
-    //  - confirm mode -> resolves true/false
-    //  - prompt mode  -> resolves the string, or null if cancelled
+    // confirm -> bool. prompt -> string or null.
     function showDialog({ message, withInput = false, inputPlaceholder = "", okLabel = "OK", cancelLabel = "Cancel" }) {
         return new Promise(resolve => {
             createHUD();
@@ -4853,15 +4394,11 @@
             const cancelBtn = document.getElementById("rgDialogCancel");
 
             msgEl.textContent = message;
-            // v13.6: preserve line breaks in dialog messages so multi-line
-            // content (session recap) renders as intended. `textContent` still
-            // escapes HTML -- pre-wrap just controls whitespace collapsing.
+            // v13.6: preserve line breaks for multi-line messages (session recap)
             msgEl.style.whiteSpace = "pre-wrap";
             okBtn.textContent = okLabel;
             cancelBtn.textContent = cancelLabel;
-            // v13.6: hide cancel entirely when caller passes empty label,
-            // so info-only dialogs (session recap) don't show a phantom
-            // second button.
+            // v13.6: empty label -> no phantom cancel button on info dialogs
             cancelBtn.style.display = cancelLabel ? "" : "none";
             input.style.display = withInput ? "block" : "none";
             input.value = "";
@@ -4885,15 +4422,13 @@
         });
     }
 
-    // A small action menu for managing one member -- rendered into the clan view
-    // temporarily. Options depend on the actor's role and the target's role.
+    // rendered temporarily into the clan view
     async function showManageMemberMenu(userId, name, targetRole, actorRole, actorIsLeader) {
         const view = document.getElementById("rgClanView");
         if (!view) return;
 
-        // Build the list of allowed actions.
         const actions = [];
-        // Role changes: offer any role strictly below the actor that isn't the current one.
+        // any role strictly below the actor that isn't the current one
         const assignable = ["coleader", "elder", "member"].filter(r =>
             r !== targetRole && canSetRole(actorRole, targetRole, r)
         );
@@ -4901,7 +4436,6 @@
             const verb = (ROLE_RANK[r] > ROLE_RANK[targetRole]) ? "Promote to" : "Demote to";
             actions.push({ label: `${verb} ${r}`, run: () => setMemberRole(userId, r) });
         }
-        // Transfer leadership: leader only, and only if the matrix allows it.
         if (actorIsLeader && rolePerm(actorRole, "transfer")) {
             actions.push({ label: "👑 Transfer leadership", danger: true, run: async () => {
                 const sure = await showDialog({
@@ -4911,7 +4445,6 @@
                 if (sure) transferLeadership(userId);
             }});
         }
-        // Kick: only offered when the actor's role carries the permission.
         if (rolePerm(actorRole, "kick")) actions.push({ label: "❌ Kick from clan", danger: true, run: async () => {
             const sure = await showDialog({ message: `Kick ${name} from the clan?`, okLabel: "Kick", cancelLabel: "Cancel" });
             if (!sure) { renderClanView(); return; }
@@ -4947,10 +4480,7 @@
         ));
     }
 
-    // v13.6 -------- Session recap --------
-    // On-demand summary of the current session: how long, MMR movement per
-    // playlist, best streak, current Clash contribution (if event active).
-    // Plain text through showDialog (textContent, so nothing spooky).
+    // v13.6: on-demand session summary. plain text via showDialog.
     function showSessionRecap() {
         if (!sessionStart) {
             showDialog({ message: "No session data yet. Log in or play a match, then check back.", okLabel: "OK", cancelLabel: "" });
@@ -5022,17 +4552,9 @@
         }
     }, 100);
 
-    // v13.6: _inMatch watchdog. The v13.5 state machine correctly refuses
-    // to auto-restore the HUD while _inMatch=true, which prevents the
-    // reconnect-storm false-fires the v13.4 hook had. But if the game
-    // NEVER emits matchEnd / LeaveRoom / "Set player matchmaking start
-    // time" (e.g. tab was throttled, client killed and reconnected via a
-    // silent path, ISP flake), _inMatch stays true forever and the HUD
-    // stays hidden until page reload. Once every 60 seconds, check: if
-    // we've been "in match" but haven't seen an init line in 10+ minutes
-    // AND a recovery signal fired recently, we're stuck -- clear and
-    // restore. 10 minutes exceeds any real match length so we won't
-    // clobber legit mid-match state.
+    // v13.6: watchdog for _inMatch. if the game silently reconnects without
+    // emitting matchEnd/LeaveRoom, the HUD stays hidden forever. 10min
+    // exceeds any real match so we won't clobber legit state.
     const INMATCH_STALE_MS = 10 * 60 * 1000;
     setInterval(() => {
         if (!_inMatch) return;
@@ -5049,15 +4571,9 @@
 
 
     // ==================================================================
-    // 🎨 NAME FORGE (integrated) -- gradient/rich-text in-game nickname
-    // builder. Lives in its own scope: it shares helper names (esc, el,
-    // render...) with the HUD, so the wrapper prevents collisions. Its
-    // draggable 🎨 bubble + Alt+N shortcut work as in the standalone;
-    // the HUD's "🎨 Name" button toggles the same panel. Presets/history
-    // use the same localStorage keys as the standalone, so users' saved
-    // work carries over automatically. NOTE: this edits the IN-GAME
-    // nickname (rich TMP text); the ✏️ Rename button edits the separate
-    // 15-char LEADERBOARD display name.
+    // 🎨 NAME FORGE — rich-text in-game nickname builder.
+    // wrapped so helper names (esc, el, ...) don't collide with the HUD.
+    // edits the IN-GAME nickname; ✏️ Rename edits the leaderboard name.
     // ==================================================================
     const RGNF = (function () {
       let _rgnfFab = null, _rgnfPanel = null;
@@ -5068,33 +4584,25 @@
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
   const STORE_KEY = 'rgNameForge.presets.v1';
   const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
-  // Per-account state key so switching accounts loads that account\'s last
-  // customized name instead of leaking the previous account\'s work. The
-  // legacy key is read as a one-time fallback when the per-account slot is
-  // empty (so users don\'t lose their existing customization on upgrade).
+  // per-account state — legacy key read once as fallback on upgrade
   let _currentUserId = null;
-  let _lastRawNickname = ''; // latest known in-game name markup, for the Reset button
+  let _lastRawNickname = '';
   const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
   const HISTORY_KEY = 'rgNameForge.history.v1';
-  // Pending-steal receipt: written on a successful Steal, verified on the
-  // next boot. The game's boot-time SetNickname echo can push a STALE
-  // (pre-steal) nickname back to the server -- login read races the steal
-  // write -- silently undoing a steal the server had already accepted.
-  // That's the "steal, refresh, didn't take, steal again" double-steal bug.
-  // On boot we compare the login nickname to this receipt and re-apply once
-  // on mismatch, AFTER the game's echo lands, so our write is last.
+  // steal receipt. boot-time SetNickname echo can undo a fresh steal, so
+  // we re-apply once after boot if the login nickname doesn't match.
   const pendingStealKey = () => 'rgNameForge.pendingSteal.v1.' + (_currentUserId || 'anon');
   const PENDING_STEAL_TTL_MS = 15 * 60 * 1000;
   const FABPOS_KEY = 'rgNameForge.fabPos.v1';
   const PALETTES = [
     { label: '🔥 Fire', stops: ['#FF4D00', '#FFB800', '#FF0000'] },
-    { label: '🌊 Ocean', stops: ['#00FFFF', '#0000FF'] }, // signature ramp -- matches RootedEngineering (green channel descends, blue pinned)
+    { label: '🌊 Ocean', stops: ['#00FFFF', '#0000FF'] }, // matches RootedEngineering ramp
     { label: '🌈 Rainbow', stops: ['#FF0000', '#FFFF00', '#00FF00', '#00BFFF', '#8B00FF'] },
     { label: '🌇 Sunset', stops: ['#FF6B6B', '#FFB347', '#8E44AD'] },
     { label: '☢️ Toxic', stops: ['#39FF14', '#CCFF00', '#00FF9F'] },
     { label: '❄️ Ice', stops: ['#E0FFFF', '#7DD3FC', '#2563EB'] },
   ];
-  // Sprite atlas mapped from in-game screenshot (0-15, left to right)
+  // sprite atlas from in-game screenshot (0-15, left to right)
   const SPRITES = [
     { n: 0,  e: '😊', label: 'Blush smile' },
     { n: 1,  e: '😋', label: 'Tongue-savoring' },
@@ -5141,9 +4649,7 @@
     titleColor: '#94a3b8',
     titleSizePct: 60,
     titleSub: true,                   // wrap title in <sub> for that low-set look
-    // Title now has its OWN styling parallel to the name. Previously title
-    // borrowed the name\'s stops/bold/etc, which meant "customize title" was a
-    // half-lie. Full independence: separate palette, gradient, style toggles.
+    // title has its own styling now — used to borrow name's stops
     titleStops: ['#ff8fb1', '#a78bfa'],
     titlePaletteKey: null,
     titleBold: false,
@@ -5151,8 +4657,7 @@
     titleUnderline: false,
     titleStrike: false,
     titleAlpha: 255,                  // 0-255 alpha on titleColor (solid only)
-    // Alpha for the NAME\'s solid color, so trailing text like the URL line
-    // can be dimmed (Dawson\'s own name uses <#ffffff44> for exactly this).
+    // alpha on the name's solid color — dims trailing URL text etc
     solidAlpha: 255,
     scoredMode: 'default',            // 'default' | 'hide' | 'tiny' | 'styled'
     scoredColor: '#22d3ee',
@@ -5266,11 +4771,11 @@
       out += tok.value;
       i++;
     }
-    if (wave) out += '<rotate=0>'; // reset so trailing text (title/Scored!) sits level
+    if (wave) out += '<rotate=0>'; // reset so trailing title/Scored! stays level
     return out;
   }
 
-  // Split text into chars, but keep <sprite=N> tags intact as single tokens
+  // chars, but <sprite=N> tags stay as single tokens
   function tokenize(text) {
     const tokens = [];
     const re = /<sprite=\d+>/g;
@@ -5301,9 +4806,7 @@
 
     let code = open + nameCode + close;
 
-    // Title line -- fully independent styling from the name.
-    // Colors: solid gets <#RRGGBB> or <#RRGGBBAA> (alpha < 255 emits 8-digit).
-    // Gradient uses titleStops via colorizeText (same function name works both).
+    // title line — fully independent styling
     if (s.titleOn && s.titleText.trim().length > 0) {
       let t = s.titleText;
       if (s.titleColorMode === 'solid') {
@@ -5311,8 +4814,7 @@
         t = `<${s.titleColor.toUpperCase()}${aa}>` + t;
       } else if (s.titleColorMode === 'gradient') {
         t = colorizeText(t, 'gradient', s.titleColor, s.titleStops, s.skipSpaces);
-        // Alpha on gradient: append the alpha byte to every <#RRGGBB> tag in
-        // one pass, so title gradient can be transparent like solid can.
+        // append alpha byte to every <#RRGGBB> so gradients can be transparent too
         const aaG = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
         if (aaG) t = t.replace(/<(#[0-9A-Fa-f]{6})>/g, `<$1${aaG}>`);
       }
@@ -5350,22 +4852,13 @@
     const styles = [];
     if (s.bold) styles.push('font-weight:700');
     if (s.italic) styles.push('font-style:italic');
-    // Per-letter decoration mirror: the in-game TMP tags wrap each character
-    // (<u>a</u><u>b</u>...) so we do the same in the preview. Setting
-    // text-decoration only on the parent nameLine gets visually overpowered
-    // when child spans set their own color, and breaks entirely for spans
-    // that use rotate transforms (each inline-block becomes its own
-    // decoration context). Applied per-span below via decoCSS.
+    // per-letter decoration mirrors in-game TMP. applied per-span below via decoCSS.
     if (s.sizePct !== 100) styles.push(`font-size:${Math.max(8, 18 * s.sizePct / 100)}px`);
     if (s.markOn) styles.push(`background:${s.markColor}${alphaHex(s.markAlpha)}`);
     nameLine.style.cssText = styles.join(';');
 
-    // Clan tag prefix: minimally parses "<b>", "<#XXXXXX>" wrappers so the
-    // preview reflects what will actually be sent. Anything unrecognized is
-    // shown as plain text so we never render markup like literal <color> tags.
-    // Clan tag prefix: render TMP-style markup ( <b>, <i>, <#RRGGBB>,
-    // <rotate=N> ) into styled DOM. Supports gradient (per-char color) and
-    // wave/rotate (per-char rotation) markup so preview matches in-game.
+    // clan tag prefix: parse a small TMP subset into styled DOM so the preview
+    // matches what actually gets sent
     const pfx = _prefix();
     if (pfx) {
       let inner = pfx;
@@ -5426,8 +4919,7 @@
             span.style.color = gradientAt(s.stops, t);
           }
         }
-        // Per-span decoration: applied here (not on the parent) so it
-        // survives rotate transforms and inherits each glyph's own color.
+        // per-span decoration — survives rotate + inherits glyph color
         if (decoCSS && tok.value !== ' ') {
           span.style.textDecorationLine = decoCSS;
           span.style.textDecorationColor = span.style.color || 'currentColor';
@@ -5462,13 +4954,11 @@
       if (titleDeco.length) titleLine.style.textDecorationLine = titleDeco.join(' ');
       if (s.titleColorMode === 'solid') {
         titleLine.textContent = s.titleText;
-        // Match TMP 8-digit hex: append alpha byte when < 255 (browsers accept it).
+        // 8-digit hex: append alpha byte when < 255
         const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
         titleLine.style.color = s.titleColor + aa;
       } else if (s.titleColorMode === 'gradient') {
-        // Fix: use s.titleStops (not s.stops -- that was the name\'s palette
-        // leaking through). Apply titleAlpha across every letter for gradient
-        // transparency parity with solid mode.
+        // use titleStops (was leaking s.stops from the name)
         const chars = [...s.titleText];
         const paint = chars.filter(c => c !== ' ').length;
         const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
@@ -5567,11 +5057,8 @@
   // ------------------------------------------------------------------
   async function applyNickname(code) {
     const token = await getIdToken();
-    // Account guard: decode the JWT and confirm it belongs to the account
-    // the game says we are. The IndexedDB token fallback can serve a stale
-    // token in multi-account browsers -- which applies the nickname to the
-    // WRONG account, returns true, and looks exactly like "the apply
-    // succeeded but my name didn't change." Fail loudly instead.
+    // guard: IndexedDB fallback can serve a stale token in multi-account
+    // browsers and apply to the WRONG account. fail loudly instead.
     let mismatch = null;
     try {
       const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -5591,20 +5078,13 @@
       body: new URLSearchParams({ nickname: code }),
     });
     const body = await res.text();
-    // Diagnostic trail for the "reveal played but name didn't change" report:
-    // every apply logs its true server verdict, so a recurrence tells us
-    // whether the server actually accepted it.
+    // log every apply's server verdict — helps debug "why didn't my name change"
     console.log('[RG HUD] nickname apply ->', res.status, body.trim().slice(0, 60));
     return { ok: res.ok && body.trim() === 'true', status: res.status, body };
   }
 
-  // One-shot per page load: verify the last steal actually survived the
-  // game's boot-time SetNickname echo. Called from syncToCurrentPlayer with
-  // the nickname the login response returned. Match -> receipt cleared,
-  // steal confirmed stuck. Mismatch -> the echo overwrote it; re-apply once
-  // after a 4s delay so the game's own push has already landed and our
-  // write wins. Idempotent and TTL-bound, so a stale receipt can't ping-pong
-  // names days later or fight a name the player changed on purpose.
+  // once per page load: check the last steal survived the game's boot echo.
+  // mismatch -> re-apply once after 4s so our write lands last. TTL-bound.
   let _stealVerified = false;
   function verifyPendingSteal(rawNickname) {
     if (_stealVerified) return;
@@ -5618,13 +5098,8 @@
       return;
     }
     const nick = String(rawNickname || '');
-    // v13.6: `nick` here is the raw response, which the CALLER has already
-    // partially stripped (syncToCurrentPlayer feeds it via
-    // stripLeadingClanTagMarkup). `pending.body` and `pending.code` were
-    // saved without that strip. If the current user is in the same clan as
-    // the player they stole a name from, the strip removes the `[TAG]`
-    // prefix from `nick` but leaves it on `pending.*` -- mismatch, false
-    // re-apply cycle on every refresh. Compare both forms.
+    // v13.6: caller has stripped clan-tag prefix from nick, pending.* wasn't
+    // stripped. compare both forms or same-clan steals ping-pong forever.
     let stripFn;
     try { stripFn = stripLeadingClanTagMarkup; } catch (e) { stripFn = s => s; }
     const strip = s => { try { return stripFn(String(s || "")); } catch (e) { return String(s || ""); } };
@@ -5679,9 +5154,7 @@
     .rgnf-fab:hover { transform: translateY(-2px) scale(1.04); }
     .rgnf-fab:active { cursor: grabbing; }
     .rgnf-panel {
-      /* Base: block that fills its container. The fly-out fixed positioning
-         and 360px width come from .rgnf-open below, so the panel is fine to
-         embed inside the HUD's Forge tab without any width-fighting. */
+      /* fly-out positioning + 360px is in .rgnf-open, base fills container */
       color: var(--rgnf-text);
       font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
       display: none;
@@ -5748,10 +5221,7 @@
       background: radial-gradient(120% 140% at 50% 0%, #101a3a 0%, #070a16 70%);
       border: 1px solid var(--rgnf-line); border-radius: 12px; padding: 14px; text-align: center;
       min-height: 56px; display: flex; align-items: center; justify-content: center;
-      /* Sticky: pins to the top of the scrolling tab container. Placed as a
-         direct child of the panel (not nested inside secPreview) so its
-         parent extent is the full scrollable body -- otherwise sticky would
-         unmoor the moment secPreview's shorter box scrolled past. */
+      /* sticky at top of scrollable body; must be a direct panel child */
       position: sticky; top: 0; z-index: 5;
       box-shadow: 0 6px 8px -6px rgba(0,0,0,0.6);
       margin-bottom: 8px;
@@ -5766,14 +5236,14 @@
     .rgnf-meta { display: flex; justify-content: space-between; color: var(--rgnf-muted); font-size: 11px; margin-top: 4px; }
     .rgnf-btn {
       border: none; border-radius: 10px; padding: 9px 12px; font-weight: 700; cursor: pointer; font-size: 13px;
-      min-width: 0; /* let flex children shrink below their content width */
+      min-width: 0;
     }
     .rgnf-btn-apply {
       flex: 1; color: #06121a;
       background: linear-gradient(90deg, var(--rgnf-accent), var(--rgnf-accent-2));
     }
     .rgnf-btn-ghost { background: var(--rgnf-panel); color: var(--rgnf-text); border: 1px solid var(--rgnf-line); flex-shrink: 0; }
-    /* Rows wrap when the panel is embedded narrow; keeps buttons on-screen. */
+    /* wrap on narrow embeds so buttons stay on-screen */
     .rgnf-row { flex-wrap: wrap; }
     .rgnf-status { margin-top: 8px; font-size: 12px; min-height: 16px; }
     .rgnf-status.ok { color: #34d399; }
@@ -5810,19 +5280,14 @@
     return node;
   }
 
-  // Inline folder picker: a styled overlay inside the Forge panel, NOT a
-  // native prompt(). Optionally collects a preset NAME as well (nameField +
-  // nameDefault), so the whole save flow is one clean panel. Shows a dropdown
-  // of existing folders plus a "new folder" text field. Resolves via onPick
-  // with ({ name, folder }) -- name is '' when nameField is false. Because the
-  // caller passes the folder list at call time, new folders always appear
-  // without a page refresh.
+  // inline styled overlay picker — not a native prompt. onPick gets
+  // ({ name, folder }); name is '' when nameField is false.
   function openFolderPicker(panel, { title, existing, current, onPick, nameField = false, nameDefault = '', nameOnly = false }) {
     const backdrop = el('div', { class: 'rgnf-picker-backdrop' });
     const box = el('div', { class: 'rgnf-picker' });
     box.appendChild(el('div', { class: 'rgnf-picker-title', text: title }));
 
-    // Optional name field (for Save / promote / rename flows)
+    // name field (Save / promote / rename)
     let nameInput = null;
     if (nameField) {
       if (!nameOnly) box.appendChild(el('div', { class: 'rgnf-picker-label', text: 'Name' }));
@@ -5831,8 +5296,7 @@
       if (!nameOnly) box.appendChild(el('div', { class: 'rgnf-picker-label', text: 'Folder' }));
     }
 
-    // Dropdown of existing folders (+ Ungrouped + a "new folder" sentinel).
-    // Suppressed entirely for name-only calls (e.g. folder rename).
+    // hidden entirely for name-only calls
     const sel = el('select', { class: 'rgnf-picker-select' });
     sel.appendChild(el('option', { value: '', text: '📂 Ungrouped' }));
     existing.filter(f => f && f !== 'Ungrouped').forEach(f => {
@@ -5843,7 +5307,7 @@
     sel.appendChild(el('option', { value: '__new__', text: '➕ New folder…' }));
     if (!nameOnly) box.appendChild(sel);
 
-    // New-folder text field, revealed when "New folder…" is chosen
+    // shown when "New folder…" is picked
     const newWrap = el('div', { class: 'rgnf-row' });
     newWrap.style.display = 'none';
     const newInput = el('input', { type: 'text', placeholder: 'New folder name', class: 'rgnf-picker-input' });
@@ -5865,7 +5329,7 @@
       onclick: () => {
         const folder = sel.value === '__new__' ? newInput.value.trim() : sel.value;
         const name = nameInput ? nameInput.value.trim() : '';
-        if (nameField && !name) { nameInput.focus(); return; } // name required
+        if (nameField && !name) { nameInput.focus(); return; }
         close();
         onPick(nameField ? { name, folder } : folder);
         return;
@@ -5887,13 +5351,12 @@
     const panel = el('div', { class: 'rgnf-panel' });
 
 
-    // Restore saved FAB position (stored as left/top in px)
     const savedPos = loadJSON(FABPOS_KEY, null);
     if (savedPos && typeof savedPos.left === 'number' && typeof savedPos.top === 'number') {
       applyFabPos(fab, savedPos.left, savedPos.top);
     }
 
-    // Keep the FAB on-screen if the window was resized smaller since last visit
+    // keep the FAB on-screen when the window shrinks
     window.addEventListener('resize', () => clampFab(fab));
 
     makeFabDraggable(fab, panel);
@@ -5905,9 +5368,8 @@
     window.addEventListener('keydown', (e) => {
       if (e.altKey && e.code === 'KeyN' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        // Once Forge is mounted in ATLAS, route the shortcut through the HUD
-        // tab button. Re-applying the legacy flyout class here would yank the
-        // embedded panel into a fixed bottom-right overlay.
+        // when embedded in ATLAS, route the shortcut through the HUD tab
+        // (opening the flyout would yank it into a fixed overlay)
         if (_mountedIn) {
           const hudEl = document.getElementById('rgHUD');
           const bodyEl = document.getElementById('rgBody');
@@ -5937,17 +5399,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
     render(panel);
   }
 
-  // Position the panel next to the FAB, flipping sides/vertical as needed to stay on-screen
+  // flips sides/vertical as needed to stay on-screen
   function positionPanel(fab, panel) {
     const f = fab.getBoundingClientRect();
     const gap = 12;
-    const pw = 360; // matches CSS width
+    const pw = 360;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
-    // Horizontal: prefer left-aligned with FAB, flip left if it would overflow right edge
+    // left-align with FAB, flip if it would overflow the right edge
     let left = f.left;
     if (left + pw > window.innerWidth - 8) left = Math.max(8, f.right - pw);
-    // Vertical: prefer opening upward from the FAB; if not enough room, open downward
+    // open upward, fall back to downward if there's no room
     const ph = Math.min(window.innerHeight * 0.78, 640);
     let top = f.top - gap - ph;
     if (top < 8) top = Math.min(window.innerHeight - ph - 8, f.bottom + gap);
@@ -5970,7 +5432,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
 
   function clampFab(fab) {
     const r = fab.getBoundingClientRect();
-    // If still anchored via right/bottom (never moved), leave it alone
+    // still anchored via right/bottom (never moved) -> leave alone
     if (fab.style.left === '' || fab.style.left === 'auto') return;
     const maxLeft = window.innerWidth - r.width - 6;
     const maxTop = window.innerHeight - r.height - 6;
@@ -5981,7 +5443,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
 
   function makeFabDraggable(fab, panel) {
     let sx, sy, ox, oy, dragging = false, moved = false;
-    const DRAG_THRESHOLD = 4; // px before a press counts as a drag not a click
+    const DRAG_THRESHOLD = 4;
 
     const onDown = (e) => {
       const pt = e.touches ? e.touches[0] : e;
@@ -6028,15 +5490,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
 
-  // Render raw TMP-style nickname markup into DOM for the preview. Handles
-  // the tags Rocket Goal names actually use: <#RRGGBB>/<#RRGGBBAA> colors,
-  // <b> <i> <sub> (open/close), <size=N%>, <rotate=N>, <mark=#hex>, <br>,
-  // <sprite=N> (shown via the SPRITES emoji map). Unknown tags are skipped
-  // so preview shows the intent, never literal angle-bracket soup.
-  // Among Us-style role reveal: fired when a name is stolen. Full-screen
-  // dark flash, red title scaling in with expanding-then-settling letter
-  // spacing, the stolen name rendered underneath, all gone in ~1.6s.
-  // pointer-events:none + self-removal means it can never block the UI.
+  // among-us role reveal on name steal. pointer-events:none + self-removal.
   function showImposterReveal(raw) {
     if (!document.getElementById('rgnfImposterKf')) {
       const st = document.createElement('style');
@@ -6088,7 +5542,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         sp.textContent = spriteEmoji(Number(m[1]));
         line.appendChild(sp); i += m[0].length; continue;
       }
-      if ((m = rest.match(/^<[^>]*>/))) { i += m[0].length; continue; } // unknown tag: skip
+      if ((m = rest.match(/^<[^>]*>/))) { i += m[0].length; continue; } // unknown tag
       const ch = raw[i];
       const span = document.createElement('span');
       span.textContent = ch;
@@ -6110,22 +5564,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
     panel.innerHTML = '';
     saveJSON(stateKey(), state);
 
-    // ---- Header (draggable in fly-out mode; inert inside HUD tab) ----
-    // The ✕ close button was removed when Forge became a HUD tab: closing is
-    // now done by clicking the 🎨 header icon again, matching Clans/Settings.
+    // ---- header (draggable in fly-out mode; inert inside HUD tab) ----
     const head = el('div', { class: 'rgnf-head' }, [
       el('b', { text: 'Name Forge' }),
     ]);
     makeDraggable(panel, head);
     panel.appendChild(head);
 
-    // Touch-to-exit for raw mode: attached once to the panel (persists across
-    // innerHTML rebuilds). Fires ONLY on genuine user interaction -- pointer
-    // or key -- never programmatically, which is what made the old timer
-    // heuristic dangerous. Interacting with any styling control clears the
-    // raw snapshot so the control's own handler proceeds against rebuild
-    // state; the mode bar is removed inline so there's no stale banner and
-    // no focus-stealing re-render mid-interaction.
+    // touch-to-exit raw mode. wired once, fires only on real user input.
+    // touching a styling control clears the raw snapshot so its handler wins.
     if (!panel._rgnfRawExitWired) {
       panel._rgnfRawExitWired = true;
       const exitRawIfStylingTouch = (e) => {
@@ -6145,22 +5592,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
       panel.addEventListener('keydown', exitRawIfStylingTouch, true);
     }
 
-    // ---- Preview + code ----
-    // The rendered preview BOX is appended directly to the panel (Forge's
-    // outer container) rather than nested inside secPreview, because CSS
-    // sticky only holds while the PARENT is in the viewport. Nested inside
-    // secPreview it would let go the moment the code block scrolled the
-    // section past. Appended directly to the panel, its parent is the entire
-    // scrollable tab -- so it stays pinned no matter how far you scroll.
-    // The section header/code/meta stay in secPreview and scroll normally.
+    // ---- preview + code ----
+    // preview goes directly on the panel so sticky's parent is the full
+    // scrollable body. header/code/meta stay in secPreview and scroll.
     const pv = el('div', { class: 'rgnf-preview' });
     pv.appendChild(renderPreview(state));
     panel.appendChild(pv);
 
     const secPreview = el('div', { class: 'rgnf-sec rgnf-preview-sec' });
-    // Header row: "Preview" label + a minimal ↺ reset icon that reloads the
-    // player's exact current in-game name (markup, colors, everything). No
-    // banner, no block -- just the one small escape hatch, always available.
+    // "Preview" label + ↺ reset to the current in-game name
     {
       const hrow = el('div', {});
       hrow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;';
@@ -6176,24 +5616,18 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }
       secPreview.appendChild(hrow);
     }
-    // Single always-editable code box (no separate readonly div). You can
-    // hand-edit the markup in EITHER mode. Editing while in rebuild mode
-    // snapshots the current built code into rawCode and flips to raw mode, so
-    // your manual edits are never clobbered by a subsequent rebuild.
+    // hand-editing either mode captures the text as rawCode and flips to raw
+    // so subsequent rebuilds don't clobber the edit
     const rawEdit = el('textarea', { class: 'rgnf-code' });
     rawEdit.style.cssText = 'display:block;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow:hidden;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:#9fb3ff;';
-    // Auto-size: grow and shrink to exactly fit the markup. Height resets to
-    // auto first so shrinking works (scrollHeight never reports smaller than
-    // the current fixed height otherwise).
+    // reset to auto first — scrollHeight won't shrink below the current height
     const autosizeRawEdit = () => {
       rawEdit.style.height = 'auto';
       rawEdit.style.height = (rawEdit.scrollHeight + 2) + 'px';
     };
     rawEdit.addEventListener('input', () => {
       autosizeRawEdit();
-      // Hand-editing the box IS raw authoring: capturing the text as rawCode
-      // is itself what puts us in raw mode (refreshPreview keys off rawCode
-      // being non-null), so the styling controls stop overwriting it.
+      // capturing text as rawCode flips us into raw mode (refreshPreview keys off it)
       state.rawCode = rawEdit.value;
       const rawPfx = _prefix();
       pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
@@ -6208,30 +5642,24 @@ _rgnfFab = fab; _rgnfPanel = panel;
     secPreview.appendChild(el('div', { class: 'rgnf-meta' }, [charSpan, letterSpan]));
     panel.appendChild(secPreview);
 
-    // Update just the preview/code/meta without rebuilding the panel,
-    // so the name field keeps focus and cursor position while typing.
+    // update preview/code/meta without rebuilding the panel, so the name field
+    // keeps focus and cursor position while typing
     const refreshPreview = () => {
       if (state.rawCode) {
-        // Raw mode: the editable box holds the raw name for surgical edits
-        // (e.g. deleting an old hardcoded [TAG] chunk). The clan-tag prefix
-        // applies HERE TOO -- checkbox on means the tag prepends in every
-        // mode, no exceptions (the old raw-mode exclusion made the clan-tag
-        // feature silently dead for anyone in raw mode, i.e. everyone).
-        // If a raw name still contains its old hardcoded tag, the preview
-        // will show it doubled -- the fix is deleting it in the box below.
+        // clan-tag prefix applies in raw mode too. old hardcoded tags in the raw
+        // name will preview doubled — fix by deleting them in the textarea.
         const rawPfx = _prefix();
         pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
         if (rawEdit.value !== state.rawCode) rawEdit.value = state.rawCode;
-        autosizeRawEdit(); // fit content on programmatic loads (reset/steal/preset)
+        autosizeRawEdit();
         charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
         const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
         letterSpan.textContent = `${[...plainLetters].length} letters`;
         saveJSON(stateKey(), state);
         return;
       }
-      // Rebuild mode: show the built code in the same editable box. Store it
-      // WITHOUT the prefix (matching rawCode convention) so if the user then
-      // hand-edits, the captured rawCode has no baked-in tag.
+      // rebuild mode: store without the prefix so a subsequent hand-edit's
+      // rawCode capture has no baked-in tag
       const built = buildCode(state);
       const code = _prefix() + built;
       pv.replaceChildren(renderPreview(state));
@@ -6426,13 +5854,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
         }));
       });
       secTitle.appendChild(tm);
-      // Solid: color picker (opacity moved below so it also applies to gradient)
+      // opacity is below — applies to solid AND gradient
       if (state.titleColorMode === 'solid') {
         secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
           el('input', { type: 'color', value: state.titleColor, oninput: (e) => { state.titleColor = e.target.value; refreshPreview(); } }),
         ]));
       }
-      // Gradient: own palette chips + own editable stops (mirrors Name gradient)
+      // own palettes + stops (mirrors Name gradient)
       if (state.titleColorMode === 'gradient') {
         const palRow = el('div', { class: 'rgnf-row' });
         PALETTES.forEach(p => {
@@ -6452,7 +5880,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           const stop = el('div', { class: 'rgnf-stop' }, [
             el('input', { type: 'color', value: c, oninput: (e) => {
               state.titleStops[idx] = e.target.value;
-              state.titlePaletteKey = null; // hand-edited: no longer a preset
+              state.titlePaletteKey = null;
               refreshPreview();
               // repaint gradient bar
               const bar = document.getElementById('rgnfTitleGradBar');
@@ -6476,8 +5904,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         bar.style.background = `linear-gradient(90deg, ${state.titleStops.join(',')})`;
         secTitle.appendChild(bar);
       }
-      // Size + Sub
-      // Opacity: applies to solid AND gradient title colors (via 8-digit hex).
+      // opacity applies to solid AND gradient via 8-digit hex
       if (state.titleColorMode !== 'inherit') {
         secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
           el('label', { text: 'Opacity' }, [
@@ -6488,10 +5915,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           ]),
         ]));
       }
-      // Size: cap raised to 180% so titles can go bigger than the name if the
-      // player wants a headline-style tagline.
       secTitle.appendChild(sliderRow(panel, 'Size', 'titleSizePct', 10, 500, '%'));
-      // Style toggles: Bold/Italic/Underline/Strike + <sub> layout toggle
       const tStyle = el('div', { class: 'rgnf-row' });
       const tToggle = (key, label) => el('button', {
         class: `rgnf-chip ${state[key] ? 'rgnf-on' : ''}`, text: label,
@@ -6526,12 +5950,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
     }
     panel.appendChild(secScored);
 
-    // ---- Imposter ----
-    // Names captured from the last match's lobby (teammates AND opponents),
-    // rendered with their exact markup. "Steal" loads one into raw mode so
-    // the preview shows it byte-for-byte; Apply makes it yours. Marker class
-    // excludes this section from the raw-mode touch-to-exit listener --
-    // stealing IS a raw-mode action, not a styling edit.
+    // ---- imposter ----
+    // captured lobby names, rendered with their exact markup. rgnf-imposter-sec
+    // marker excludes this from the raw-mode touch-to-exit listener.
     const secImposter = el('div', { class: 'rgnf-sec rgnf-imposter-sec' });
     secImposter.appendChild(el('h4', { text: 'ඞ Imposter (last game lobby)' }));
     const roster = _roster();
@@ -6540,8 +5961,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       hint.style.cssText = 'color:var(--rgnf-muted);font-size:12px;';
       secImposter.appendChild(hint);
     } else {
-      // Identity check: if the preview currently wears a stolen name, say so
-      // the way the source material would. Derived from state, no bookkeeping.
+      // preview shows a stolen name -> flag it
       if (state.rawCode && roster.includes(state.rawCode)) {
         const reveal = el('div', { text: 'You are the Imposter. ඞ' });
         reveal.style.cssText = 'color:#ef4444;font-size:12px;font-weight:700;margin-bottom:6px;';
@@ -6551,47 +5971,38 @@ _rgnfFab = fab; _rgnfPanel = panel;
       roster.slice(0, 8).forEach((raw) => {
         const row = el('div', { class: 'rgnf-preset' });
         const nameCell = el('span', { title: raw });
-        // Faithful mini-preview of their name, markup and all. Constrained
-        // so a multi-line name (title lines etc.) can't blow up the row.
+        // capped height so multi-line titles can't blow up the row
         nameCell.style.cssText = 'flex:1;overflow:hidden;max-height:44px;white-space:normal;';
         nameCell.appendChild(renderRawTMP(raw));
         row.appendChild(nameCell);
         row.appendChild(el('button', {
           class: 'rgnf-chip', text: 'ඞ Steal',
-          title: 'Steal AND apply instantly -- their name becomes yours in one click',
+          title: 'Steal AND apply instantly',
           onclick: async (e) => {
             const b = e.currentTarget;
             b.textContent = '…';
             b.disabled = true;
             try {
-              // One-click heist: apply immediately (prefix included -- the
-              // clan-tag checkbox still owns your tag on top of the stolen
-              // body), then play the reveal over a name that is ALREADY live.
+              // one-click: apply first, reveal over a name that's already live
               const codeApplied = _prefix() + raw;
               const r = await applyNickname(codeApplied);
               if (r.ok) {
                 state.rawCode = raw;
-                _lastRawNickname = raw; // ↺ reset now returns to the live stolen identity
+                _lastRawNickname = raw;
                 const hist = loadJSON(HISTORY_KEY, []);
                 const plain = raw.replace(/<[^>]*>/g, '').trim().slice(0, 24) || '(markup only)';
                 hist.unshift({ code: codeApplied, plain, ts: Date.now() });
                 saveJSON(HISTORY_KEY, hist.slice(0, 5));
-                // Receipt for the boot-time verification: store BOTH forms.
-                // Login nicknames come back clan-tag-stripped, so the raw
-                // body (no prefix) is the primary match; codeApplied covers
-                // the no-clan-tag case where nothing gets stripped.
+                // both forms — login nicknames come back clan-tag-stripped
                 saveJSON(pendingStealKey(), { code: codeApplied, body: raw, ts: Date.now() });
-                render(panel); // preview shows the stolen identity
-                showImposterReveal(raw); // role reveal -- no Apply step needed, it's done
-                // Confirming re-apply: reported race where the first success
-                // occasionally didn't stick until a second manual steal. Same
-                // payload, ~1s later, silent -- idempotent insurance.
+                render(panel);
+                showImposterReveal(raw);
+                // silent re-apply — a race sometimes needed a second push
                 setTimeout(() => { applyNickname(codeApplied).catch(() => {}); }, 1000);
                 return;
               }
               b.textContent = '✗';
             } catch (err) { b.textContent = '✗'; }
-            // Failure path only: no reveal for a heist that didn't happen.
             b.disabled = false;
             setTimeout(() => { b.textContent = 'ඞ Steal'; }, 1500);
           },
@@ -6602,20 +6013,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
     }
     panel.appendChild(secImposter);
 
-    // ---- Presets ----
-    // rgnf-presets-sec: marker class the raw-mode touch-to-exit listener uses
-    // to EXCLUDE this section. Clicking Save/Load/Delete here is not a
-    // styling edit -- without the exclusion, pressing "+ Save current as
-    // preset" in raw mode cleared rawCode BEFORE the save handler ran,
-    // silently capturing the styling controls instead of the previewed name.
+    // ---- presets ----
+    // rgnf-presets-sec: excluded from the raw-mode touch-to-exit listener.
+    // otherwise "+ Save" in raw mode cleared rawCode before the save ran.
     const secPresets = el('div', { class: 'rgnf-sec rgnf-presets-sec' });
     secPresets.appendChild(el('h4', { text: 'Presets' }));
     const presets = loadJSON(STORE_KEY, []);
     const listWrap = el('div', { class: 'rgnf-presets' });
 
-    // Group presets by their optional `folder` field. Presets saved before
-    // folders existed have none -> they collect under "Ungrouped". Collapsed
-    // state per folder persists so a big library stays tidy between opens.
+    // presets with no folder -> "Ungrouped"
     const collapseKey = 'rgNameForge.folderCollapse.v1';
     const collapseState = loadJSON(collapseKey, {});
     const groups = {};
@@ -6623,7 +6029,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       const f = (p.folder && String(p.folder).trim()) || 'Ungrouped';
       (groups[f] = groups[f] || []).push({ p, idx });
     });
-    // Stable folder order: named folders alphabetically, Ungrouped last.
+    // alphabetical, Ungrouped last
     const folderNames = Object.keys(groups).sort((a, b) => {
       if (a === 'Ungrouped') return 1;
       if (b === 'Ungrouped') return -1;
@@ -6642,7 +6048,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         render(panel);
       };
       header.appendChild(label);
-      // Rename: only for real folders (not the synthetic "Ungrouped" bucket).
+      // Ungrouped is synthetic — nothing to rename
       if (folder !== 'Ungrouped') {
         header.appendChild(el('button', {
           class: 'rgnf-chip', text: '✏️', title: 'Rename folder',
@@ -6657,9 +6063,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
               onPick: ({ name: newName }) => {
                 const nn = (newName || '').trim();
                 if (!nn || nn === folder) return;
-                // Repoint every preset in this folder to the new name.
                 presets.forEach(pr => { if ((pr.folder || 'Ungrouped') === folder) pr.folder = nn; });
-                // Carry collapse state over to the new name.
                 if (collapseState[folder] !== undefined) {
                   collapseState[nn] = collapseState[folder];
                   delete collapseState[folder];
@@ -6671,10 +6075,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             });
           },
         }));
-        // Note: no explicit "delete folder" button is needed. Folders are
-        // derived from preset membership, so a folder disappears on its own
-        // the moment its last preset is moved out or deleted. Nothing to
-        // clean up manually.
+        // no "delete folder" — folders are derived from membership
       }
       listWrap.appendChild(header);
 
@@ -6684,7 +6085,6 @@ _rgnfFab = fab; _rgnfPanel = panel;
           row.style.marginLeft = '10px';
           row.appendChild(el('span', { text: p.label }));
           row.appendChild(el('button', { class: 'rgnf-chip', text: 'Load', onclick: () => { state = Object.assign(defaultState(), p.state); render(panel); } }));
-          // Move to another folder without re-saving the design.
           row.appendChild(el('button', {
             class: 'rgnf-chip', text: '📁', title: 'Move to folder',
             onclick: () => {
@@ -6771,11 +6171,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }),
     ]));
 
-    // Recently applied history. AUTO-RECORDED on every Apply and capped at
-    // the newest 5 -- older entries rotate out silently. NOT the same thing
-    // as saved presets (which only you create and which never expire). The
-    // header says so, and the 💾 button promotes a history entry into a
-    // permanent preset before it can rotate away.
+    // last 5 applies. 💾 promotes to a permanent preset before it rotates out.
     const hist = loadJSON(HISTORY_KEY, []);
     if (hist.length) {
       secPresets.appendChild(el('h4', { text: 'Recently applied (auto — newest 5 only)' }));
@@ -6786,10 +6182,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           el('button', {
             class: 'rgnf-chip', text: '💾', title: 'Save this as a permanent preset',
             onclick: () => {
-              // History stores the code WITH the clan-tag prefix baked in
-              // (it's the exact string that was applied). Strip the current
-              // prefix if it leads, so the preset stores the unprefixed body
-              // and the checkbox stays the single owner of the tag.
+              // strip the clan-tag prefix — the checkbox owns it
               let code = h.code;
               const pfx = _prefix();
               if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
@@ -6826,15 +6219,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
               try {
                 const r = await applyNickname(h.code);
                 if (r.ok) {
-                  // Success: load what was just applied into the preview
-                  // (raw mode) so the screen matches the live in-game name.
-                  // Strip the prefix if it leads -- the checkbox owns the tag.
+                  // load what was applied into preview so the screen matches live
                   let code = h.code;
                   const pfx = _prefix();
                   if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
                   state.rawCode = code;
-                  _lastRawNickname = code; // ↺ reset now returns to this
-                  render(panel); // rebuilds the panel; preview shows the applied name
+                  _lastRawNickname = code;
+                  render(panel);
                   return;
                 }
                 b.textContent = '✗';
@@ -6864,8 +6255,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         statusLine.textContent = '';
         try {
           const codeApplied = _prefix() + (state.rawCode ? state.rawCode : buildCode(state));
-          // Store the UNPREFIXED body as the reset target: the checkbox owns
-          // the tag, so the snapshot must never contain it (double-tag fix).
+          // reset target is unprefixed — checkbox owns the tag (double-tag fix)
           _lastRawNickname = state.rawCode ? state.rawCode : buildCode(state);
           const result = await applyNickname(codeApplied);
           if (result.ok) {
@@ -6941,22 +6331,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   // ------------------------------------------------------------------
-  // Input capture guard — MUST register before the game's own handlers.
-  // rocketgoal.io binds control keys at the window CAPTURE phase and
-  // preventDefault()s them, which kills typing in our fields. Because same-phase
-  // listeners fire in registration order, we run at document-start and register
-  // FIRST, then stopImmediatePropagation for any event aimed at our UI so the
-  // game never sees it. stopImmediatePropagation does NOT preventDefault, so the
-  // character still lands in the input.
+  // Input capture guard — MUST register before the game's handlers.
+  // rocketgoal.io binds control keys at window capture and preventDefaults them.
+  // we run at document-start, register first, and stopImmediatePropagation for
+  // events aimed at our UI so the game never sees them.
   // ------------------------------------------------------------------
   function installInputGuard() {
     const inUI = (t) => t && t.closest && (t.closest('.rgnf-panel') || t.closest('.rgnf-fab'));
     const isTextField = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
 
-    // Primary handler: we take over editing entirely for our own text fields.
-    // The game cancels the browser's default text insertion, so instead of
-    // fighting for it, we mutate the field's value ourselves and fire a synthetic
-    // 'input' event. This works no matter what the game does with the keystroke.
+    // we take over editing for our own fields — mutate value ourselves and fire
+    // a synthetic input event. works no matter what the game does with the key.
     window.addEventListener('keydown', (e) => {
       const t = e.target;
       if (!inUI(t)) return;
@@ -6972,7 +6357,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       let handled = false;
 
       if (e.key.length === 1) {
-        // printable character (already shifted/cased by the browser)
+        // printable char (browser already handled shift/case)
         t.value = t.value.slice(0, start) + e.key + t.value.slice(end);
         const p = start + 1; t.setSelectionRange(p, p); handled = true;
       } else if (e.key === 'Backspace') {
@@ -6984,16 +6369,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
         else { t.value = t.value.slice(0, start) + t.value.slice(end + 1); t.setSelectionRange(start, start); }
         handled = true;
       }
-      // Arrows / Home / End / Tab etc. fall through: we already stopped the game
-      // from seeing them, and the browser's own caret movement still works.
-
+      // arrows/home/end/tab fall through — browser caret still works
       if (handled) {
         e.preventDefault();
         t.dispatchEvent(new Event('input', { bubbles: true }));
       }
     }, true);
 
-    // Keep keyup/keypress away from the game too.
+    // keep keyup/keypress away from the game too
     ['keyup', 'keypress'].forEach((evt) => {
       window.addEventListener(evt, (e) => {
         const t = e.target;
@@ -7007,19 +6390,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
   // ------------------------------------------------------------------
   // Boot
   // ------------------------------------------------------------------
-  installInputGuard(); // register immediately at document-start
+  installInputGuard();
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', buildUI);
   } else {
     buildUI();
   }
       let _mountedIn = null;
-      // External prefix provider: HUD sets this to getClanTagPrefix. Called
-      // by buildCode()/renderPreview() so Forge stays clan-agnostic.
+      // HUD sets this to getClanTagPrefix so Forge stays clan-agnostic
       let _prefixProvider = null;
       function _prefix() { try { return _prefixProvider ? _prefixProvider() : ""; } catch { return ""; } }
-      // Roster provider: HUD supplies last game's player names (raw TMP
-      // markup, own name filtered out) for the Imposter section.
+      // HUD supplies last game's names (raw TMP, own name filtered)
       let _rosterProvider = null;
       function _roster() { try { return _rosterProvider ? _rosterProvider() : []; } catch { return []; } }
       return {
@@ -7031,39 +6412,24 @@ _rgnfFab = fab; _rgnfPanel = panel;
         // Forge, receipt expires, name never re-applied" scenario the v13.5
         // self-healing was supposed to close.
         verifyStolenName(rawNickname) { verifyPendingSteal(rawNickname); },
-        // Re-render the Forge panel in place (e.g. after the clan-tag opt-in
-        // toggles, so the prefix appears/disappears in the preview live).
         refresh() { if (_rgnfPanel) render(_rgnfPanel); },
-        // Called by HUD when Forge opens (or when the player switches accounts).
-        // Two paths:
-        //   1. Per-account state exists -> honor completely. This player has
-        //      already customized Forge under this account; whatever they
-        //      typed is their intent, don\'t clobber it.
-        //   2. No per-account state -> fresh seed. Copy STYLING from the
-        //      legacy shared state if it exists (so the visual design carries
-        //      over the first time), but ALWAYS use the current account\'s
-        //      displayName for state.name -- never inherit another account\'s
-        //      name text. This is the fix for cross-account name leakage.
+        // called on Forge open and on account switch. per-account state wins;
+        // otherwise seed from the current account's live nickname (never leak).
         syncToCurrentPlayer(userId, displayName, rawNickname) {
           if (!userId) return;
           if (rawNickname) _lastRawNickname = String(rawNickname);
           const prevId = _currentUserId;
           _currentUserId = userId;
-          // Runs before the same-account early return below: verification
-          // must fire on EVERY boot, not just account switches. One-shot
-          // latch inside makes repeat sync calls in a session free.
+          // must run before the same-account early return — verification fires
+          // on every boot, not just account switches (latch inside makes it free)
           verifyPendingSteal(rawNickname);
           if (prevId === userId) return;
           const perUser = loadJSON(stateKey(), null);
           if (perUser) {
             state = Object.assign(defaultState(), perUser);
           } else {
-            // TRULY fresh seed: the player's WHOLE current in-game name,
-            // exactly as the game returns it, loaded as a raw snapshot.
-            // Preview shows it faithfully, Apply is a no-op round-trip, and
-            // the first styling edit clears the snapshot to rebuild from
-            // scratch. state.name gets the full plain-text letters (all
-            // lines, tags stripped) as the rebuild starting point.
+            // fresh seed: the whole current in-game name as a raw snapshot.
+            // first styling edit clears it and rebuilds from state.name.
             state = defaultState();
             const raw = String(rawNickname || "").trim();
             if (raw) {
@@ -7075,24 +6441,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
             saveJSON(stateKey(), state);
           }
 
-          // CRITICAL: re-render immediately and unconditionally. The panel DOM
-          // exists from page load whether or not it has been re-parented into
-          // the HUD tab yet -- and sync runs BEFORE mountIn on first open, so
-          // gating this render on _mountedIn meant the swapped state never
-          // reached the screen. That gate was the bug behind two failed fixes:
-          // the seed logic worked, the pixels didn't.
+          // must render unconditionally. panel DOM exists from page load,
+          // and sync runs before mountIn on first open — gating on _mountedIn
+          // meant the swapped state never reached the screen.
           if (_rgnfPanel) render(_rgnfPanel);
         },
-        // Re-parent Forge's panel into the HUD's rgForgeView on first open.
-        // Everything Forge does (render, presets, keyboard guard, apply)
-        // keeps working once its DOM tree is under a different parent.
+        // re-parent the panel into the HUD tab; scroll lives on the container
         mountIn(container) {
           if (!_rgnfPanel || _mountedIn === container) return;
-          // Reset absolute-positioning styles from the fly-out design so the
-          // panel flows naturally inside the HUD tab body. The scroll now lives
-          // on the parent container (rgForgeView), so the panel itself is a
-          // simple block with tightened padding and no border/shadow that would
-          // clash with the HUD's own frame.
           _rgnfPanel.style.position = 'static';
           _rgnfPanel.style.transform = 'none';
           _rgnfPanel.style.left = _rgnfPanel.style.top = _rgnfPanel.style.right = _rgnfPanel.style.bottom = '';
