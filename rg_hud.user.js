@@ -24,9 +24,10 @@
     // scale (unlike the 🚀 emoji it replaced, which pulled from the system
     // font and looked flat/inconsistent across OSes).
     const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png';
-    // Tamagotchi-style Rocket Buddy sheet (20×5 × 128px). Same CDN path as
-    // the ATLAS icon — push atlas/rocket_buddy_sheet.png for it to resolve.
-    const BUDDY_SHEET_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/rocket_buddy_sheet.png';
+    // Tamagotchi-style Rocket Buddy sheet (20×5 × 128px). Pin the asset to
+    // the commit that shipped this layout so a future main-branch sheet cannot
+    // silently break an older installed userscript's frame math.
+    const BUDDY_SHEET_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/e29161741cedca30b6a72be401a4dc51b50470a9/atlas/rocket_buddy_sheet.png';
     const atlasIconHtml = () => `<img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">`;
 
     // buddyMood() keys → sprite-sheet mood block names. Default "focused"
@@ -38,6 +39,30 @@
         sleepy: "sleepy",
         neglected: "neglected",
     };
+
+    let buddySheetLoadState = "idle"; // idle | loading | ready | failed
+    function ensureBuddySheetLoaded() {
+        if (buddySheetLoadState !== "idle") return;
+        buddySheetLoadState = "loading";
+        const img = new Image();
+        const finish = state => {
+            buddySheetLoadState = state;
+            const view = document.getElementById("rgBuddyView");
+            const buddyHasFocus = !!(view && view.contains(document.activeElement));
+            if (view && view.style.display !== "none" && !buddyHasFocus) renderBuddyView();
+            if (state === "ready" && buddyState?.equipped && lastKnownPlayerData) {
+                if (buddyHasFocus) {
+                    const flair = document.getElementById("rgBuddyEquippedFlair");
+                    if (flair) flair.innerHTML = buddyMiniVisualHtml(buddyStage());
+                } else {
+                    updateHUD(lastKnownPlayerData);
+                }
+            }
+        };
+        img.onload = () => finish("ready");
+        img.onerror = () => finish("failed");
+        img.src = BUDDY_SHEET_URL;
+    }
 
     function ensureBuddySpriteStyles() {
         if (document.getElementById("rgBuddySpriteStyle")) return;
@@ -76,6 +101,29 @@
 .rg-buddy-sprite.mood-frosty { --rb-mood: 2; }
 .rg-buddy-sprite.mood-sleepy { --rb-mood: 3; }
 .rg-buddy-sprite.mood-neglected { --rb-mood: 4; }
+.rg-buddy-sprite.is-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-image: none;
+  animation: none;
+  font-size: 56px;
+  line-height: 1;
+}
+.rg-buddy-mini {
+  --rb-mini-stage: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-block;
+  vertical-align: middle;
+  background-image: url("${BUDDY_SHEET_URL}");
+  background-repeat: no-repeat;
+  background-size: 400px 100px;
+  background-position: 0 calc(var(--rb-mini-stage) * -20px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rg-buddy-sprite { animation: none; }
+}
 `;
         document.head.appendChild(style);
     }
@@ -349,7 +397,7 @@
                     <span id="rgWarnDot" title="" style="display:none;color:#ffbb33;font-weight:bold;font-size:14px;cursor:help;" data-tip="ATLAS saw something unexpected (hover for details, or run rgDump() for full log)">⚑</span>
                     <button id="rgClanBtn" class="rgIconBtn" title="Clans">🛡️</button>
                     <button id="rgForgeBtn" class="rgIconBtn" title="Name Forge">🎨</button>
-                    <button id="rgBuddyBtn" class="rgIconBtn" title="Rocket Buddy">🚗</button>
+                    <button id="rgBuddyBtn" class="rgIconBtn" title="Rocket Buddy" aria-label="Rocket Buddy" aria-controls="rgBuddyView" aria-expanded="false">🚗</button>
                     <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
                     <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
                 </div>
@@ -388,7 +436,7 @@
                     <button id="rgNameCancel" class="rgBtn">Cancel</button>
                 </div>
             </div>
-            <div id="rgDialog">
+            <div id="rgDialog" role="dialog" aria-modal="true" aria-labelledby="rgDialogMsg">
                 <div id="rgDialogMsg" class="rgDlgMsg"></div>
                 <input type="text" id="rgDialogInput" style="display:none;" maxlength="200">
                 <div style="display:flex;gap:6px;">
@@ -396,7 +444,7 @@
                     <button id="rgDialogCancel" class="rgBtn">Cancel</button>
                 </div>
             </div>
-            <div id="rgToast"></div>
+            <div id="rgToast" role="status" aria-live="polite" aria-atomic="true"></div>
         `;
 
         document.body.appendChild(hud);
@@ -450,7 +498,10 @@
         // rows, buddy view, etc., without needing per-button wiring.
         hud.addEventListener("click", (e) => {
             const btn = e.target.closest("button");
-            if (btn) btn.blur();
+            // Mouse/touch clicks should not leave a control armed for the
+            // game's space bar. Keyboard-generated clicks have detail === 0;
+            // keep focus for those users so tab position is not discarded.
+            if (btn && e.detail !== 0) btn.blur();
         });
 
         document.getElementById("rgMinimize").onclick = () => manualToggle();
@@ -476,14 +527,19 @@
         const panel = document.getElementById("rgSettingsPanel");
         const forgeView = document.getElementById("rgForgeView");
         const buddyView = document.getElementById("rgBuddyView");
+        const buddyBtn = document.getElementById("rgBuddyBtn");
+        const body = document.getElementById("rgBody");
         const actionRow = document.getElementById("rgActionRow");
         function showStatsOnly() {
             clanView.style.display = "none";
             forgeView.style.display = "none";
             buddyView.style.display = "none";
+            buddyBtn.setAttribute("aria-expanded", "false");
             panel.style.display = "none";
             statsView.style.display = "block";
             actionRow.style.display = "flex";
+            body.scrollTop = 0;
+            stopBuddyRefreshTimer();
             // Detach the clan real-time listener when leaving Clan tab so we
             // stop paying for updates the player isn\'t looking at anymore.
             detachClanListener();
@@ -536,8 +592,10 @@
             showStatsOnly();
             statsView.style.display = "none";
             buddyView.style.display = "block";
+            buddyBtn.setAttribute("aria-expanded", "true");
             actionRow.style.display = "none"; // Buddy tab hides unrelated actions
             renderBuddyView();
+            startBuddyRefreshTimer();
         };
 
         // Settings panel wiring -- opening settings routes through showStatsOnly()
@@ -928,26 +986,62 @@
     ];
     const BUDDY_PET_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour between pets
     const BUDDY_STORAGE_KEY = "rgHudBuddy";
+    const BUDDY_SCHEMA_VERSION = 2;
 
     let buddyState = null;
+    let buddyRefreshTimer = null;
     try { buddyState = JSON.parse(localStorage.getItem(BUDDY_STORAGE_KEY) ?? "null"); } catch (e) {}
 
     function saveBuddyState() {
         try { localStorage.setItem(BUDDY_STORAGE_KEY, JSON.stringify(buddyState)); } catch (e) {}
     }
 
+    function newBuddyState() {
+        return {
+            schemaVersion: BUDDY_SCHEMA_VERSION,
+            name: "",
+            birthAt: Date.now(),
+            matchesDriven: 0,
+            // Retained so existing saves remain readable. Schema v2 uses
+            // accountMatchTotals to add per-account deltas without letting an
+            // account switch reset or inflate the device-global companion.
+            lifetimeMatchesAtBirth: null,
+            accountMatchTotals: {},
+            lastPetAt: 0,
+            lastMatchAt: 0,
+            equipped: false,
+            bestRankByMode: {},
+            lastSeenStage: null,
+        };
+    }
+
     function ensureBuddy() {
-        if (!buddyState) {
-            buddyState = {
-                name: "",                      // empty = "Unnamed" in UI; user can rename
-                birthAt: Date.now(),
-                matchesDriven: 0,              // matches while Buddy has existed
-                lifetimeMatchesAtBirth: null,  // captured from data on first observation
-                lastPetAt: 0,
-                lastMatchAt: 0,                // for the mood/energy computation
-                equipped: false,
-                bestRankByMode: {},            // { "3v3": 42, "2v2": 105, ... }
-            };
+        const defaults = newBuddyState();
+        let changed = false;
+        if (!buddyState || typeof buddyState !== "object" || Array.isArray(buddyState)) {
+            buddyState = defaults;
+            changed = true;
+        } else {
+            for (const [key, value] of Object.entries(defaults)) {
+                if (buddyState[key] === undefined) {
+                    buddyState[key] = value;
+                    changed = true;
+                }
+            }
+            if (!buddyState.accountMatchTotals || typeof buddyState.accountMatchTotals !== "object" || Array.isArray(buddyState.accountMatchTotals)) {
+                buddyState.accountMatchTotals = {};
+                changed = true;
+            }
+            if (!buddyState.bestRankByMode || typeof buddyState.bestRankByMode !== "object" || Array.isArray(buddyState.bestRankByMode)) {
+                buddyState.bestRankByMode = {};
+                changed = true;
+            }
+            if (buddyState.schemaVersion !== BUDDY_SCHEMA_VERSION) {
+                buddyState.schemaVersion = BUDDY_SCHEMA_VERSION;
+                changed = true;
+            }
+        }
+        if (changed) {
             saveBuddyState();
         }
     }
@@ -961,19 +1055,27 @@
         if (!data || !data.ModesData) return;
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
         const total = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
-        if (buddyState.lifetimeMatchesAtBirth == null) {
-            // First observation -- lock in the baseline. Playing matches AT
-            // ALL predates the buddy from here forward.
-            buddyState.lifetimeMatchesAtBirth = total;
-            saveBuddyState();
-            return;
-        }
-        const driven = Math.max(0, total - buddyState.lifetimeMatchesAtBirth);
-        if (driven !== buddyState.matchesDriven) {
-            const grew = driven > buddyState.matchesDriven;
-            buddyState.matchesDriven = driven;
-            if (grew) buddyState.lastMatchAt = Date.now();
-            saveBuddyState();
+        const accountId = data.Id == null ? "" : String(data.Id);
+        if (accountId) {
+            const seen = buddyState.accountMatchTotals;
+            if (!Object.prototype.hasOwnProperty.call(seen, accountId)) {
+                // First observation for this account establishes a baseline;
+                // pre-ATLAS matches never become retroactive Buddy credit.
+                seen[accountId] = total;
+                if (buddyState.lifetimeMatchesAtBirth == null) buddyState.lifetimeMatchesAtBirth = total;
+                saveBuddyState();
+            } else {
+                const previous = Number(seen[accountId]);
+                if (Number.isFinite(previous) && total > previous) {
+                    buddyState.matchesDriven += total - previous;
+                    seen[accountId] = total;
+                    buddyState.lastMatchAt = Date.now();
+                    saveBuddyState();
+                }
+                // A lower total is treated as an incomplete/reset response,
+                // not a new baseline; otherwise the next full response would
+                // double-credit the recovered matches.
+            }
         }
         // Refresh best-rank floor per mode from the live rank cache.
         const rankPlaylists = { "3v3": null, "2v2": null, "1v1": null };
@@ -986,6 +1088,15 @@
                     saveBuddyState();
                 }
             }
+        }
+        const currentStage = buddyStage();
+        if (buddyState.lastSeenStage == null) {
+            buddyState.lastSeenStage = currentStage.level;
+            saveBuddyState();
+        } else if (currentStage.level > buddyState.lastSeenStage) {
+            buddyState.lastSeenStage = currentStage.level;
+            saveBuddyState();
+            showBanner(`🚀 ${currentStage.name.toUpperCase()} UNLOCKED!`, currentStage.level >= 4 ? "#ffd700" : "#00bfff");
         }
     }
 
@@ -1063,6 +1174,38 @@
         return true;
     }
 
+    function stopBuddyRefreshTimer() {
+        if (!buddyRefreshTimer) return;
+        clearInterval(buddyRefreshTimer);
+        buddyRefreshTimer = null;
+    }
+
+    function startBuddyRefreshTimer() {
+        if (buddyRefreshTimer) return;
+        buddyRefreshTimer = setInterval(() => {
+            const view = document.getElementById("rgBuddyView");
+            if (!view || view.style.display === "none") {
+                stopBuddyRefreshTimer();
+                return;
+            }
+            // A minimized/auto-hidden HUD keeps the Buddy view's own display
+            // value at "block"; offsetParent catches those hidden ancestors.
+            if (!view.offsetParent) return;
+            // Do not destroy a keyboard user's currently-focused Buddy
+            // control. The next minute tick (or normal data update) catches up.
+            if (!view.contains(document.activeElement)) renderBuddyView();
+        }, 60 * 1000);
+    }
+
+    function renderBuddyViewAndRestoreFocus(focusId) {
+        renderBuddyView();
+        if (!focusId) return;
+        requestAnimationFrame(() => {
+            const next = document.getElementById(focusId);
+            if (next) next.focus({ preventScroll: true });
+        });
+    }
+
     // ---- Buddy view render ----
     // Same pattern as the other tabs: rebuild innerHTML on open (or after
     // an action), no diffing needed since this tab is closed most of the
@@ -1115,7 +1258,9 @@
         // Animated sprite sheet (stage row × mood block). Mood art carries
         // the vibe; stage 4/5 still get a soft radial flex ring behind.
         ensureBuddySpriteStyles();
+        ensureBuddySheetLoaded();
         const moodSprite = BUDDY_MOOD_SPRITE[mood.key] || "idle";
+        const useSpriteFallback = buddySheetLoadState !== "ready";
         let spriteWrap = "";
         if (stage.level >= 5) {
             spriteWrap = "background:radial-gradient(circle, #ffd70044 0%, transparent 70%);padding:8px;border-radius:50%;";
@@ -1128,7 +1273,7 @@
 
         view.innerHTML = `
             <div style="text-align:center;padding:8px 4px 12px;">
-                <div style="display:inline-block;${spriteWrap}"><div id="rgBuddySprite" class="rg-buddy-sprite stage-${stage.level} mood-${moodSprite}" role="img" aria-label="${escapeHtml(stage.name)}"></div></div>
+                <div style="display:inline-block;${spriteWrap}"><div id="rgBuddySprite" class="rg-buddy-sprite stage-${stage.level} mood-${moodSprite}${useSpriteFallback ? " is-fallback" : ""}" role="img" aria-label="${escapeHtml(stage.name)}">${useSpriteFallback ? stage.icon : ""}</div></div>
                 <div style="margin-top:6px;font-size:14px;font-weight:bold;color:#00bfff;">${escapeHtml(displayName)}</div>
                 <div style="font-size:11px;opacity:0.85;">${escapeHtml(stage.name)} · Lv ${stage.level}</div>
                 <div style="margin-top:2px;font-size:13px;color:#ffd700;letter-spacing:2px;">${stars}</div>
@@ -1167,21 +1312,24 @@
         `;
 
         // Pet: brief bounce animation on the sprite, cooldown-gated.
-        document.getElementById("rgBuddyPet").onclick = () => {
+        document.getElementById("rgBuddyPet").onclick = e => {
+            const restoreFocus = e.detail === 0 ? "rgBuddyPet" : null;
             if (!petBuddy()) return;
             const sprite = document.getElementById("rgBuddySprite");
-            if (sprite) {
+            const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+            if (sprite && !reduceMotion) {
                 sprite.style.transition = "transform 0.15s ease";
                 sprite.style.transform = "scale(1.25)";
                 setTimeout(() => { sprite.style.transform = ""; }, 150);
             }
             // Repaint the energy bar / mood after the pet -- lastPetAt
             // just changed, energy shot back up.
-            setTimeout(renderBuddyView, 200);
+            setTimeout(() => renderBuddyViewAndRestoreFocus(restoreFocus), reduceMotion ? 0 : 320);
         };
 
         // Rename via themed prompt. Empty name reverts to "Unnamed".
-        document.getElementById("rgBuddyRename").onclick = async () => {
+        document.getElementById("rgBuddyRename").onclick = async e => {
+            const restoreFocus = e.detail === 0 ? "rgBuddyRename" : null;
             const newName = await showDialog({
                 message: "Name your Buddy",
                 withInput: true,
@@ -1189,33 +1337,50 @@
                 okLabel: "Save",
                 cancelLabel: "Cancel",
             });
-            if (newName === null) return; // cancelled
+            if (newName === null) {
+                if (restoreFocus) requestAnimationFrame(() => {
+                    document.getElementById(restoreFocus)?.focus({ preventScroll: true });
+                });
+                return;
+            }
             const clean = String(newName).slice(0, 20).trim();
             buddyState.name = clean;
             saveBuddyState();
-            renderBuddyView();
+            renderBuddyViewAndRestoreFocus(restoreFocus);
         };
 
         // Equip toggles a small pet-icon flair in the main stats view
         // (rendered by updateHUD via buddyEquippedFlairHtml). Purely local.
-        document.getElementById("rgBuddyEquip").onclick = () => {
+        document.getElementById("rgBuddyEquip").onclick = e => {
+            const restoreFocus = e.detail === 0 ? "rgBuddyEquip" : null;
             buddyState.equipped = !buddyState.equipped;
             saveBuddyState();
-            renderBuddyView();
             // Also repaint the main HUD in case it's about to become visible
             // again -- the equipped flair change should be reflected there.
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
+            else renderBuddyView();
+            if (restoreFocus) requestAnimationFrame(() => {
+                document.getElementById(restoreFocus)?.focus({ preventScroll: true });
+            });
         };
     }
 
     // Small icon shown next to the streak badge in the main stats view when
     // the buddy is equipped. Local render only; no server visibility.
+    function buddyMiniVisualHtml(stage) {
+        return buddySheetLoadState === "ready"
+            ? `<span class="rg-buddy-mini" style="--rb-mini-stage:${stage.level - 1};" aria-hidden="true"></span>`
+            : stage.icon;
+    }
+
     function buddyEquippedFlairHtml() {
         try {
             ensureBuddy();
             if (!buddyState.equipped) return "";
             const stage = buddyStage();
-            return ` <span class="rgHasTip" data-tip="${escapeHtml(buddyDisplayName())} · ${escapeHtml(stage.name)}" style="font-size:14px;vertical-align:middle;">${stage.icon}</span>`;
+            ensureBuddySpriteStyles();
+            ensureBuddySheetLoaded();
+            return ` <span id="rgBuddyEquippedFlair" class="rgHasTip rgNoUnderline" data-tip="${escapeHtml(buddyDisplayName())} · ${escapeHtml(stage.name)}" aria-label="${escapeHtml(buddyDisplayName())} · ${escapeHtml(stage.name)}" style="font-size:14px;vertical-align:middle;">${buddyMiniVisualHtml(stage)}</span>`;
         } catch (e) {
             dbg("buddyEquippedFlairHtml threw: " + (e && e.message ? e.message : e));
             return "";
@@ -1741,6 +1906,24 @@
     ["keydown", "keyup", "keypress"].forEach(type => {
         window.addEventListener(type, e => {
             const active = document.activeElement;
+            const dialog = document.getElementById("rgDialog");
+            const dialogOpen = dialog && dialog.style.display === "flex";
+            if (dialogOpen) {
+                e.stopImmediatePropagation();
+                if (type === "keydown" && e.key === "Escape") {
+                    e.preventDefault();
+                    const btn = document.getElementById("rgDialogCancel");
+                    if (btn && btn.style.display !== "none") btn.click();
+                } else if (type === "keydown" && e.key === "Enter"
+                    && (active?.id === "rgDialogInput" || active?.id === "rgDialogOk")) {
+                    e.preventDefault();
+                    document.getElementById("rgDialogOk")?.click();
+                } else if (type === "keydown" && e.key === "Enter" && active?.id === "rgDialogCancel") {
+                    e.preventDefault();
+                    document.getElementById("rgDialogCancel")?.click();
+                }
+                return;
+            }
             const inHud = active && hud && hud.contains(active)
                 && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")
                 && active.type !== "checkbox" && active.type !== "range" && active.type !== "color";
@@ -1964,21 +2147,25 @@
             return;
         }
 
-        lastSyncTime.set(data.Id, now);
-
+        let writeOk = false;
         try {
             logWrite("script_submissions");
             await fb.setDoc(docRef, payload, { merge: true });
             // Cache the snapshot only AFTER a successful write -- otherwise a
             // rules-rejected write would look "unchanged" next time and never
             // be retried.
+            lastSyncTime.set(data.Id, now);
             lastSyncSnapshot.set(data.Id, snapshotKey);
+            writeOk = true;
             clearError();
         } catch (e) {
             console.error("[RG HUD] Leaderboard submission failed:", e);
             showError("Stats submission failed -- check console");
         }
 
+        // Never publish a partial state to the public leaderboard, and leave
+        // the cooldown open so the next login/match can retry the raw write.
+        if (!writeOk) return;
         await syncToRealLeaderboard(fb, data, displayName);
         refreshRanks(fb, data, true);
         refreshClanViewIfOpen(); // live-update event score/contribution, no extra reads
@@ -2277,14 +2464,10 @@
     // rare drift isn't worth 4 reads/match. Cold session refreshes all modes.
 
     let ranksFetchedThisSession = false;
-    let lastRankRefresh = 0;
-    const RANK_REFRESH_COOLDOWN_MS = 60000;
     const lastRankedMMR = new Map(); // playlist -> mmr at time of last rank query
 
     async function refreshRanks(fb, data, force = false) {
-        const now = Date.now();
         if (!force && ranksFetchedThisSession) return;
-        if (now - lastRankRefresh < RANK_REFRESH_COOLDOWN_MS && ranksFetchedThisSession) return;
 
         const modeToPlaylist = {
             Competitive1v1: "1v1",
@@ -2338,7 +2521,6 @@
             }
 
             ranksFetchedThisSession = true;
-            lastRankRefresh = now;
 
             checkRankTransitions();
 
@@ -4518,6 +4700,9 @@
     function showDialog({ message, withInput = false, inputPlaceholder = "", okLabel = "OK", cancelLabel = "Cancel" }) {
         return new Promise(resolve => {
             createHUD();
+            const previousFocus = document.activeElement;
+            let restorePreviousFocus = false;
+            try { restorePreviousFocus = !!previousFocus?.matches?.(":focus-visible"); } catch (e) {}
             const dlg = document.getElementById("rgDialog");
             const msgEl = document.getElementById("rgDialogMsg");
             const input = document.getElementById("rgDialogInput");
@@ -4539,13 +4724,18 @@
             input.value = "";
             input.placeholder = inputPlaceholder;
             dlg.style.display = "flex";
-            if (withInput) setTimeout(() => input.focus(), 50);
+            setTimeout(() => (withInput ? input : okBtn).focus(), 50);
 
             const close = result => {
                 dlg.style.display = "none";
                 okBtn.onclick = null;
                 cancelBtn.onclick = null;
                 resolve(result);
+                setTimeout(() => {
+                    if (restorePreviousFocus && previousFocus?.isConnected) {
+                        previousFocus.focus({ preventScroll: true });
+                    }
+                }, 0);
             };
             okBtn.onclick = () => close(withInput ? input.value.trim() : true);
             cancelBtn.onclick = () => close(withInput ? null : false);
@@ -5572,6 +5762,25 @@
     window.addEventListener('keydown', (e) => {
       if (e.altKey && e.code === 'KeyN' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
+        // Once Forge is mounted in ATLAS, route the shortcut through the HUD
+        // tab button. Re-applying the legacy flyout class here would yank the
+        // embedded panel into a fixed bottom-right overlay.
+        if (_mountedIn) {
+          const hudEl = document.getElementById('rgHUD');
+          const bodyEl = document.getElementById('rgBody');
+          const forgeView = document.getElementById('rgForgeView');
+          if (hudEl) setAutoVisible(true);
+          if (bodyEl) bodyEl.style.display = 'block';
+          const minimize = document.getElementById('rgMinimize');
+          if (minimize) {
+            minimize.textContent = '–';
+            minimize.title = 'Minimize';
+          }
+          if (!forgeView || forgeView.style.display === 'none') {
+            document.getElementById('rgForgeBtn')?.click();
+          }
+          return;
+        }
         togglePanel(fab, panel);
       }
     });
@@ -6753,6 +6962,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           _rgnfPanel.style.boxShadow = 'none';
           _rgnfPanel.style.background = 'transparent';
           _rgnfPanel.style.display = 'block';
+          _rgnfPanel.classList.remove('rgnf-open');
           container.appendChild(_rgnfPanel);
           _mountedIn = container;
         },
