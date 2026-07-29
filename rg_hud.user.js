@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.8
+// @version      13.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -18,7 +18,7 @@
 
     let hud;
 
-    // img not emoji — stays crisp cross-OS
+    // img not emoji, stays crisp cross-OS
     const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png';
     // pinned to a commit so a sheet change can't break old installs
     const BUDDY_SHEET_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/e29161741cedca30b6a72be401a4dc51b50470a9/atlas/rocket_buddy_sheet.png';
@@ -186,7 +186,7 @@
     }
 
     // ---------- Device ID ----------
-    // per-install UUID for blacklisting. resets on localStorage clear — friction, not a fortress.
+    // per-install UUID for blacklisting. resets if localStorage clears, so it's friction not a fortress.
 
     function getDeviceId() {
         let id = null;
@@ -199,8 +199,8 @@
         return id;
     }
 
-    // num form lets server rules do >= checks. don't jump to 11.10 — parseFloat.
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.8";
+    // num form lets server rules do >= checks. never write 11.10 (parseFloat).
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -542,7 +542,7 @@
             if (RGNF.refresh) RGNF.refresh();
         };
 
-        // Buddy tab — same pattern as Clan/Forge
+        // Buddy tab, same pattern as Clan/Forge
         document.getElementById("rgBuddyBtn").onclick = () => {
             const showingBuddy = buddyView.style.display !== "none";
             if (showingBuddy) { showStatsOnly(); return; }
@@ -598,7 +598,7 @@
 
         document.getElementById("rgSetRecap").onclick = () => showSessionRecap();
 
-        // trim player data — don't dump the whole login blob
+        // trim player data, don't dump the whole login blob
         document.getElementById("rgSetCopyDebug").onclick = async () => {
             try {
                 const trimmedPlayer = lastKnownPlayerData ? {
@@ -709,7 +709,7 @@
             const moveY = dy - e.clientY;
             dx = e.clientX;
             dy = e.clientY;
-            // title bar is the only drag handle — off-screen = stranded til reload
+            // title bar is the only drag handle, off-screen = stranded til reload
             const MARGIN = 40;
             let newTop = el.offsetTop - moveY;
             let newLeft = el.offsetLeft - moveX;
@@ -733,7 +733,7 @@
         if (!hud) return;
         hud.style.display = visible ? "block" : "none";
         if (!visible) {
-            // tooltip lives on body — hide it or it strands over the game
+            // tooltip lives on body, hide it or it strands over the game
             const tip = document.getElementById("rgTooltip");
             if (tip) tip.style.opacity = "0";
         }
@@ -757,7 +757,7 @@
     }
 
     // ---------- Win/loss streak tracking ----------
-    // game only gives cumulative totals — diff between updates to get per-match.
+    // game only gives cumulative totals, diff between updates to get per-match.
     // +ve = win streak, -ve = loss streak. resets on account change / session end.
 
     let streakData = null;
@@ -777,7 +777,7 @@
         const totalWins = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
         const totalMatches = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
-        // first observation — baseline only
+        // first observation, baseline only
         if (!streakData || streakData.accountId !== data.Id) {
             resetStreak(data.Id, totalWins, totalMatches);
             return;
@@ -788,7 +788,7 @@
 
         if (matchDiff <= 0) return;
 
-        // can't know the interleaving — pure blocks stay as blocks, mixed = net sign mag 1
+        // can't know the interleaving. pure blocks stay as blocks, mixed collapses to net sign mag 1
         const losses = matchDiff - winDiff;
         if (winDiff > 0 && losses === 0) {
             streakData.streak = streakData.streak > 0 ? streakData.streak + winDiff : winDiff;
@@ -821,7 +821,7 @@
     // ---------- Session deltas ----------
 
     // one continuous play run. resets on account change or after SESSION_IDLE_MS
-    // idle. localStorage + timestamp — refresh keeps it, overnight starts fresh.
+    // localStorage + timestamp. refresh keeps it, overnight starts fresh.
     const SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
 
     let sessionStart = null;
@@ -833,13 +833,13 @@
         const idledOut = sessionStart && (now - (sessionStart.lastSeen ?? 0)) > SESSION_IDLE_MS;
 
         if (sameAccount && !idledOut) {
-            // same session — bump timestamp
+            // same session, bump timestamp
             sessionStart.lastSeen = now;
             try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
             return;
         }
 
-        // new session — fresh baseline, drop inherited momentum
+        // new session, fresh baseline, drop inherited momentum
         sessionStart = {
             accountId: data.Id,
             startedAt: now,
@@ -852,7 +852,7 @@
         try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
         currentMomentumState = "neutral";
 
-        // reset streak — don't count pre-session matches
+        // reset streak, don't count pre-session matches
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
         const tw = modes.reduce((s, m) => s + (data.ModesData?.[m]?.wins ?? 0), 0);
         const tm = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
@@ -962,7 +962,7 @@
         if (accountId) {
             const seen = buddyState.accountMatchTotals;
             if (!Object.prototype.hasOwnProperty.call(seen, accountId)) {
-                // first sighting — baseline only, no retro credit
+                // first sighting, baseline only, no retro credit
                 seen[accountId] = total;
                 if (buddyState.lifetimeMatchesAtBirth == null) buddyState.lifetimeMatchesAtBirth = total;
                 saveBuddyState();
@@ -1207,7 +1207,7 @@
             }
             // minimized HUD keeps buddy view display=block. offsetParent catches that.
             if (!view.offsetParent) return;
-            // don't yank a focused control — next tick catches up
+            // don't yank a focused control, next tick catches up
             if (!view.contains(document.activeElement)) renderBuddyView();
         }, 60 * 1000);
     }
@@ -1334,7 +1334,7 @@
                 sprite.style.transform = "scale(1.25)";
                 setTimeout(() => { sprite.style.transform = ""; }, 150);
             }
-            // repaint — energy just jumped
+            // repaint, energy just jumped
             setTimeout(() => renderBuddyViewAndRestoreFocus(restoreFocus), reduceMotion ? 0 : 320);
         };
 
@@ -1623,7 +1623,7 @@
                 </div>
             `;
         } catch (e) {
-            // decorative — never break render for this
+            // decorative, never break render for this
             dbg("clashMiniBarHtml threw: " + (e && e.message ? e.message : e));
             return "";
         }
@@ -1638,7 +1638,7 @@
         if (buddyMatchResult) {
             try { reportBuddyMatchStatus(buddyMatchResult); } catch (e) { dbg("reportBuddyMatchStatus threw: " + (e && e.message ? e.message : e)); }
         }
-        // buddyMood reads streakData — tick buddy after streak update
+        // buddyMood reads streakData, tick buddy after streak update
         try { tickBuddyFromData(data); } catch (e) { dbg("tickBuddyFromData threw: " + (e && e.message ? e.message : e)); }
         // sync buddy tab if open
         const bv = document.getElementById("rgBuddyView");
@@ -1696,7 +1696,7 @@
     let lastProcessedKey = null;
 
     function tryParseAndUpdate(text) {
-        // fast path — identical string
+        // fast path, identical string
         if (text === lastProcessedText) return;
 
         try {
@@ -1870,8 +1870,8 @@
         setTimeout(hideNameModal, 1600);
     }
 
-    // Unity swallows printable keys in capture phase. intercept earlier —
-    // stopImmediatePropagation while a HUD input is focused so the game
+    // Unity swallows printable keys in capture phase. intercept earlier
+    // and stopImmediatePropagation while a HUD input is focused so the game
     // never sees the event.
     ["keydown", "keyup", "keypress"].forEach(type => {
         window.addEventListener(type, e => {
@@ -1920,7 +1920,7 @@
             // taken only if some entry belongs to another player
             return snap.docs.some(d => d.data().sourceUserId !== ownSourceUserId);
         } catch (e) {
-            // don't block on check failure — let it through
+            // don't block on check failure, let it through
             console.warn("[RG HUD] Name availability check failed:", e);
             return false;
         }
@@ -2040,7 +2040,7 @@
         forceRenamePrompt = false;
 
         if (!displayName) {
-            // no saved name — prompt. cancel skips the submission (we'll ask next time)
+            // no saved name, prompt. cancel skips the submission (we'll ask next time)
             const cleaned = cleanName(data.Nickname).slice(0, 15);
             const suggestion = (cleaned && cleaned.toLowerCase() !== "player") ? cleaned : "";
             displayName = await askDisplayName(suggestion, isRename, fb, data.Id);
@@ -2101,7 +2101,7 @@
         try {
             logWrite("script_submissions");
             await fb.setDoc(docRef, payload, { merge: true });
-            // cache AFTER success — otherwise a rejected write looks "unchanged"
+            // cache AFTER success, otherwise a rejected write looks "unchanged"
             // next time and never retries
             lastSyncTime.set(data.Id, now);
             lastSyncSnapshot.set(data.Id, snapshotKey);
@@ -2207,7 +2207,7 @@
 
     // v13.6 -------- Match audit trail --------
     // append-only receipt in match_audits. every player in the match writes
-    // their own — a fabricated match has no corroborating audits.
+    // their own, a fabricated match has no corroborating audits.
     // fire-and-forget, non-fatal on failure (rules may not allow it yet).
     async function writeMatchAudit(prevRatings, opponents) {
         try {
@@ -2289,7 +2289,7 @@
             if (!clanLoaded || clanLoadedForAccount !== uid) await loadClanData(true);
             if (!myClan) return null;
 
-            // capture tag first — leaderboard prefix must not depend on the MMR write
+            // capture tag first, leaderboard prefix must not depend on the MMR write
             const tag = myClan.tag ?? "";
 
             const g = data.ModesGlicko;
@@ -2310,13 +2310,13 @@
                         m.userId === uid ? { ...m, mmr: myMMR, syncedAt: Date.now() } : m
                     );
                     const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
-                    // stamp server time — we read it back to calibrate serverNow()
+                    // stamp server time, we read it back to calibrate serverNow()
                     const writeClanMMR = () => fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
                         { members, totalMMR, lastSyncAt: fb.serverTimestamp() }, { merge: true });
                     try {
                         await writeClanMMR();
                     } catch (firstErr) {
-                        // one retry — otherwise a transient fail stalled visible
+                        // one retry, otherwise a transient fail stalled visible
                         // contribution until the NEXT match
                         console.warn("[RG HUD] Clan MMR write failed, retrying in 5s:", firstErr);
                         await new Promise(r => setTimeout(r, 5000));
@@ -2334,10 +2334,10 @@
                         } catch (e) {}
                     }
 
-                    // throttled directory rebuild — instant local, Firestore at most every 3m
+                    // throttled directory rebuild, instant local, Firestore at most every 3m
                     await refreshDirectoryThrottled(fb);
                 } catch (writeErr) {
-                    // best-effort — never strip the tag on failure
+                    // best-effort, never strip the tag on failure
                     console.warn("[RG HUD] Clan MMR write failed (tag still applies):", writeErr);
                     // v13.6: surface persistent failures. 13.5 was silent and
                     // broke the whole event score loop for the session.
@@ -2364,7 +2364,7 @@
         }
 
         const ok = await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
-        // only cache on success — a failed write would poison the cache and
+        // only cache on success, a failed write would poison the cache and
         // prevent any future retry
         if (ok) {
             lastEntryState.set(stateKey, newState);
@@ -2397,10 +2397,9 @@
                 const mmr = data.ModesGlicko?.[mode]?.displayRating;
                 if (typeof mmr !== "number") continue;
 
-                // Skip modes whose MMR hasn't moved since we last queried them.
-                // On a match-triggered refresh this typically skips 2 of 3 modes
-                // (only the played mode's MMR changed), saving ~4 reads/match.
-                // Cold session (no prior MMR recorded) still refreshes everything.
+                // skip modes whose MMR hasn't moved since last query. usually
+                // skips 2 of 3 modes on a match-triggered refresh, saves ~4
+                // reads/match. cold session still refreshes everything.
                 if (ranksFetchedThisSession && lastRankedMMR.get(playlist) === mmr) continue;
 
                 const q = fb.query(
@@ -2413,8 +2412,8 @@
                 cachedRanks.set(playlist, rank);
                 lastRankedMMR.set(playlist, mmr);
 
-                // Gap to next rank up: fetch the lowest-MMR entry still above us
-                // (the one directly ahead). Skipped entirely when already #1.
+                // gap to next rank up: lowest-MMR entry still above us.
+                // skipped when already #1.
                 if (rank > 1) {
                     try {
                         const nextQ = fb.query(
@@ -2451,14 +2450,14 @@
 
     // ---------- Network capture ----------
 
-    // last-known equipped skin — needed by partial equipSkin responses
+    // last-known equipped skin, needed by partial equipSkin responses
     let lastKnownPlayerData = null;
 
     // ---------- Last-game lobby roster (feeds Forge's Imposter section) ----------
     // game logs "Initialized stats for player X" for each player when a match
     // forms. we collect names while the match runs, freeze on matchEnd /
     // LeaveRoom. persisted so a page refresh (Tampermonkey update needs one)
-    // doesn't wipe the roster before the user opens Forge — 13.4 shipped that
+    // doesn't wipe the roster before the user opens Forge, 13.4 shipped that
     // bug and Imposter always showed empty state.
     let lastGamePlayers = [];   // frozen roster of the last match: [{name, uid}]
     try { lastGamePlayers = JSON.parse(localStorage.getItem("rgHudLastRoster") ?? "[]"); } catch (e) {}
@@ -2474,9 +2473,9 @@
     let _inMatch = false;
 
     // v13.6 watchdog timestamps.
-    //   _lastInitLineAt      : last real init line — proves console hook is alive
+    //   _lastInitLineAt      : last real init line, proves console hook is alive
     //   _lastRecoverySignalAt: last menu/reconnect signal
-    //   _lastValidRatingsAt  : last successful ModesGlicko parse — proves matchEnd
+    //   _lastValidRatingsAt  : last successful ModesGlicko parse, proves matchEnd
     //                          shape hasn't changed
     let _lastInitLineAt = 0;
     let _lastRecoverySignalAt = 0;
@@ -2486,7 +2485,7 @@
 
     // ---------- Debug logging ----------
     // dbg() routes through the ORIGINAL console.log so it never re-enters our
-    // own hook. 300-line ring buffer always kept — call rgDump() for a
+    // own hook. 300-line ring buffer always kept, call rgDump() for a
     // timestamped ATLAS-only timeline for bug reports.
     const oldLog = console.log;
     const RG_DEBUG = true; // flip before sharing builds
@@ -2522,7 +2521,7 @@
             lastGamePlayers = _liveRoster.slice();
             try { localStorage.setItem("rgHudLastRoster", JSON.stringify(lastGamePlayers)); } catch (e) {}
             dbg(`Imposter roster captured: ${lastGamePlayers.length} player(s): ${lastGamePlayers.map(p => p.name).join(", ")}`);
-            // repaint Forge live if it's open. can't focus-steal here — you
+            // repaint Forge live if it's open. can't focus-steal here, you
             // can't be typing in Forge while in a match.
             const fv = document.getElementById("rgForgeView");
             if (fv && fv.style.display !== "none" && typeof RGNF !== "undefined" && RGNF.refresh) {
@@ -2548,7 +2547,7 @@
 
             if (url.includes("/v0304_player/matchEnd")) {
                 // v13.6: watchdog. if no valid ratings parse within 30s the
-                // game probably changed the response shape — surface it
+                // game probably changed the response shape, surface it
                 // instead of letting the HUD freeze on stale numbers.
                 _matchEndArmedAt = performance.now();
                 if (_matchEndWatchdogTimer) clearTimeout(_matchEndWatchdogTimer);
@@ -2576,7 +2575,7 @@
                 writeMatchAudit(prevRatings, opponentsSnapshot);
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
-                // fire the pending-steal verifier here too — login carries
+                // fire the pending-steal verifier here too, login carries
                 // the raw nickname before any local processing
                 try {
                     const loginData = JSON.parse(text);
@@ -2638,7 +2637,7 @@
                             _inMatch = true;
                             dbg(`match forming — roster reset, first player "${nm}"`);
                         }
-                        // dedupe by uid — names collide, mid-match backfills should ADD
+                        // dedupe by uid, names collide, mid-match backfills should ADD
                         if (!_liveRoster.some(p => p.uid === uid)) {
                             _liveRoster.push({ name: nm, uid });
                             dbg(`roster +1 "${nm}" (${_liveRoster.length} total)`);
@@ -2695,7 +2694,7 @@
     let eventConfigLoaded = false;
     let serverNowOffset = null;   // (serverTime - deviceTime), ms
 
-    // event-time perms — edit events/current in Firestore, no redeploy.
+    // event-time perms, edit events/current in Firestore, no redeploy.
     // missing keys fall back to these defaults.
     //   allowJoin/Leave/Kick/Approve/Disband/RoleChange/Transfer/RenameClan/ClanCreate
     const EVENT_PERM_DEFAULTS = {
@@ -2744,8 +2743,8 @@
     }
 
     // ---------- Clan role permissions (server-driven) ----------
-    // Defaults match the old hardcoded behavior. admin/clanPerms can override
-    // any subset — e.g. { elder: { kick: true } }.
+    // defaults match the old hardcoded behavior. admin/clanPerms can override
+    // any subset, e.g. { elder: { kick: true } }.
     const CLAN_ROLE_PERM_DEFAULTS = {
         leader:   { editClanInfo: true,  tagStyle: true,  kick: true,  approve: true,  roleChange: true,  transfer: true,  disband: true  },
         coleader: { editClanInfo: false, tagStyle: false, kick: true,  approve: true,  roleChange: true,  transfer: false, disband: false },
@@ -2958,14 +2957,14 @@
                         const gap = (ahead.eventScore ?? 0) - score;
                         tip = `+${gap} MMR to reach #${myRank - 1}`;
                     }
-                    // hide "of N" when alone — "#1/1" is just clutter
+                    // hide "of N" when alone, "#1/1" is just clutter
                     const totalPart = standings.length > 1
                         ? `<span style="opacity:.55;font-weight:normal;"> of ${standings.length}</span>`
                         : "";
                     rankBadgeHtml = `<span class="rgHasTip" data-tip="${tip}" style="color:${rankColor};font-weight:bold;font-size:11px;">#${myRank}${totalPart}</span>`;
                 }
 
-                // Left column: your clan's numbers.
+                // left col: your clan's numbers
                 const leftCol = `
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
                         <span style="font-size:9px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;">Your Clan</span>
@@ -3058,7 +3057,7 @@
     function myUserId() { return lastKnownPlayerData?.Id ?? null; }
 
     // plain in-game name (first line, TMP tags stripped, [TAG] prefix removed).
-    // used to seed Name Forge — not the leaderboard display name.
+    // used to seed Name Forge, not the leaderboard display name.
     function myGameNamePlain() {
         const raw = String(lastKnownPlayerData?.Nickname ?? "");
         if (!raw) return "";
@@ -3077,7 +3076,7 @@
     }
 
     // live clan-doc listener. attach while Clan tab is open, detach on close.
-    // callback must render from the snapshot — no refetching, or costs triple.
+    // callback must render from the snapshot, no refetching, or costs triple.
     let _clanUnsub = null;
     let _clanListenerId = null;
     let _clanAttaching = false; // v13.6: guard against re-entry during init await
@@ -3168,7 +3167,7 @@
         const uid = myUserId();
         if (!uid) return;
 
-        // new account since last load — reset
+        // new account since last load, reset
         if (clanLoadedForAccount !== uid) {
             force = true;
             myClan = null;
@@ -3239,7 +3238,7 @@
         const st = myClan.tagStyle || {};
         const tagText = String(myClan.tag || "").trim();
 
-        // working copy — live edits don't commit until Save
+        // working copy, live edits don't commit until Save
         const work = {
             mode: st.mode || (st.color ? "solid" : Array.isArray(st.stops) || st.paletteKey ? "gradient" : "none"),
             color: st.color || "#00bfff",
@@ -3262,10 +3261,8 @@
             return [work.gradientStart, work.gradientEnd];
         }
 
-        // Build the visible preview HTML for the current working style.
-        // Brackets get their own color when work.bracketColor is set; gradient
-        // then runs over just the tag LETTERS so the blend isn\'t interrupted
-        // by contrast-colored brackets on either end.
+        // when bracketColor is set, the gradient runs over just the letters
+        // so the blend isn't broken by contrast-colored brackets
         function buildPreviewHtml() {
             if (!tagText) return '<span style="color:#888;font-style:italic;font-size:14px;">(clan has no tag set)</span>';
             const escCh = ch => ch === "<" ? "&lt;" : ch === ">" ? "&gt;" : ch;
@@ -3273,8 +3270,7 @@
             const bracketColor = /^#[0-9a-fA-F]{6}$/.test(work.bracketColor || "") ? work.bracketColor : null;
             const stops = work.mode === "gradient" ? activeStops() : null;
 
-            // Rotation per emitted char index (wave alternates, static rotate
-            // applies same value to all)
+            // wave alternates per char, static rotate is uniform
             const rotFor = wi => work.waveOn ? (wi % 2 === 0 ? work.waveAmp : -work.waveAmp)
                 : (work.rotateDeg && !work.waveOn ? work.rotateDeg : 0);
             const spanFor = (ch, color, wi) => {
@@ -3284,7 +3280,7 @@
                 return '<span style="' + co + tf + '">' + escCh(ch) + '</span>';
             };
 
-            // Color resolver for tag LETTER at position i out of tagChars.length
+            // letter color at position i / tagChars.length
             const letterColor = (i) => {
                 if (stops) {
                     const giMax = bracketColor ? Math.max(0, tagChars.length - 1) : tagChars.length + 1;
@@ -3326,12 +3322,12 @@
         // ---- Build panel HTML ----
         let html = '';
 
-        // Big preview box (Forge style)
+        // big preview box (Forge style)
         html += '<div style="background:radial-gradient(120% 140% at 50% 0%, #101a3a 0%, #070a16 70%);border:1px solid #00bfff44;border-radius:10px;padding:16px;text-align:center;min-height:60px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;">'
             + '<span id="rgTagPreviewInner">' + buildPreviewHtml() + '</span></div>';
 
         if (canStyle && tagText) {
-            // Mode selector
+            // mode selector
             html += '<div style="font-size:10px;font-weight:bold;color:#00bfff;margin:6px 0 4px;">STYLE MODE</div>';
             html += '<div style="display:flex;gap:4px;">';
             for (const m of ["none","solid","gradient"]) {
@@ -3342,13 +3338,13 @@
             }
             html += '</div>';
 
-            // Solid color row
+            // solid color row
             html += '<div id="rgTagSolidRow" style="margin-top:8px;display:' + (work.mode === "solid" ? "flex" : "none") + ';gap:8px;align-items:center;font-size:11px;">'
                 + 'Color: <input type="color" id="rgTagColor" value="' + work.color + '" style="width:40px;height:24px;padding:0;border:none;background:transparent;cursor:pointer;">'
                 + '<span id="rgTagColorHex" style="opacity:.7;font-family:monospace;">' + work.color + '</span>'
                 + '</div>';
 
-            // Gradient section: palettes + custom endpoints + preview bar
+            // gradient section: palettes + custom endpoints + preview bar
             html += '<div id="rgTagGradientRow" style="margin-top:8px;display:' + (work.mode === "gradient" ? "block" : "none") + ';font-size:11px;">';
             html += '<div style="opacity:.7;margin-bottom:4px;">Palettes</div>';
             html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
@@ -3369,7 +3365,7 @@
             html += '<div id="rgTagGradientBar" style="margin-top:6px;height:6px;border-radius:3px;background:linear-gradient(90deg, ' + barStops.join(", ") + ');"></div>';
             html += '</div>';
 
-            // Bold + Italic
+            // bold + italic
             html += '<div style="margin-top:10px;display:flex;gap:16px;font-size:11px;">'
                 + '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="rgTagBold"' + (work.bold ? " checked" : "") + '> <b>Bold</b></label>'
                 + '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="rgTagItalic"' + (work.italic ? " checked" : "") + '> <i>Italic</i></label>'
@@ -3403,7 +3399,7 @@
             html += '<div style="font-size:11px;color:#888;text-align:center;margin-top:4px;">Leader hasn\'t set a tag yet.</div>';
         }
 
-        // Opt-in (all members)
+        // opt-in (all members)
         if (tagText) {
             html += '<hr style="border:none;border-top:1px solid #00bfff22;margin:10px 0 8px;">';
             html += '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;">'
@@ -3415,7 +3411,7 @@
 
         // ---- Wire live-update handlers ----
         if (canStyle && tagText) {
-            // Mode buttons
+            // mode buttons
             for (const btn of document.querySelectorAll(".rgTagMode")) {
                 btn.onclick = () => {
                     work.mode = btn.getAttribute("data-mode");
@@ -3430,7 +3426,7 @@
                     updatePreview();
                 };
             }
-            // Palette chips: pick preset or "Custom" (returns to user start/end)
+            // palette chips. "Custom" returns to user start/end
             for (const btn of document.querySelectorAll(".rgTagPalette")) {
                 btn.onclick = () => {
                     const key = btn.getAttribute("data-key");
@@ -3467,8 +3463,7 @@
             wireCheck("rgTagBold", "bold");
             wireCheck("rgTagItalic", "italic");
 
-            // Bracket color: picking one sets it; "Match tag" clears it so
-            // brackets rejoin the main style.
+            // "Match tag" clears bracket color so brackets rejoin main style
             const bracketColorEl = document.getElementById("rgTagBracketColor");
             const bracketMatchBtn = document.getElementById("rgTagBracketMatch");
             const bracketHexLbl = () => bracketMatchBtn && bracketMatchBtn.nextElementSibling;
@@ -3531,7 +3526,7 @@
                     if (!fb) return;
                     await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { tagStyle: newStyle }, { merge: true });
                     myClan.tagStyle = newStyle;
-                    // inline confirm — toast is easy to miss when scrolled deep
+                    // inline confirm, toast is easy to miss when scrolled deep
                     const saveBtn = document.getElementById("rgTagSave");
                     if (saveBtn) {
                         saveBtn.textContent = "✓ Saved for the clan!";
@@ -3548,7 +3543,7 @@
             };
         }
 
-        // Opt-in handler
+        // opt-in handler
         const useTagCb = document.getElementById("rgUseTag");
         if (useTagCb) {
             useTagCb.onchange = () => {
@@ -3673,7 +3668,7 @@
         const fb = await initFirebase();
         if (!fb || !myClan) return;
 
-        // denies are always allowed — they don't grow the roster
+        // denies are always allowed, they don't grow the roster
         if (approve && !eventPerm("allowApprove")) {
             showToast("Approvals are locked during this event.");
             return;
@@ -3796,7 +3791,7 @@
         const target = (myClan.members ?? []).find(m => m.userId === userId);
         if (!me || !target) return;
 
-        // frozen by default during events — role changes muddy the contribution audit
+        // frozen by default during events, role changes muddy the contribution audit
         if (!eventPerm("allowRoleChange")) {
             showToast("Role changes are locked during this event.");
             return;
@@ -3832,7 +3827,7 @@
             return;
         }
 
-        // uniqueness — ignore our own clan
+        // uniqueness, ignore our own clan
         const nameClash = clanDirectory.some(c => c.id !== myClan.id && (c.name ?? "").toLowerCase() === newName.toLowerCase());
         const tagClash = clanDirectory.some(c => c.id !== myClan.id && (c.tag ?? "").toLowerCase() === newTag.toLowerCase());
         if (nameClash) { showToast("A clan with that name already exists."); return; }
@@ -4004,7 +3999,7 @@
                 const t = giMax === 0 ? 0 : gi / giMax;
                 piece += "<" + _sampleStops(stops, t).toUpperCase() + ">";
             } else if (mode === "solid" && /^#[0-9a-fA-F]{6}$/.test(st.color || "")) {
-                // must emit every letter — bracket color tag persists in TMP
+                // must emit every letter, bracket color tag persists in TMP
                 // until changed. was gated on waveOn before which broke solid+bracket.
                 piece += "<" + st.color.toUpperCase() + ">";
             }
@@ -4076,7 +4071,7 @@
             renderClanView();
         } catch (e) {
             console.error("[RG HUD] Leave clan failed:", e);
-            // v13.6: local state is already partially wiped above — surface it
+            // v13.6: local state is already partially wiped above, surface it
             showToast("Couldn't leave clan — refresh the page to retry.");
         }
     }
@@ -4095,12 +4090,10 @@
         view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
         await loadClanData(true);
         const fb = await initFirebase();
-        // v13.6: dropped force=true on the two admin config loaders.
-        // events/current and admin/clanPerms change so rarely that the
-        // session-cached first read is authoritative for the rest of the
-        // session. Cuts ~2 Firestore reads per tab open with no user-
-        // visible staleness. loadClanData(true) is kept because clanless
-        // users have no snapshot listener and need a fresh directory.
+        // v13.6: dropped force=true on the two admin config loaders. they
+        // change so rarely the first session read is fine to cache. saves ~2
+        // Firestore reads per tab open. loadClanData(true) stays because
+        // clanless users have no live listener and need a fresh directory.
         if (fb) await loadEventConfig(fb);
         if (fb) await loadClanRolePerms(fb);
 
@@ -4216,7 +4209,7 @@
         const rank = [...clanDirectory].sort((a, b) => (b.totalMMR ?? 0) - (a.totalMMR ?? 0))
             .findIndex(c => c.id === myClan.id) + 1;
 
-        // ⋯ menu — per-target rank guards still apply below
+        // ⋯ menu, per-target rank guards still apply below
         const canManage = rolePerm(myRole, "kick") || rolePerm(myRole, "roleChange");
         // current MMR minus per-member baseline (only during active event)
         const eventActive = eventPhase() === "active";
@@ -4571,20 +4564,18 @@
 
 
     // ==================================================================
-    // 🎨 NAME FORGE — rich-text in-game nickname builder.
+    // 🎨 NAME FORGE. rich-text in-game nickname builder.
     // wrapped so helper names (esc, el, ...) don't collide with the HUD.
     // edits the IN-GAME nickname; ✏️ Rename edits the leaderboard name.
     // ==================================================================
     const RGNF = (function () {
       let _rgnfFab = null, _rgnfPanel = null;
 
-  // ------------------------------------------------------------------
-  // Constants
-  // ------------------------------------------------------------------
+  // ---- Constants ----
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
   const STORE_KEY = 'rgNameForge.presets.v1';
   const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
-  // per-account state — legacy key read once as fallback on upgrade
+  // per-account state, legacy key read once as fallback on upgrade
   let _currentUserId = null;
   let _lastRawNickname = '';
   const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
@@ -4623,9 +4614,7 @@
   ];
   const spriteEmoji = (n) => (SPRITES.find(s => s.n === n) || { e: '☺' }).e;
 
-  // ------------------------------------------------------------------
-  // State
-  // ------------------------------------------------------------------
+  // ---- State ----
   const defaultState = () => ({
     name: 'RootedEngineering',
     colorMode: 'gradient',            // 'none' | 'solid' | 'gradient'
@@ -4649,7 +4638,7 @@
     titleColor: '#94a3b8',
     titleSizePct: 60,
     titleSub: true,                   // wrap title in <sub> for that low-set look
-    // title has its own styling now — used to borrow name's stops
+    // title has its own styling now, used to borrow name's stops
     titleStops: ['#ff8fb1', '#a78bfa'],
     titlePaletteKey: null,
     titleBold: false,
@@ -4657,7 +4646,7 @@
     titleUnderline: false,
     titleStrike: false,
     titleAlpha: 255,                  // 0-255 alpha on titleColor (solid only)
-    // alpha on the name's solid color — dims trailing URL text etc
+    // alpha on the name's solid color, dims trailing URL text etc
     solidAlpha: 255,
     scoredMode: 'default',            // 'default' | 'hide' | 'tiny' | 'styled'
     scoredColor: '#22d3ee',
@@ -4669,9 +4658,7 @@
   // backfill any new fields if an old state was saved
   state = Object.assign(defaultState(), state);
 
-  // ------------------------------------------------------------------
-  // Utilities
-  // ------------------------------------------------------------------
+  // ---- Utilities ----
   function loadJSON(key, fallback) {
     try {
       const raw = localStorage.getItem(key);
@@ -4706,7 +4693,7 @@
     return rgbToHex({ r: lerp(a.r, b.r, t), g: lerp(a.g, b.g, t), b: lerp(a.b, b.b, t) });
   }
 
-  // Multi-stop gradient sample at t in [0,1]
+  // multi-stop gradient sample at t in [0,1]
   function gradientAt(stops, t) {
     if (stops.length === 1) return stops[0].toUpperCase();
     const seg = 1 / (stops.length - 1);
@@ -4743,7 +4730,7 @@
   function colorizeText(text, mode, solid, stops, skipSpaces, waveAmp = 0) {
     const wave = waveAmp !== 0;
 
-    // Fast paths when no per-letter work is needed
+    // fast paths when no per-letter work is needed
     if (!wave && mode === 'none') return text;
     if (!wave && mode === 'solid') return `<${solid.toUpperCase()}>` + text;
 
@@ -4806,7 +4793,7 @@
 
     let code = open + nameCode + close;
 
-    // title line — fully independent styling
+    // title line, fully independent styling
     if (s.titleOn && s.titleText.trim().length > 0) {
       let t = s.titleText;
       if (s.titleColorMode === 'solid') {
@@ -4828,7 +4815,7 @@
       code += '<br>' + tOpen + t + tClose;
     }
 
-    // Scored! treatment — trailing tags style whatever the game appends
+    // trailing tags to style whatever "Scored!" text the game appends
     switch (s.scoredMode) {
       case 'hide': code += '<size=0>'; break;
       case 'tiny': code += '<sub><size=25%>'; break;
@@ -4840,7 +4827,7 @@
   }
 
   // ------------------------------------------------------------------
-  // Preview rendering (approximation of TMP output)
+  // preview rendering (approximates TMP output)
   // ------------------------------------------------------------------
   function renderPreview(s) {
     const wrap = document.createElement('div');
@@ -4919,7 +4906,7 @@
             span.style.color = gradientAt(s.stops, t);
           }
         }
-        // per-span decoration — survives rotate + inherits glyph color
+        // per-span decoration, survives rotate + inherits glyph color
         if (decoCSS && tok.value !== ' ') {
           span.style.textDecorationLine = decoCSS;
           span.style.textDecorationColor = span.style.color || 'currentColor';
@@ -4978,7 +4965,7 @@
       wrap.appendChild(titleLine);
     }
 
-    // Simulated Scored! suffix
+    // fake "Scored!" suffix
     const scored = document.createElement('span');
     scored.className = 'rgnf-preview-scored';
     scored.textContent = ' Scored!';
@@ -4997,7 +4984,7 @@
   }
 
   // ------------------------------------------------------------------
-  // Auth: fresh Firebase ID token (SDK first, IndexedDB fallback + refresh)
+  // auth: fresh Firebase ID token. SDK first, IndexedDB fallback + refresh.
   // ------------------------------------------------------------------
   async function getIdToken() {
     // 1) Firebase SDK exposed on the page
@@ -5016,7 +5003,7 @@
     const expMs = Number(sts.expirationTime || 0);
     if (Date.now() < expMs - 60_000 && sts.accessToken) return sts.accessToken;
 
-    // 3) Token expired — refresh it
+    // 3) Token expired, refresh it
     const resp = await fetch(`https://securetoken.googleapis.com/v1/token?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -5078,7 +5065,7 @@
       body: new URLSearchParams({ nickname: code }),
     });
     const body = await res.text();
-    // log every apply's server verdict — helps debug "why didn't my name change"
+    // log every apply's server verdict, helps debug "why didn't my name change"
     console.log('[RG HUD] nickname apply ->', res.status, body.trim().slice(0, 60));
     return { ok: res.ok && body.trim() === 'true', status: res.status, body };
   }
@@ -5280,7 +5267,7 @@
     return node;
   }
 
-  // inline styled overlay picker — not a native prompt. onPick gets
+  // inline styled overlay picker, not a native prompt. onPick gets
   // ({ name, folder }); name is '' when nameField is false.
   function openFolderPicker(panel, { title, existing, current, onPick, nameField = false, nameDefault = '', nameOnly = false }) {
     const backdrop = el('div', { class: 'rgnf-picker-backdrop' });
@@ -5620,7 +5607,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // so subsequent rebuilds don't clobber the edit
     const rawEdit = el('textarea', { class: 'rgnf-code' });
     rawEdit.style.cssText = 'display:block;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow:hidden;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:#9fb3ff;';
-    // reset to auto first — scrollHeight won't shrink below the current height
+    // reset to auto first, scrollHeight won't shrink below the current height
     const autosizeRawEdit = () => {
       rawEdit.style.height = 'auto';
       rawEdit.style.height = (rawEdit.scrollHeight + 2) + 'px';
@@ -5647,7 +5634,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     const refreshPreview = () => {
       if (state.rawCode) {
         // clan-tag prefix applies in raw mode too. old hardcoded tags in the raw
-        // name will preview doubled — fix by deleting them in the textarea.
+        // name will preview doubled, fix by deleting them in the textarea.
         const rawPfx = _prefix();
         pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
         if (rawEdit.value !== state.rawCode) rawEdit.value = state.rawCode;
@@ -5760,7 +5747,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       bar.style.background = `linear-gradient(90deg, ${state.stops.join(',')})`;
       secColor.appendChild(bar);
 
-      // One-click palettes + tools
+      // one-click palettes + tools
       const palRow = el('div', { class: 'rgnf-row' });
       PALETTES.forEach((p) => {
         palRow.appendChild(el('button', {
@@ -5841,11 +5828,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
     }));
     secTitle.appendChild(tRow);
     if (state.titleOn) {
-      // Text input
+      // text input
       secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
         el('input', { type: 'text', placeholder: 'e.g. RGC FINALIST', value: state.titleText, oninput: (e) => { state.titleText = e.target.value; refreshPreview(); } }),
       ]));
-      // Color mode
+      // color mode
       const tm = el('div', { class: 'rgnf-row' });
       [['inherit', 'Inherit'], ['solid', 'Solid'], ['gradient', 'Gradient']].forEach(([v, label]) => {
         tm.appendChild(el('button', {
@@ -5854,7 +5841,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         }));
       });
       secTitle.appendChild(tm);
-      // opacity is below — applies to solid AND gradient
+      // opacity is below, applies to solid AND gradient
       if (state.titleColorMode === 'solid') {
         secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
           el('input', { type: 'color', value: state.titleColor, oninput: (e) => { state.titleColor = e.target.value; refreshPreview(); } }),
@@ -5993,11 +5980,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
                 const plain = raw.replace(/<[^>]*>/g, '').trim().slice(0, 24) || '(markup only)';
                 hist.unshift({ code: codeApplied, plain, ts: Date.now() });
                 saveJSON(HISTORY_KEY, hist.slice(0, 5));
-                // both forms — login nicknames come back clan-tag-stripped
+                // both forms, login nicknames come back clan-tag-stripped
                 saveJSON(pendingStealKey(), { code: codeApplied, body: raw, ts: Date.now() });
                 render(panel);
                 showImposterReveal(raw);
-                // silent re-apply — a race sometimes needed a second push
+                // silent re-apply, a race sometimes needed a second push
                 setTimeout(() => { applyNickname(codeApplied).catch(() => {}); }, 1000);
                 return;
               }
@@ -6048,7 +6035,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         render(panel);
       };
       header.appendChild(label);
-      // Ungrouped is synthetic — nothing to rename
+      // "Ungrouped" is synthetic, nothing to rename
       if (folder !== 'Ungrouped') {
         header.appendChild(el('button', {
           class: 'rgnf-chip', text: '✏️', title: 'Rename folder',
@@ -6075,7 +6062,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             });
           },
         }));
-        // no "delete folder" — folders are derived from membership
+        // no "delete folder", folders are derived from membership
       }
       listWrap.appendChild(header);
 
@@ -6140,7 +6127,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     }));
     secPresets.appendChild(listWrap);
 
-    // Share presets with the squad
+    // export/import for sharing
     secPresets.appendChild(el('div', { class: 'rgnf-row' }, [
       el('button', {
         class: 'rgnf-chip', text: '📤 Export', title: 'Copy all presets as JSON to share',
@@ -6182,7 +6169,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           el('button', {
             class: 'rgnf-chip', text: '💾', title: 'Save this as a permanent preset',
             onclick: () => {
-              // strip the clan-tag prefix — the checkbox owns it
+              // strip the clan-tag prefix, the checkbox owns it
               let code = h.code;
               const pfx = _prefix();
               if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
@@ -6255,7 +6242,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         statusLine.textContent = '';
         try {
           const codeApplied = _prefix() + (state.rawCode ? state.rawCode : buildCode(state));
-          // reset target is unprefixed — checkbox owns the tag (double-tag fix)
+          // reset target is unprefixed, checkbox owns the tag (double-tag fix)
           _lastRawNickname = state.rawCode ? state.rawCode : buildCode(state);
           const result = await applyNickname(codeApplied);
           if (result.ok) {
@@ -6331,7 +6318,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   // ------------------------------------------------------------------
-  // Input capture guard — MUST register before the game's handlers.
+  // Input capture guard, MUST register before the game's handlers.
   // rocketgoal.io binds control keys at window capture and preventDefaults them.
   // we run at document-start, register first, and stopImmediatePropagation for
   // events aimed at our UI so the game never sees them.
@@ -6340,14 +6327,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
     const inUI = (t) => t && t.closest && (t.closest('.rgnf-panel') || t.closest('.rgnf-fab'));
     const isTextField = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
 
-    // we take over editing for our own fields — mutate value ourselves and fire
+    // we take over editing for our own fields, mutate value ourselves and fire
     // a synthetic input event. works no matter what the game does with the key.
     window.addEventListener('keydown', (e) => {
       const t = e.target;
       if (!inUI(t)) return;
       if (e.altKey && e.code === 'KeyN') return; // let the global toggle through
 
-      // Always hide the event from the game's global handlers.
+      // always hide the event from the game's global handlers
       e.stopImmediatePropagation();
 
       if (!isTextField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
@@ -6369,7 +6356,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         else { t.value = t.value.slice(0, start) + t.value.slice(end + 1); t.setSelectionRange(start, start); }
         handled = true;
       }
-      // arrows/home/end/tab fall through — browser caret still works
+      // arrows/home/end/tab fall through, browser caret still works
       if (handled) {
         e.preventDefault();
         t.dispatchEvent(new Event('input', { bubbles: true }));
@@ -6406,11 +6393,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
       return {
         setPrefixProvider(fn) { _prefixProvider = fn; },
         setRosterProvider(fn) { _rosterProvider = fn; },
-        // v13.6: expose the pending-steal verifier so the HUD can call it
-        // from the /login fetch response, not only from Forge-panel open.
-        // Fixes the "stolen name got reverted on refresh, user never opens
-        // Forge, receipt expires, name never re-applied" scenario the v13.5
-        // self-healing was supposed to close.
+        // v13.6: HUD calls this from /login response too, not just Forge open.
+        // fixes the "steal, refresh, receipt expires before Forge opens" case
+        // that v13.5's self-heal was supposed to catch.
         verifyStolenName(rawNickname) { verifyPendingSteal(rawNickname); },
         refresh() { if (_rgnfPanel) render(_rgnfPanel); },
         // called on Forge open and on account switch. per-account state wins;
@@ -6420,7 +6405,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           if (rawNickname) _lastRawNickname = String(rawNickname);
           const prevId = _currentUserId;
           _currentUserId = userId;
-          // must run before the same-account early return — verification fires
+          // must run before the same-account early return, verification fires
           // on every boot, not just account switches (latch inside makes it free)
           verifyPendingSteal(rawNickname);
           if (prevId === userId) return;
@@ -6442,7 +6427,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           }
 
           // must render unconditionally. panel DOM exists from page load,
-          // and sync runs before mountIn on first open — gating on _mountedIn
+          // and sync runs before mountIn on first open, gating on _mountedIn
           // meant the swapped state never reached the screen.
           if (_rgnfPanel) render(_rgnfPanel);
         },
