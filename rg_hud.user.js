@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.5
+// @version      13.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -24,7 +24,61 @@
     // scale (unlike the 🚀 emoji it replaced, which pulled from the system
     // font and looked flat/inconsistent across OSes).
     const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png';
+    // Tamagotchi-style Rocket Buddy sheet (20×5 × 128px). Same CDN path as
+    // the ATLAS icon — push atlas/rocket_buddy_sheet.png for it to resolve.
+    const BUDDY_SHEET_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/rocket_buddy_sheet.png';
     const atlasIconHtml = () => `<img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">`;
+
+    // buddyMood() keys → sprite-sheet mood block names. Default "focused"
+    // plays the idle bob loop; streak/idle moods map 1:1 to sheet columns.
+    const BUDDY_MOOD_SPRITE = {
+        focused: "idle",
+        onFire: "onFire",
+        frosty: "frosty",
+        sleepy: "sleepy",
+        neglected: "neglected",
+    };
+
+    function ensureBuddySpriteStyles() {
+        if (document.getElementById("rgBuddySpriteStyle")) return;
+        const style = document.createElement("style");
+        style.id = "rgBuddySpriteStyle";
+        style.textContent = `
+.rg-buddy-sprite {
+  --rb-tile: 112px;
+  --rb-sheet-w: 2240px; /* 2560 * (112/128) */
+  --rb-sheet-h: 560px;  /* 640 * (112/128) */
+  --rb-mood: 0;
+  --rb-stage: 0;
+  width: var(--rb-tile);
+  height: var(--rb-tile);
+  display: inline-block;
+  flex-shrink: 0;
+  background-image: url("${BUDDY_SHEET_URL}");
+  background-repeat: no-repeat;
+  background-size: var(--rb-sheet-w) var(--rb-sheet-h);
+  background-position-x: calc(var(--rb-mood) * -4 * var(--rb-tile));
+  background-position-y: calc(var(--rb-stage) * -1 * var(--rb-tile));
+  animation: rg-buddy-steps 600ms steps(4) infinite;
+  transform: translateZ(0);
+}
+@keyframes rg-buddy-steps {
+  from { background-position-x: calc(var(--rb-mood) * -4 * var(--rb-tile)); }
+  to   { background-position-x: calc(var(--rb-mood) * -4 * var(--rb-tile) - 4 * var(--rb-tile)); }
+}
+.rg-buddy-sprite.stage-1 { --rb-stage: 0; }
+.rg-buddy-sprite.stage-2 { --rb-stage: 1; }
+.rg-buddy-sprite.stage-3 { --rb-stage: 2; }
+.rg-buddy-sprite.stage-4 { --rb-stage: 3; }
+.rg-buddy-sprite.stage-5 { --rb-stage: 4; }
+.rg-buddy-sprite.mood-idle { --rb-mood: 0; }
+.rg-buddy-sprite.mood-onFire { --rb-mood: 1; }
+.rg-buddy-sprite.mood-frosty { --rb-mood: 2; }
+.rg-buddy-sprite.mood-sleepy { --rb-mood: 3; }
+.rg-buddy-sprite.mood-neglected { --rb-mood: 4; }
+`;
+        document.head.appendChild(style);
+    }
 
     // ---------- Settings (persisted in localStorage) ----------
 
@@ -119,7 +173,7 @@
     //    "minimum version X and everything after" with a plain >= compare.
     //    CONSTRAINT: version numbers must stay decimal-orderly (11.9 -> 12.0,
     //    never 11.10 -- parseFloat("11.10") === 11.1).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -292,8 +346,10 @@
                 <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">ATLAS</span>
                 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
                     <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
+                    <span id="rgWarnDot" title="" style="display:none;color:#ffbb33;font-weight:bold;font-size:14px;cursor:help;" data-tip="ATLAS saw something unexpected (hover for details, or run rgDump() for full log)">⚑</span>
                     <button id="rgClanBtn" class="rgIconBtn" title="Clans">🛡️</button>
                     <button id="rgForgeBtn" class="rgIconBtn" title="Name Forge">🎨</button>
+                    <button id="rgBuddyBtn" class="rgIconBtn" title="Rocket Buddy">🚗</button>
                     <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
                     <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
                 </div>
@@ -310,10 +366,13 @@
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
+                        <button id="rgSetRecap" class="rgBtn" style="width:100%;margin-top:4px;">📊 Session recap</button>
+                        <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">📋 Copy debug bundle</button>
                     </div>
                 </div>
                 <div id="rgClanView" style="display:none;">Loading clans...</div>
                 <div id="rgForgeView" style="display:none;max-height:520px;overflow-y:auto;overflow-x:hidden;"></div>
+                <div id="rgBuddyView" style="display:none;"></div>
                 <div id="rgActionRow" style="margin-top:6px;display:flex;gap:4px;">
                     <button id="rgRename" class="rgBtn" style="flex:1;">✏️ Rename</button>
                     <button id="rgSub" class="rgBtn" style="flex:1;">📺 Sub</button>
@@ -383,6 +442,17 @@
             tooltipEl.style.opacity = "0";
         });
 
+        // v13.6: kick keyboard focus off any HUD button after a click, so
+        // hitting space in-queue triggers the game's jump/boost instead of
+        // reactivating whichever HUD icon the user last touched (which
+        // flipped Clan <-> Forge <-> Settings mid-queue). Delegated on the
+        // HUD root so it covers dynamically-added buttons in modals, clan
+        // rows, buddy view, etc., without needing per-button wiring.
+        hud.addEventListener("click", (e) => {
+            const btn = e.target.closest("button");
+            if (btn) btn.blur();
+        });
+
         document.getElementById("rgMinimize").onclick = () => manualToggle();
         document.getElementById("rgSub").onclick = () => {
             window.open("https://www.youtube.com/@RootedEngineering", "_blank", "noopener");
@@ -405,10 +475,12 @@
         const clanView = document.getElementById("rgClanView");
         const panel = document.getElementById("rgSettingsPanel");
         const forgeView = document.getElementById("rgForgeView");
+        const buddyView = document.getElementById("rgBuddyView");
         const actionRow = document.getElementById("rgActionRow");
         function showStatsOnly() {
             clanView.style.display = "none";
             forgeView.style.display = "none";
+            buddyView.style.display = "none";
             panel.style.display = "none";
             statsView.style.display = "block";
             actionRow.style.display = "flex";
@@ -455,6 +527,19 @@
             if (RGNF.refresh) RGNF.refresh();
         };
 
+        // v13.6: Rocket Buddy toggle (🚗 icon) -- new tab, same pattern as
+        // Clan and Forge. Renders on open so the mood/energy line reads the
+        // latest streak state. No listener to attach or detach.
+        document.getElementById("rgBuddyBtn").onclick = () => {
+            const showingBuddy = buddyView.style.display !== "none";
+            if (showingBuddy) { showStatsOnly(); return; }
+            showStatsOnly();
+            statsView.style.display = "none";
+            buddyView.style.display = "block";
+            actionRow.style.display = "none"; // Buddy tab hides unrelated actions
+            renderBuddyView();
+        };
+
         // Settings panel wiring -- opening settings routes through showStatsOnly()
         // so any other open tab (Clan, Forge) closes cleanly first, and the action
         // row is correctly restored (matters when settings is opened from Forge,
@@ -498,6 +583,62 @@
             saveSettings();
             syncSettingInputs();
             applyGlowSettings();
+        };
+
+        // v13.6: session recap on demand. Composes a small dialog from
+        // sessionStart, streakData, myClan (if event active). Non-modal;
+        // dismisses via the standard dialog OK.
+        document.getElementById("rgSetRecap").onclick = () => showSessionRecap();
+
+        // v13.6: bundle debug state to clipboard for support requests.
+        // Everything the maintainers need to triage a "the HUD isn't
+        // working" ping without asking the user to paste console output.
+        // Player data is trimmed to the fields that matter (Id, Nickname,
+        // ModesGlicko, ModesData) so we don't leak the whole login blob.
+        document.getElementById("rgSetCopyDebug").onclick = async () => {
+            try {
+                const trimmedPlayer = lastKnownPlayerData ? {
+                    Id: lastKnownPlayerData.Id,
+                    Nickname: lastKnownPlayerData.Nickname,
+                    ModesGlicko: lastKnownPlayerData.ModesGlicko,
+                    ModesData: lastKnownPlayerData.ModesData,
+                } : null;
+                const bundle = {
+                    version: SCRIPT_VERSION,
+                    versionNum: SCRIPT_VERSION_NUM,
+                    deviceId: getDeviceId(),
+                    timestamp: new Date().toISOString(),
+                    settings: settings,
+                    player: trimmedPlayer,
+                    state: {
+                        _inMatch,
+                        _liveRoster: _liveRoster.length,
+                        lastGamePlayers: lastGamePlayers.length,
+                        _lastInitLineAt,
+                        _lastRecoverySignalAt,
+                        _lastValidRatingsAt,
+                    },
+                    clan: myClan ? {
+                        id: myClan.id,
+                        name: myClan.name,
+                        tag: myClan.tag,
+                        role: myClanRole?.(),
+                        memberCount: (myClan.members || []).length,
+                        eventScore: computeClanEventScore(myClan),
+                    } : null,
+                    event: eventConfig ? {
+                        name: eventConfig.name,
+                        phase: eventPhase(),
+                    } : null,
+                    warnings: _rgWarnBuf,
+                    log: _rgLogBuf.slice(-100),
+                };
+                await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+                showToast("Debug bundle copied — paste it in a bug report");
+            } catch (e) {
+                console.error("[RG HUD] Copy debug bundle failed:", e);
+                showToast("Copy failed — see console");
+            }
         };
 
         // Kick off the live countdown tick. Runs once for the lifetime of the
@@ -764,6 +905,323 @@
         return ` <span style="color:${color};font-size:10px;">(${sign}${diff})</span>`;
     }
 
+    // ---------- Rocket Buddy (v13.6) ----------
+    // Local-only tomogotchi-style companion. Feeds off session/streak state
+    // that already exists elsewhere; adds NO Firestore reads or writes. Old
+    // 13.5 clients don't know it exists, which is exactly the point during
+    // a live event -- ship without touching the shared clan/leaderboard
+    // shape. Persisted in localStorage per-device (not per-account) since
+    // "your buddy" is a device-flavored companion, not tied to a specific
+    // account -- switch accounts, same buddy still with you.
+    //
+    // Stage gates: matches driven THROUGH ATLAS (from installation),
+    // combined with rank floors for later stages. A player at rank #10 on
+    // a fresh install still has to grind their way up through the stages;
+    // rank alone doesn't unlock the top forms, and the top forms require
+    // both match count AND rank. Nothing is retroactive.
+    const BUDDY_STAGES = [
+        { id: 1, name: "Ignition",         icon: "🛞", matches: 0,   rankTop: null },
+        { id: 2, name: "Rookie Booster",   icon: "🏎️", matches: 50,  rankTop: null },
+        { id: 3, name: "Ace Racer",        icon: "🚗", matches: 150, rankTop: 500 },
+        { id: 4, name: "Champion Ride",    icon: "🏁", matches: 400, rankTop: 100 },
+        { id: 5, name: "Legendary Fleet",  icon: "🚀", matches: 800, rankTop: 20  },
+    ];
+    const BUDDY_PET_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour between pets
+    const BUDDY_STORAGE_KEY = "rgHudBuddy";
+
+    let buddyState = null;
+    try { buddyState = JSON.parse(localStorage.getItem(BUDDY_STORAGE_KEY) ?? "null"); } catch (e) {}
+
+    function saveBuddyState() {
+        try { localStorage.setItem(BUDDY_STORAGE_KEY, JSON.stringify(buddyState)); } catch (e) {}
+    }
+
+    function ensureBuddy() {
+        if (!buddyState) {
+            buddyState = {
+                name: "",                      // empty = "Unnamed" in UI; user can rename
+                birthAt: Date.now(),
+                matchesDriven: 0,              // matches while Buddy has existed
+                lifetimeMatchesAtBirth: null,  // captured from data on first observation
+                lastPetAt: 0,
+                lastMatchAt: 0,                // for the mood/energy computation
+                equipped: false,
+                bestRankByMode: {},            // { "3v3": 42, "2v2": 105, ... }
+            };
+            saveBuddyState();
+        }
+    }
+
+    // Called from updateHUD after every ratings sync. Increments the match
+    // counter by however many new matches have appeared since the last sync
+    // (usually 1, but a resync after several offline matches will catch up
+    // all of them). Also refreshes bestRankByMode from cachedRanks.
+    function tickBuddyFromData(data) {
+        ensureBuddy();
+        if (!data || !data.ModesData) return;
+        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+        const total = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
+        if (buddyState.lifetimeMatchesAtBirth == null) {
+            // First observation -- lock in the baseline. Playing matches AT
+            // ALL predates the buddy from here forward.
+            buddyState.lifetimeMatchesAtBirth = total;
+            saveBuddyState();
+            return;
+        }
+        const driven = Math.max(0, total - buddyState.lifetimeMatchesAtBirth);
+        if (driven !== buddyState.matchesDriven) {
+            const grew = driven > buddyState.matchesDriven;
+            buddyState.matchesDriven = driven;
+            if (grew) buddyState.lastMatchAt = Date.now();
+            saveBuddyState();
+        }
+        // Refresh best-rank floor per mode from the live rank cache.
+        const rankPlaylists = { "3v3": null, "2v2": null, "1v1": null };
+        for (const p of Object.keys(rankPlaylists)) {
+            const r = cachedRanks.get(p);
+            if (typeof r === "number") {
+                const prev = buddyState.bestRankByMode[p];
+                if (prev == null || r < prev) {
+                    buddyState.bestRankByMode[p] = r;
+                    saveBuddyState();
+                }
+            }
+        }
+    }
+
+    function buddyStage() {
+        ensureBuddy();
+        const matches = buddyState.matchesDriven;
+        const bestRank = Object.values(buddyState.bestRankByMode)
+            .filter(r => typeof r === "number")
+            .reduce((m, r) => Math.min(m, r), Infinity);
+        // Walk from highest to lowest; return the first stage whose gates
+        // this buddy has cleared. matches AND rank-floor (if any) both
+        // must pass -- stages 3+ need both.
+        for (let i = BUDDY_STAGES.length - 1; i >= 0; i--) {
+            const s = BUDDY_STAGES[i];
+            const matchOk = matches >= s.matches;
+            const rankOk = s.rankTop == null || bestRank <= s.rankTop;
+            if (matchOk && rankOk) return { ...s, level: s.id, bestRank };
+        }
+        return { ...BUDDY_STAGES[0], level: 1, bestRank };
+    }
+
+    // Next-stage requirements, phrased for display. Returns the gap in
+    // matches and (if applicable) the rank floor still to reach. Returns
+    // null when already at max stage.
+    function buddyNextStageRequirement() {
+        const cur = buddyStage();
+        if (cur.level >= BUDDY_STAGES.length) return null;
+        const next = BUDDY_STAGES[cur.level]; // next by id (0-indexed lookup)
+        const matchGap = Math.max(0, next.matches - buddyState.matchesDriven);
+        const rankGap = next.rankTop == null || (cur.bestRank <= next.rankTop)
+            ? null
+            : next.rankTop;
+        return { matches: matchGap, rankTop: rankGap, stageName: next.name };
+    }
+
+    // Mood is a function of the live streak (already tracked by streakData)
+    // and time-since-last-match. Independent of stage.
+    function buddyMood() {
+        ensureBuddy();
+        const now = Date.now();
+        const idleMs = now - (buddyState.lastMatchAt || buddyState.birthAt);
+        const streak = streakData?.streak ?? 0;
+        if (streak >= 3)  return { key: "onFire",     label: "🔥 On fire",       color: "#ff7a00" };
+        if (streak <= -3) return { key: "frosty",     label: "❄ Frosty",         color: "#7ec8ff" };
+        if (idleMs > 3 * 24 * 3600 * 1000) return { key: "neglected", label: "😢 Neglected",  color: "#9aa5ad" };
+        if (idleMs > 24 * 3600 * 1000)     return { key: "sleepy",    label: "💤 Sleepy",     color: "#6b8fb4" };
+        return { key: "focused", label: "🎯 Focused", color: "#00bfff" };
+    }
+
+    // Energy is a pure display metric: starts at 100 right after a match /
+    // pet, decays linearly to 0 over 24 idle hours. Pet button adds a bump
+    // (via lastPetAt) capped once per BUDDY_PET_COOLDOWN_MS.
+    function buddyEnergy() {
+        ensureBuddy();
+        const now = Date.now();
+        const anchor = Math.max(buddyState.lastPetAt || 0, buddyState.lastMatchAt || 0, buddyState.birthAt);
+        const hoursIdle = (now - anchor) / (3600 * 1000);
+        return Math.max(0, Math.min(100, Math.round(100 - hoursIdle * 4.17))); // 100 -> 0 over 24h
+    }
+
+    function buddyDisplayName() {
+        return (buddyState?.name || "").trim() || "Unnamed";
+    }
+
+    function petBuddy() {
+        ensureBuddy();
+        const now = Date.now();
+        if (now - (buddyState.lastPetAt || 0) < BUDDY_PET_COOLDOWN_MS) {
+            const mins = Math.ceil((BUDDY_PET_COOLDOWN_MS - (now - buddyState.lastPetAt)) / 60000);
+            showToast(`${buddyDisplayName()} was just petted — try again in ${mins}m`);
+            return false;
+        }
+        buddyState.lastPetAt = now;
+        saveBuddyState();
+        return true;
+    }
+
+    // ---- Buddy view render ----
+    // Same pattern as the other tabs: rebuild innerHTML on open (or after
+    // an action), no diffing needed since this tab is closed most of the
+    // time and re-renders are cheap. All values escaped where user input
+    // could reach them (buddy name).
+    function renderBuddyView() {
+        const view = document.getElementById("rgBuddyView");
+        if (!view) return;
+        ensureBuddy();
+        const stage = buddyStage();
+        const mood = buddyMood();
+        const energy = buddyEnergy();
+        const req = buddyNextStageRequirement();
+
+        // Age in days, rounded down. New buddies show "born today" instead
+        // of "0 days" so the first-play experience feels welcoming.
+        const ageDays = Math.floor((Date.now() - buddyState.birthAt) / (24 * 3600 * 1000));
+        const ageStr = ageDays === 0 ? "born today" : `${ageDays} day${ageDays === 1 ? "" : "s"}`;
+
+        // Star row: filled for current level, empty for the rest.
+        const stars = Array.from({ length: BUDDY_STAGES.length }, (_, i) =>
+            i < stage.level ? "★" : "☆").join(" ");
+
+        // Best rank across all modes, formatted for the stats block. Only
+        // shown once the player has at least one ranked match observed.
+        const bestRankStr = stage.bestRank === Infinity
+            ? "—"
+            : `#${stage.bestRank}`;
+
+        // Next-stage line. When maxed, celebrate.
+        let nextLine;
+        if (!req) {
+            nextLine = `<span style="color:#ffd700;">Max stage reached 🏆</span>`;
+        } else if (req.matches > 0 && req.rankTop != null) {
+            nextLine = `${req.matches} more matches <b>AND</b> top ${req.rankTop} in any mode`;
+        } else if (req.matches > 0) {
+            nextLine = `${req.matches} more matches`;
+        } else if (req.rankTop != null) {
+            nextLine = `Reach top ${req.rankTop} in any mode`;
+        } else {
+            nextLine = `Ready to evolve!`;
+        }
+
+        // Energy bar: 10 slots. Colored by level (low = red, mid = amber,
+        // high = green). Purely display -- no gameplay effect.
+        const filled = Math.round(energy / 10);
+        const barColor = energy < 20 ? "#ff6b6b" : (energy < 50 ? "#ffbb33" : "#00ff66");
+        const bar = `<span style="color:${barColor};font-family:monospace;letter-spacing:-1px;">${"█".repeat(filled)}${"░".repeat(10 - filled)}</span>`;
+
+        // Animated sprite sheet (stage row × mood block). Mood art carries
+        // the vibe; stage 4/5 still get a soft radial flex ring behind.
+        ensureBuddySpriteStyles();
+        const moodSprite = BUDDY_MOOD_SPRITE[mood.key] || "idle";
+        let spriteWrap = "";
+        if (stage.level >= 5) {
+            spriteWrap = "background:radial-gradient(circle, #ffd70044 0%, transparent 70%);padding:8px;border-radius:50%;";
+        } else if (stage.level >= 4) {
+            spriteWrap = "background:radial-gradient(circle, #00bfff33 0%, transparent 70%);padding:6px;border-radius:50%;";
+        }
+
+        const isNewbie = buddyState.matchesDriven === 0;
+        const displayName = buddyDisplayName();
+
+        view.innerHTML = `
+            <div style="text-align:center;padding:8px 4px 12px;">
+                <div style="display:inline-block;${spriteWrap}"><div id="rgBuddySprite" class="rg-buddy-sprite stage-${stage.level} mood-${moodSprite}" role="img" aria-label="${escapeHtml(stage.name)}"></div></div>
+                <div style="margin-top:6px;font-size:14px;font-weight:bold;color:#00bfff;">${escapeHtml(displayName)}</div>
+                <div style="font-size:11px;opacity:0.85;">${escapeHtml(stage.name)} · Lv ${stage.level}</div>
+                <div style="margin-top:2px;font-size:13px;color:#ffd700;letter-spacing:2px;">${stars}</div>
+            </div>
+
+            <div style="font-size:11px;background:#00bfff11;border-radius:6px;padding:6px 8px;margin-bottom:8px;">
+                <div style="display:flex;justify-content:space-between;">
+                    <span style="color:${mood.color};font-weight:bold;">${mood.label}</span>
+                    <span style="opacity:0.7;">${streakData?.streak ? Math.abs(streakData.streak) + (streakData.streak > 0 ? "W" : "L") + " streak" : ""}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+                    <span style="opacity:0.7;">Energy</span>
+                    <span>${bar} ${energy}%</span>
+                </div>
+            </div>
+
+            ${isNewbie ? `
+                <div style="font-size:11px;opacity:0.85;background:#00bfff11;border-radius:6px;padding:8px;margin-bottom:8px;">
+                    Just hatched. Play a match to give ${escapeHtml(displayName)} their first
+                    laps.
+                </div>
+            ` : `
+                <div style="font-size:11px;line-height:1.6;">
+                    <div style="display:flex;justify-content:space-between;"><span style="opacity:0.7;">Age</span><span>${ageStr}</span></div>
+                    <div style="display:flex;justify-content:space-between;"><span style="opacity:0.7;">Matches driven</span><span>${buddyState.matchesDriven}</span></div>
+                    <div style="display:flex;justify-content:space-between;"><span style="opacity:0.7;">Best rank</span><span>${bestRankStr}</span></div>
+                    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;"><span style="opacity:0.7;">Next stage</span><span style="text-align:right;">${nextLine}</span></div>
+                </div>
+            `}
+
+            <div style="display:flex;gap:4px;margin-top:10px;">
+                <button id="rgBuddyPet" class="rgBtn" style="flex:1;">🫳 Pet</button>
+                <button id="rgBuddyRename" class="rgBtn" style="flex:1;">✏️ Name</button>
+                <button id="rgBuddyEquip" class="rgBtn" style="flex:1;">${buddyState.equipped ? "◉ Equipped" : "◯ Equip"}</button>
+            </div>
+        `;
+
+        // Pet: brief bounce animation on the sprite, cooldown-gated.
+        document.getElementById("rgBuddyPet").onclick = () => {
+            if (!petBuddy()) return;
+            const sprite = document.getElementById("rgBuddySprite");
+            if (sprite) {
+                sprite.style.transition = "transform 0.15s ease";
+                sprite.style.transform = "scale(1.25)";
+                setTimeout(() => { sprite.style.transform = ""; }, 150);
+            }
+            // Repaint the energy bar / mood after the pet -- lastPetAt
+            // just changed, energy shot back up.
+            setTimeout(renderBuddyView, 200);
+        };
+
+        // Rename via themed prompt. Empty name reverts to "Unnamed".
+        document.getElementById("rgBuddyRename").onclick = async () => {
+            const newName = await showDialog({
+                message: "Name your Buddy",
+                withInput: true,
+                inputPlaceholder: buddyDisplayName(),
+                okLabel: "Save",
+                cancelLabel: "Cancel",
+            });
+            if (newName === null) return; // cancelled
+            const clean = String(newName).slice(0, 20).trim();
+            buddyState.name = clean;
+            saveBuddyState();
+            renderBuddyView();
+        };
+
+        // Equip toggles a small pet-icon flair in the main stats view
+        // (rendered by updateHUD via buddyEquippedFlairHtml). Purely local.
+        document.getElementById("rgBuddyEquip").onclick = () => {
+            buddyState.equipped = !buddyState.equipped;
+            saveBuddyState();
+            renderBuddyView();
+            // Also repaint the main HUD in case it's about to become visible
+            // again -- the equipped flair change should be reflected there.
+            if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
+        };
+    }
+
+    // Small icon shown next to the streak badge in the main stats view when
+    // the buddy is equipped. Local render only; no server visibility.
+    function buddyEquippedFlairHtml() {
+        try {
+            ensureBuddy();
+            if (!buddyState.equipped) return "";
+            const stage = buddyStage();
+            return ` <span class="rgHasTip" data-tip="${escapeHtml(buddyDisplayName())} · ${escapeHtml(stage.name)}" style="font-size:14px;vertical-align:middle;">${stage.icon}</span>`;
+        } catch (e) {
+            dbg("buddyEquippedFlairHtml threw: " + (e && e.message ? e.message : e));
+            return "";
+        }
+    }
+
     // ---------- Ranks ----------
 
     // playlist -> rank number; refreshed after our own data changes.
@@ -968,12 +1426,63 @@
 
     // ---------- HUD content ----------
 
+    // v13.6: mini-bar that shows the user's own event contribution + their
+    // clan's live rank in the Clash Cup standings. Renders only when there's
+    // an active event AND the user is in a clan whose baseline was captured.
+    // Reuses data the snapshot listener already keeps fresh in `myClan` --
+    // no new Firestore reads or writes. Returns "" when nothing to show, so
+    // the HUD template can splice it in unconditionally.
+    function clashMiniBarHtml() {
+        try {
+            if (typeof eventPhase !== "function" || eventPhase() !== "active") return "";
+            if (!myClan) return "";
+            const uid = myUserId();
+            const contrib = myEventContribution(myClan, uid);
+            const clanScore = computeClanEventScore(myClan);
+            const standings = eventStandings();
+            const rank = standings.findIndex(c => c.id === myClan.id) + 1;
+            if (!rank) return ""; // our clan's baseline hasn't landed yet
+            const cSign = (contrib ?? 0) >= 0 ? "+" : "";
+            const cColor = (contrib ?? 0) >= 0 ? "#00ff66" : "#ff6b6b";
+            const clanSign = clanScore >= 0 ? "+" : "";
+            const clanColor = clanScore >= 0 ? "#00ff66" : "#ff6b6b";
+            const rankColor = rank === 1 ? "#ffd700" : (rank <= 3 ? "#00bfff" : "#ffffff");
+            return `
+                <hr style="border:none;border-top:1px solid #00bfff44;margin:8px 0 6px;">
+                <div style="font-size:11px;line-height:1.4;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span><b>👑 Clash</b> <span style="color:${rankColor};">#${rank}/${standings.length}</span></span>
+                        <span style="opacity:.7;">${escapeHtml(String(eventConfig?.name || ""))}</span>
+                    </div>
+                    <div style="opacity:.9;margin-top:2px;">
+                        You <span style="color:${cColor};">${cSign}${typeof contrib === "number" ? contrib : "—"}</span>
+                        <span style="opacity:.4;">•</span>
+                        Clan <span style="color:${clanColor};">${clanSign}${clanScore}</span>
+                    </div>
+                </div>
+            `;
+        } catch (e) {
+            // Clash mini-bar is decorative; never let it break the HUD render.
+            dbg("clashMiniBarHtml threw: " + (e && e.message ? e.message : e));
+            return "";
+        }
+    }
+
     function updateHUD(data) {
         createHUD();
         lastKnownPlayerData = data;
         captureSessionStart(data);
         updateStreak(data);
         updateMomentum();
+        // v13.6: feed the buddy AFTER streak update so streakData is fresh
+        // when buddyMood() reads it. Also runs on /login syncs (harmlessly
+        // no-op if nothing changed) so a fresh install captures its baseline
+        // total-matches-at-birth on first observation.
+        try { tickBuddyFromData(data); } catch (e) { dbg("tickBuddyFromData threw: " + (e && e.message ? e.message : e)); }
+        // If the Buddy tab happens to be open when a new match lands, keep
+        // its view in sync with the newly-updated matchesDriven / bestRank.
+        const bv = document.getElementById("rgBuddyView");
+        if (bv && bv.style.display !== "none") renderBuddyView();
 
         const ratingVal = mode => data.ModesGlicko?.[mode]?.displayRating;
         const rating = mode => {
@@ -1017,8 +1526,9 @@
                     Wins: <span style="color:#00ff66">${totalWins}</span><br>
                     Matches Played: <span style="color:#00ff66">${totalMatches}</span>
                 </div>
-                <div style="font-size:15px;">${streakBadge()}</div>
+                <div style="font-size:15px;">${streakBadge()}${buddyEquippedFlairHtml()}</div>
             </div>
+            ${clashMiniBarHtml()}
         `;
     }
 
@@ -1053,9 +1563,16 @@
 
             lastProcessedText = text;
             lastProcessedKey = key;
+            _lastValidRatingsAt = performance.now(); // watchdog signal (see fetch wrapper)
             updateHUD(data);
             submitToLeaderboard(data);
-        } catch (e) {}
+        } catch (e) {
+            // v13.6: was `catch (e) {}` -- widest silent swallow in the file.
+            // Any throw in updateHUD/submitToLeaderboard was invisible, so a
+            // rendering bug or SDK-sync throw looked like "the HUD stopped
+            // working" with zero signal. Log it so rgDump() surfaces it.
+            dbg("tryParseAndUpdate threw: " + (e && e.message ? e.message : e));
+        }
     }
 
     // ---------- Leaderboard submission ----------
@@ -1558,6 +2075,59 @@
         } catch (e) {}
     }
 
+    // v13.6 -------- Match audit trail --------
+    // Append-only per-match receipt in a new `match_audits` collection.
+    // Every player who was in the same match writes their own audit, so a
+    // maintainer can later cross-check: three players' audits for the same
+    // match should describe the same lobby (same opponents/teammates on
+    // the roster, same mode, mutually-consistent MMR deltas). A single
+    // player fabricating a match will have no corroborating audits.
+    // Fire-and-forget: never blocks the HUD update path, silently drops
+    // on failure (feature degrades gracefully; Firestore rules may not
+    // permit writes to this collection yet and that's fine).
+    async function writeMatchAudit(prevRatings, opponents) {
+        try {
+            if (!lastKnownPlayerData) return;
+            const fb = await initFirebase();
+            if (!fb) return;
+            const g = lastKnownPlayerData.ModesGlicko || {};
+            const deltas = {};
+            const afters = {};
+            let anyChange = false;
+            for (const mode of ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"]) {
+                const after = g[mode]?.displayRating;
+                const before = prevRatings[mode];
+                if (typeof after === "number") afters[mode] = after;
+                if (typeof after === "number" && typeof before === "number" && after !== before) {
+                    deltas[mode] = after - before;
+                    anyChange = true;
+                }
+            }
+            if (!anyChange) return; // nothing changed -- probably a non-ranked match
+            const opponentList = (Array.isArray(opponents) ? opponents : [])
+                .filter(p => p && p.uid && p.uid !== lastKnownPlayerData.Id)
+                .map(p => ({ uid: String(p.uid).slice(0, 64), name: String(p.name || "").slice(0, 64) }))
+                .slice(0, 8); // 3v3 max is 6 -- 8 is generous headroom
+            const audit = {
+                sourceUserId: lastKnownPlayerData.Id,
+                deviceId: getDeviceId(),
+                versionNum: SCRIPT_VERSION_NUM,
+                deltas,
+                ratingsAfter: afters,
+                opponents: opponentList,
+                ts: fb.serverTimestamp(),
+                clientTs: Date.now(),
+            };
+            logWrite("match_audits");
+            await fb.addDoc(fb.collection(fb.db, "match_audits"), audit);
+            dbg(`match audit written (${Object.keys(deltas).length} mode deltas, ${opponentList.length} opponents)`);
+        } catch (e) {
+            // Best-effort. Rules may deny writes until we roll them out;
+            // that's fine, the HUD keeps working, we just don't audit.
+            dbg("match audit write failed (non-fatal): " + (e && e.message ? e.message : e));
+        }
+    }
+
     async function syncToRealLeaderboard(fb, data, displayName) {
         const sourceUserId = data.Id;
 
@@ -1659,6 +2229,10 @@
                 } catch (writeErr) {
                     // MMR sync is best-effort; a failure here must not strip the tag.
                     console.warn("[RG HUD] Clan MMR write failed (tag still applies):", writeErr);
+                    // v13.6: surface persistent clan sync failures. Silent
+                    // ones broke the entire event score loop for the session
+                    // with no user-visible signal.
+                    showError("Clan sync failing — event score may be stale");
                 }
             }
 
@@ -1805,6 +2379,21 @@
     // on every reconnect attempt.
     let _inMatch = false;
 
+    // v13.6 watchdog timestamps. `_lastInitLineAt` is when we last saw a real
+    // per-player init log (proof the console hook is still receiving game
+    // events). `_lastRecoverySignalAt` is when we last saw a menu/reconnect
+    // signal. `_lastValidRatingsAt` is when we last successfully parsed a
+    // ModesGlicko payload (proof `matchEnd` responses are still shaped as we
+    // expect). The `_inMatch` watchdog (below in boot) uses these to break out
+    // of stuck-true states after unrecoverable disconnects, and the matchEnd
+    // watchdog uses `_lastValidRatingsAt` to detect payload-shape changes
+    // between game updates.
+    let _lastInitLineAt = 0;
+    let _lastRecoverySignalAt = 0;
+    let _lastValidRatingsAt = 0;
+    let _matchEndArmedAt = 0;
+    let _matchEndWatchdogTimer = null;
+
     // ---------- Debug logging ----------
     // dbg() narrates every state decision with a timestamp, through oldLog so
     // it can never re-enter our own console hook. A 300-line ring buffer is
@@ -1818,6 +2407,21 @@
         _rgLogBuf.push(line);
         if (_rgLogBuf.length > 300) _rgLogBuf.shift();
         if (RG_DEBUG) oldLog.call(console, line);
+    }
+    // v13.6: like dbg() but also flips a yellow "something might be off" dot
+    // in the HUD title bar. Reserve red (showError) for confirmed hard
+    // failures; yellow is for "I couldn't parse this, might be a game update".
+    // Tooltip shows the last warning message so users don't need DevTools.
+    const _rgWarnBuf = [];
+    function dbgWarn(msg) {
+        dbg("[WARN] " + msg);
+        _rgWarnBuf.push({ msg, at: Date.now() });
+        if (_rgWarnBuf.length > 5) _rgWarnBuf.shift();
+        const dot = typeof document !== "undefined" && document.getElementById("rgWarnDot");
+        if (dot) {
+            dot.style.display = "inline";
+            dot.title = _rgWarnBuf.map(w => new Date(w.at).toLocaleTimeString() + " — " + w.msg).join("\n");
+        }
     }
     // Expose on the REAL page window (not the userscript sandbox) so
     // rgDump() is callable from the default DevTools "top" context -- the
@@ -1860,13 +2464,52 @@
             const text = await clone.text();
 
             if (url.includes("/v0304_player/matchEnd")) {
+                // v13.6: arm a watchdog BEFORE parsing. If tryParseAndUpdate
+                // finds a ModesGlicko-shaped body it stamps _lastValidRatingsAt.
+                // If 30 seconds pass with no valid parse, the game likely
+                // changed the response shape (renamed `ModesGlicko`, restructured
+                // ratings) -- announce that publicly instead of letting the HUD
+                // silently freeze on stale numbers.
+                _matchEndArmedAt = performance.now();
+                if (_matchEndWatchdogTimer) clearTimeout(_matchEndWatchdogTimer);
+                _matchEndWatchdogTimer = setTimeout(() => {
+                    if (_lastValidRatingsAt < _matchEndArmedAt) {
+                        dbgWarn("matchEnd fired but no valid ratings parse in 30s — game may have updated");
+                        showError("Match ratings parse failed — game may have updated. Check rgDump().");
+                    }
+                }, 30 * 1000);
+                // v13.6: snapshot ratings + opponents BEFORE the update path
+                // mutates `lastKnownPlayerData` and BEFORE freezeRoster empties
+                // `_liveRoster`, so writeMatchAudit can diff cleanly.
+                const prevRatings = {
+                    Competitive3v3: lastKnownPlayerData?.ModesGlicko?.Competitive3v3?.displayRating,
+                    Competitive2v2: lastKnownPlayerData?.ModesGlicko?.Competitive2v2?.displayRating,
+                    Competitive1v1: lastKnownPlayerData?.ModesGlicko?.Competitive1v1?.displayRating,
+                    Casual: lastKnownPlayerData?.ModesGlicko?.Casual?.displayRating,
+                };
+                const opponentsSnapshot = _liveRoster.slice();
                 tryParseAndUpdate(text);
                 dbg(`matchEnd response — roster at ${_liveRoster.length}, restoring HUD`);
                 _inMatch = false;     // authoritative match-over signal
                 freezeRoster();       // lobby roster becomes "last game" for Imposter
                 setAutoVisible(true); // match ended -> bring the whole HUD back
+                // Fire-and-forget the audit write. Non-blocking; failure is
+                // logged to dbg() but doesn't affect any HUD state.
+                writeMatchAudit(prevRatings, opponentsSnapshot);
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
+                // v13.6: fire the pending-steal verifier here too, not just
+                // on Forge open. The /login response carries the game's raw
+                // nickname (before any local processing), which is exactly
+                // what verifyPendingSteal needs. Guarded so it's harmless
+                // when the RGNF module hasn't fully booted yet.
+                try {
+                    const loginData = JSON.parse(text);
+                    const rawNick = loginData?.Nickname ?? "";
+                    if (rawNick && typeof RGNF !== "undefined" && RGNF.verifyStolenName) {
+                        RGNF.verifyStolenName(rawNick);
+                    }
+                } catch (e) { /* login parse fail already logged via tryParseAndUpdate */ }
             } else if (url.includes("/v0304_player/equipSkin")) {
                 // response is just a bare quoted skin id, e.g. "body.2"
                 try {
@@ -1876,85 +2519,112 @@
                     }
                 } catch (e) {}
             }
-        } catch (e) {}
+        } catch (e) {
+            // v13.6: was `catch (e) {}` -- swallowed clone.text() failures,
+            // freezeRoster throws, everything downstream. Log it.
+            dbg("fetch wrapper threw: " + (e && e.message ? e.message : e));
+        }
         return response;
     };
 
     console.log = function (...args) {
         oldLog.apply(console, args);
-        for (const arg of args) {
-            if (typeof arg !== "string") continue;
+        // v13.6: wrap the whole scan in try/catch. Previously a throw in ANY
+        // branch (bad regex input, missing hud element, etc.) unwound the
+        // for-loop and every state transition after the throwing branch was
+        // silently missed for that batch. Now the throw gets logged and the
+        // remaining args in the batch still get processed on the next call.
+        try {
+            for (const arg of args) {
+                if (typeof arg !== "string") continue;
 
-            // Ratings payload can also arrive via logged web-request text
-            // (login, and the echoed matchEnd response). tryParseAndUpdate
-            // dedupes internally, so double-seeing matchEnd is harmless.
-            if (arg.includes('"ModesGlicko"')) {
-                const json = arg.substring(arg.indexOf("{"));
-                tryParseAndUpdate(json);
-            }
+                // Ratings payload can also arrive via logged web-request text
+                // (login, and the echoed matchEnd response). tryParseAndUpdate
+                // dedupes internally, so double-seeing matchEnd is harmless.
+                if (arg.includes('"ModesGlicko"')) {
+                    const json = arg.substring(arg.indexOf("{"));
+                    tryParseAndUpdate(json);
+                }
 
-            // ---- Field entry: queue warm-up OR real match forming ----
-            // Line shape (verified from console):
-            //   ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
-            // The UserId is the discriminator: queue warm-up logs the local
-            // player with an EMPTY UserId (verified 5x in the 7/27 log dump);
-            // real match inits always carry populated UserIds. So: real uid ->
-            // hide HUD + collect roster; empty uid -> ignore entirely (HUD
-            // stays visible while queuing, roster untouched -- the v13.4
-            // roster-clobber bug was warm-up inits restarting the list).
-            if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
-                const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]*),\s*Team:\s*[^)]*\)\s*$/);
-                const nm = (m?.[1] ?? "").trim();
-                const uid = (m?.[2] ?? "").trim();
-                if (nm && uid) {
-                    setAutoVisible(false); // real match -> get out of the way
-                    if (!_inMatch) {
-                        _liveRoster = [];
-                        _inMatch = true;
-                        dbg(`match forming — roster reset, first player "${nm}"`);
+                // ---- Field entry: queue warm-up OR real match forming ----
+                // Line shape (verified from console):
+                //   ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
+                // The UserId is the discriminator: queue warm-up logs the local
+                // player with an EMPTY UserId (verified 5x in the 7/27 log dump);
+                // real match inits always carry populated UserIds. So: real uid ->
+                // hide HUD + collect roster; empty uid -> ignore entirely (HUD
+                // stays visible while queuing, roster untouched -- the v13.4
+                // roster-clobber bug was warm-up inits restarting the list).
+                if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
+                    // v13.6: dropped the `$` anchor and strict Team: requirement.
+                    // Anchor only on the stable "for player:" + "(UserId:..." core,
+                    // so an appended field or spacing tweak in a future game patch
+                    // doesn't silently kill roster/state-machine detection.
+                    const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]+)/);
+                    const nm = (m?.[1] ?? "").trim();
+                    const uid = (m?.[2] ?? "").trim();
+                    if (nm && uid) {
+                        _lastInitLineAt = performance.now(); // watchdog signal
+                        setAutoVisible(false); // real match -> get out of the way
+                        if (!_inMatch) {
+                            _liveRoster = [];
+                            _inMatch = true;
+                            dbg(`match forming — roster reset, first player "${nm}"`);
+                        }
+                        // Dedup by uid, not name: names collide, and mid-match
+                        // backfills now ADD to the roster instead of restarting it.
+                        if (!_liveRoster.some(p => p.uid === uid)) {
+                            _liveRoster.push({ name: nm, uid });
+                            dbg(`roster +1 "${nm}" (${_liveRoster.length} total)`);
+                        }
+                    } else if (nm) {
+                        dbg(`warm-up init "${nm}" (empty uid) — ignored, inMatch=${_inMatch}`);
+                    } else {
+                        // Canary: if the game ever changes this line's format the
+                        // regex fails silently -- this makes it announce itself.
+                        // v13.6: also flip the yellow warn dot so users don't need
+                        // DevTools to see that parsing broke.
+                        dbgWarn(`init line FAILED to parse — game format may have changed`);
+                        dbg(`init line raw: ${arg.slice(0, 120)}`);
                     }
-                    // Dedup by uid, not name: names collide, and mid-match
-                    // backfills now ADD to the roster instead of restarting it.
-                    if (!_liveRoster.some(p => p.uid === uid)) {
-                        _liveRoster.push({ name: nm, uid });
-                        dbg(`roster +1 "${nm}" (${_liveRoster.length} total)`);
+                }
+
+                // ---- Left the match some other way (rage-quit, back-out) ----
+                // A deliberate LeaveRoom or a fresh matchmaking queue can't
+                // coexist with being mid-match; freeze what we collected so the
+                // Imposter roster survives an early exit, then clear the flag.
+                if (arg.includes("PhotonNetwork:LeaveRoom") ||
+                    arg.includes("Set player matchmaking start time")) {
+                    if (_inMatch) {
+                        dbg(`left mid-match — roster frozen at ${_liveRoster.length}`);
+                        freezeRoster();
                     }
-                } else if (nm) {
-                    dbg(`warm-up init "${nm}" (empty uid) — ignored, inMatch=${_inMatch}`);
-                } else {
-                    // Canary: if the game ever changes this line's format the
-                    // regex fails silently -- this makes it announce itself.
-                    dbg(`init line FAILED to parse — game format may have changed: ${arg.slice(0, 120)}`);
+                    _inMatch = false;
+                }
+
+                // ---- Return-to-menu / recovery signals ----
+                // These are the game's REAL log strings (the v13.4 triggers
+                // "OnJoinedRoom"/"OnLeftRoom" appear nowhere in actual game
+                // output, and "OnDisconnected" only ever matched as a substring
+                // of "OurOnDisconnected"). Restore is gated on !_inMatch so a
+                // mid-match reconnect storm leaves the HUD alone; the match-over
+                // paths above are what legitimately clear the flag first.
+                // "Starting SetNickname" stays as the return-to-menu signal for
+                // practice/private matches, which emit no room strings on exit.
+                //
+                // v13.6: word-boundary anchors on the two "Our*" strings. Same
+                // guard against the v13.4-class substring bug (matching them
+                // inside a longer wrapper log line). "Starting SetNickname" is
+                // already unique enough that a raw includes() is safe.
+                if (/\bOurOnDisconnected\b/.test(arg) || arg.includes("Starting SetNickname") ||
+                    /\bOurOnConnectedToMaster\b/.test(arg)) {
+                    _lastRecoverySignalAt = performance.now(); // watchdog signal
+                    if (!_inMatch) setAutoVisible(true);
+                    else dbg(`recovery signal suppressed (mid-match): ${arg.slice(0, 60)}`);
                 }
             }
-
-            // ---- Left the match some other way (rage-quit, back-out) ----
-            // A deliberate LeaveRoom or a fresh matchmaking queue can't
-            // coexist with being mid-match; freeze what we collected so the
-            // Imposter roster survives an early exit, then clear the flag.
-            if (arg.includes("PhotonNetwork:LeaveRoom") ||
-                arg.includes("Set player matchmaking start time")) {
-                if (_inMatch) {
-                    dbg(`left mid-match — roster frozen at ${_liveRoster.length}`);
-                    freezeRoster();
-                }
-                _inMatch = false;
-            }
-
-            // ---- Return-to-menu / recovery signals ----
-            // These are the game's REAL log strings (the v13.4 triggers
-            // "OnJoinedRoom"/"OnLeftRoom" appear nowhere in actual game
-            // output, and "OnDisconnected" only ever matched as a substring
-            // of "OurOnDisconnected"). Restore is gated on !_inMatch so a
-            // mid-match reconnect storm leaves the HUD alone; the match-over
-            // paths above are what legitimately clear the flag first.
-            // "Starting SetNickname" stays as the return-to-menu signal for
-            // practice/private matches, which emit no room strings on exit.
-            if (arg.includes("OurOnDisconnected") || arg.includes("Starting SetNickname") ||
-                arg.includes("OurOnConnectedToMaster")) {
-                if (!_inMatch) setAutoVisible(true);
-                else dbg(`recovery signal suppressed (mid-match): ${arg.slice(0, 60)}`);
-            }
+        } catch (e) {
+            dbg("console.log hook threw: " + (e && e.message ? e.message : e));
         }
     };
 
@@ -2127,6 +2797,9 @@
             myClan.eventId = evId;
         } catch (e) {
             console.warn("[RG HUD] Event baseline capture failed:", e);
+            // v13.6: silent failure here meant the event contribution stayed
+            // at 0 forever for the member, invisibly. Flag it.
+            showError("Event baseline capture failed — your contribution won't count until this recovers");
         }
     }
 
@@ -2416,38 +3089,100 @@
     // would triple the cost and was the flaw in the first implementation.
     let _clanUnsub = null;
     let _clanListenerId = null; // which clan doc the live listener serves
+    let _clanAttaching = false; // v13.6: in-flight guard against re-entry during init await
+
+    // v13.6: normalize a clan doc's user-editable style fields on the way in.
+    // A modified client could have written HTML-shaped strings into
+    // `tagStyle.color` etc., which then splat unescaped into innerHTML at
+    // render time and executed as script in every clan member's browser
+    // (stored XSS via the live snapshot listener). Hex-validate all four
+    // color slots at the trust boundary; drop bad values so downstream
+    // renderers see only known-safe shapes.
+    function sanitizeClanDoc(clan) {
+        if (!clan) return clan;
+        const hexOk = v => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
+        if (clan.tagStyle && typeof clan.tagStyle === "object") {
+            const st = clan.tagStyle;
+            const cleanMode = (["none", "solid", "gradient"].includes(st.mode)) ? st.mode : null;
+            const cleanPalette = (typeof st.paletteKey === "string" && st.paletteKey.length < 40 && /^[A-Za-z0-9_-]+$/.test(st.paletteKey)) ? st.paletteKey : null;
+            clan.tagStyle = {
+                mode: cleanMode,
+                color: hexOk(st.color) ? st.color : null,
+                gradientStart: hexOk(st.gradientStart) ? st.gradientStart : null,
+                gradientEnd: hexOk(st.gradientEnd) ? st.gradientEnd : null,
+                bracketColor: hexOk(st.bracketColor) ? st.bracketColor : null,
+                paletteKey: cleanPalette,
+                bold: !!st.bold,
+                italic: !!st.italic,
+                waveOn: !!st.waveOn,
+                waveAmp: (typeof st.waveAmp === "number" && st.waveAmp >= 0 && st.waveAmp <= 60) ? st.waveAmp : 8,
+                rotateDeg: (typeof st.rotateDeg === "number" && st.rotateDeg >= -45 && st.rotateDeg <= 45) ? st.rotateDeg : 0,
+            };
+        }
+        return clan;
+    }
 
     async function attachClanListener() {
         if (!myClan) return;
         if (_clanUnsub && _clanListenerId === myClan.id) return; // already live
-        detachClanListener(); // clan changed since attach -> resubscribe
-        const fb = await initFirebase();
-        if (!fb || !myClan) return;
+        // v13.6: guard against re-entry during the async initFirebase gap.
+        // Without this, two rapid calls (e.g. renderClanView -> onSnapshot
+        // callback -> refreshClanViewIfOpen -> attachClanListener) both pass
+        // the null-unsub check, both await init, and both call onSnapshot.
+        // The second overwrote _clanUnsub, leaking the first listener and
+        // doubling every render pass. Idempotent: same-clan reentry no-ops.
+        if (_clanAttaching) return;
+        _clanAttaching = true;
         try {
+            detachClanListener(); // clan changed since attach -> resubscribe
+            const fb = await initFirebase();
+            if (!fb || !myClan) return;
             const clanId = myClan.id;
             _clanListenerId = clanId;
-            _clanUnsub = fb.onSnapshot(fb.doc(fb.db, "clans", clanId), (snap) => {
-                const uid = myUserId();
-                // Doc deleted (disband) or we're no longer on the roster
-                // (left / kicked): drop local clan state and show the browse
-                // view live. This also means a kicked player SEES the kick
-                // happen in real time instead of a stale roster.
-                const stillMember = snap.exists()
-                    && ((snap.data().members ?? []).some(m => m.userId === uid));
-                if (!stillMember) {
-                    detachClanListener();
-                    myClan = null;
-                    clanLoaded = false; // force a real reload next tab open
+            _clanUnsub = fb.onSnapshot(
+                fb.doc(fb.db, "clans", clanId),
+                (snap) => {
+                    const uid = myUserId();
+                    // Doc deleted (disband) or we're no longer on the roster
+                    // (left / kicked): drop local clan state and show the browse
+                    // view live. This also means a kicked player SEES the kick
+                    // happen in real time instead of a stale roster.
+                    const stillMember = snap.exists()
+                        && ((snap.data().members ?? []).some(m => m.userId === uid));
+                    if (!stillMember) {
+                        detachClanListener();
+                        myClan = null;
+                        clanLoaded = false; // force a real reload next tab open
+                        refreshClanViewIfOpen();
+                        return;
+                    }
+                    // v13.6: sanitize tagStyle at the trust boundary so no
+                    // downstream renderer sees an HTML-shaped color value.
+                    myClan = sanitizeClanDoc({ id: snap.id, ...snap.data() });
+                    // Zero-read repaint from the data we were just handed.
                     refreshClanViewIfOpen();
-                    return;
+                    // v13.6: repaint the main stats view too, so the Clash
+                    // mini-bar updates live when a teammate's MMR write
+                    // arrives via this snapshot. Guarded so a snapshot
+                    // arriving before the first login response is a no-op.
+                    if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
+                },
+                (err) => {
+                    // v13.6: previously no onError callback. When permissions
+                    // were revoked mid-session (kick, rules change) the
+                    // listener silently stopped; UI froze at last-known state
+                    // showing a clan the user was no longer in. Now: red-dot,
+                    // detach, and let the next tab open reattach fresh.
+                    console.warn("[RG HUD] Clan listener error:", err);
+                    showError("Clan updates disconnected — reopen the Clan tab to refresh");
+                    detachClanListener();
                 }
-                myClan = { id: snap.id, ...snap.data() };
-                // Zero-read repaint from the data we were just handed.
-                refreshClanViewIfOpen();
-            });
+            );
         } catch (e) {
             console.warn("[RG HUD] Clan listener attach failed:", e);
             _clanListenerId = null;
+        } finally {
+            _clanAttaching = false;
         }
     }
     function detachClanListener() {
@@ -2484,7 +3219,8 @@
             const mine = clanDirectory.find(c => (c.memberIds ?? []).includes(uid));
             if (mine) {
                 const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", mine.id));
-                if (clanSnap.exists()) myClan = { id: mine.id, ...clanSnap.data() };
+                // v13.6: sanitize at the trust boundary -- see sanitizeClanDoc.
+                if (clanSnap.exists()) myClan = sanitizeClanDoc({ id: mine.id, ...clanSnap.data() });
             }
             clanLoaded = true;
             clanLoadedForAccount = uid;
@@ -2987,6 +3723,8 @@
             renderClanView();
         } catch (e) {
             console.error("[RG HUD] Request join failed:", e);
+            // v13.6: user-initiated action -- silence was misleading UX.
+            showToast("Couldn't send join request — see console.");
         }
     }
 
@@ -3025,6 +3763,8 @@
             renderClanView();
         } catch (e) {
             console.error("[RG HUD] Approve request failed:", e);
+            // v13.6: user-initiated action -- surface failures.
+            showToast(approve ? "Couldn't approve — see console." : "Couldn't deny — see console.");
         }
     }
 
@@ -3446,6 +4186,11 @@
             renderClanView();
         } catch (e) {
             console.error("[RG HUD] Leave clan failed:", e);
+            // v13.6: user-initiated action -- surface failures. Local state
+            // was already partially wiped above (detachClanListener +
+            // myClan=null), which could leave the UI in a weird half-state
+            // if the write failed. Toast + suggest a refresh.
+            showToast("Couldn't leave clan — refresh the page to retry.");
         }
     }
 
@@ -3463,8 +4208,14 @@
         view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
         await loadClanData(true);
         const fb = await initFirebase();
-        if (fb) await loadEventConfig(fb, true);
-        if (fb) await loadClanRolePerms(fb, true);
+        // v13.6: dropped force=true on the two admin config loaders.
+        // events/current and admin/clanPerms change so rarely that the
+        // session-cached first read is authoritative for the rest of the
+        // session. Cuts ~2 Firestore reads per tab open with no user-
+        // visible staleness. loadClanData(true) is kept because clanless
+        // users have no snapshot listener and need a fresh directory.
+        if (fb) await loadEventConfig(fb);
+        if (fb) await loadClanRolePerms(fb);
 
         renderClanViewFromMemory();
         if (myClan) attachClanListener();
@@ -3501,7 +4252,7 @@
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:3px 0;border-bottom:1px solid #ffffff11;">
                     <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                         <span style="color:#ffd700;">#${i + 1}</span>
-                        ${c.tag ? `<span style="opacity:.7;">[${c.tag}]</span>` : ""}
+                        ${c.tag ? `<span style="opacity:.7;">[${escapeHtml(c.tag)}]</span>` : ""}
                         <b>${escapeHtml(c.name)}</b>
                         <span style="opacity:.6;font-size:10px;">(${c.memberCount}/${clanMaxMembers()})</span>
                     </span>
@@ -3774,8 +4525,16 @@
             const cancelBtn = document.getElementById("rgDialogCancel");
 
             msgEl.textContent = message;
+            // v13.6: preserve line breaks in dialog messages so multi-line
+            // content (session recap) renders as intended. `textContent` still
+            // escapes HTML -- pre-wrap just controls whitespace collapsing.
+            msgEl.style.whiteSpace = "pre-wrap";
             okBtn.textContent = okLabel;
             cancelBtn.textContent = cancelLabel;
+            // v13.6: hide cancel entirely when caller passes empty label,
+            // so info-only dialogs (session recap) don't show a phantom
+            // second button.
+            cancelBtn.style.display = cancelLabel ? "" : "none";
             input.style.display = withInput ? "block" : "none";
             input.value = "";
             input.placeholder = inputPlaceholder;
@@ -3855,6 +4614,71 @@
         ));
     }
 
+    // v13.6 -------- Session recap --------
+    // On-demand summary of the current session: how long, MMR movement per
+    // playlist, best streak, current Clash contribution (if event active).
+    // Plain text through showDialog (textContent, so nothing spooky).
+    function showSessionRecap() {
+        if (!sessionStart) {
+            showDialog({ message: "No session data yet. Log in or play a match, then check back.", okLabel: "OK", cancelLabel: "" });
+            return;
+        }
+        const lines = [];
+        const ms = Date.now() - sessionStart.startedAt;
+        const minutes = Math.floor(ms / 60000);
+        const hours = Math.floor(minutes / 60);
+        const minPart = minutes % 60;
+        lines.push(`Session length: ${hours > 0 ? hours + "h " : ""}${minPart}m`);
+
+        const data = lastKnownPlayerData;
+        if (data && data.ModesGlicko) {
+            lines.push("");
+            lines.push("MMR change this session:");
+            const modes = [
+                ["Competitive3v3", "3v3"],
+                ["Competitive2v2", "2v2"],
+                ["Competitive1v1", "1v1"],
+                ["Casual", "Casual"],
+            ];
+            let anyMovement = false;
+            for (const [key, label] of modes) {
+                const start = sessionStart[key];
+                const now = data.ModesGlicko[key]?.displayRating;
+                if (typeof start === "number" && typeof now === "number") {
+                    const d = now - start;
+                    if (d !== 0) anyMovement = true;
+                    const sign = d > 0 ? "+" : "";
+                    lines.push(`  ${label}: ${now} (${sign}${d})`);
+                }
+            }
+            if (!anyMovement) lines.push("  (no ranked matches counted yet)");
+        }
+
+        if (streakData && streakData.streak !== 0) {
+            const n = streakData.streak;
+            lines.push("");
+            lines.push(n > 0 ? `Current streak: 🔥 ${n} wins in a row` : `Current streak: ❄️ ${-n} losses in a row`);
+        }
+
+        if (eventPhase && eventPhase() === "active" && myClan) {
+            const uid = myUserId();
+            const contribution = myEventContribution(myClan, uid);
+            const clanScore = computeClanEventScore(myClan);
+            const standings = eventStandings();
+            const rank = standings.findIndex(c => c.id === myClan.id) + 1;
+            lines.push("");
+            lines.push(`Clan Clash: ${eventConfig?.name || "current event"}`);
+            if (typeof contribution === "number") {
+                const sign = contribution >= 0 ? "+" : "";
+                lines.push(`  Your contribution: ${sign}${contribution}`);
+            }
+            const clanSign = clanScore >= 0 ? "+" : "";
+            lines.push(`  Clan total: ${clanSign}${clanScore}${rank ? `  (#${rank}/${standings.length})` : ""}`);
+        }
+
+        showDialog({ message: lines.join("\n"), okLabel: "Close", cancelLabel: "" });
+    }
+
     // ---------- Boot ----------
 
     const wait = setInterval(() => {
@@ -3864,6 +4688,31 @@
             console.log("[RG HUD] loaded and running, waiting for login/matchEnd data...");
         }
     }, 100);
+
+    // v13.6: _inMatch watchdog. The v13.5 state machine correctly refuses
+    // to auto-restore the HUD while _inMatch=true, which prevents the
+    // reconnect-storm false-fires the v13.4 hook had. But if the game
+    // NEVER emits matchEnd / LeaveRoom / "Set player matchmaking start
+    // time" (e.g. tab was throttled, client killed and reconnected via a
+    // silent path, ISP flake), _inMatch stays true forever and the HUD
+    // stays hidden until page reload. Once every 60 seconds, check: if
+    // we've been "in match" but haven't seen an init line in 10+ minutes
+    // AND a recovery signal fired recently, we're stuck -- clear and
+    // restore. 10 minutes exceeds any real match length so we won't
+    // clobber legit mid-match state.
+    const INMATCH_STALE_MS = 10 * 60 * 1000;
+    setInterval(() => {
+        if (!_inMatch) return;
+        const now = performance.now();
+        const initStale = (now - _lastInitLineAt) > INMATCH_STALE_MS;
+        const recoveryRecent = _lastRecoverySignalAt > 0
+            && (now - _lastRecoverySignalAt) < 60 * 1000;
+        if (initStale && recoveryRecent) {
+            dbg(`_inMatch watchdog: stale for ${((now - _lastInitLineAt) / 60000).toFixed(1)}m + recent recovery signal -- clearing`);
+            _inMatch = false;
+            setAutoVisible(true);
+        }
+    }, 60 * 1000);
 
 
     // ==================================================================
@@ -4436,7 +5285,24 @@
       return;
     }
     const nick = String(rawNickname || '');
-    if (nick && (nick === String(pending.body || '') || nick === String(pending.code))) {
+    // v13.6: `nick` here is the raw response, which the CALLER has already
+    // partially stripped (syncToCurrentPlayer feeds it via
+    // stripLeadingClanTagMarkup). `pending.body` and `pending.code` were
+    // saved without that strip. If the current user is in the same clan as
+    // the player they stole a name from, the strip removes the `[TAG]`
+    // prefix from `nick` but leaves it on `pending.*` -- mismatch, false
+    // re-apply cycle on every refresh. Compare both forms.
+    let stripFn;
+    try { stripFn = stripLeadingClanTagMarkup; } catch (e) { stripFn = s => s; }
+    const strip = s => { try { return stripFn(String(s || "")); } catch (e) { return String(s || ""); } };
+    const nickStripped = strip(nick);
+    const bodyStripped = strip(pending.body);
+    const codeStripped = strip(pending.code);
+    if (nick && (
+        nick === String(pending.body || '') ||
+        nick === String(pending.code || '') ||
+        (nickStripped && (nickStripped === bodyStripped || nickStripped === codeStripped))
+    )) {
       saveJSON(pendingStealKey(), null);
       fdbg('pending steal verified — stolen name stuck server-side');
       return;
@@ -5807,6 +6673,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
       return {
         setPrefixProvider(fn) { _prefixProvider = fn; },
         setRosterProvider(fn) { _rosterProvider = fn; },
+        // v13.6: expose the pending-steal verifier so the HUD can call it
+        // from the /login fetch response, not only from Forge-panel open.
+        // Fixes the "stolen name got reverted on refresh, user never opens
+        // Forge, receipt expires, name never re-applied" scenario the v13.5
+        // self-healing was supposed to close.
+        verifyStolenName(rawNickname) { verifyPendingSteal(rawNickname); },
         // Re-render the Forge panel in place (e.g. after the clan-tag opt-in
         // toggles, so the prefix appears/disappears in the preview live).
         refresh() { if (_rgnfPanel) render(_rgnfPanel); },
