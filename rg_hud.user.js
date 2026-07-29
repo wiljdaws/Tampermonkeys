@@ -473,7 +473,11 @@
             window.open("https://www.youtube.com/@RootedEngineering", "_blank", "noopener");
         };
         document.getElementById("rgLeaderboard").onclick = () => {
-            window.open("https://abuarqob.github.io/rgleaderboard/", "_blank", "noopener");
+            const onClanTab = document.getElementById("rgClanView")?.style.display !== "none";
+            const url = onClanTab
+                ? "https://wiljdaws.github.io/RG_Clan_Leaderboard/"
+                : "https://abuarqob.github.io/rgleaderboard/";
+            window.open(url, "_blank", "noopener");
         };
         document.getElementById("rgRename").onclick = () => {
             if (!lastKnownPlayerData) {
