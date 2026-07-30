@@ -1,181 +1,280 @@
-# ATLAS post-event TODO
+# ATLAS TODO
 
-Note to self. Feed this file to Claude after the current Clan Clash Cup
-event ends. Everything below is deferred because it would break users
-still on 13.5 or corrupt live event data.
+Everything I still want to do on ATLAS, in the rough order it can happen.
+None of it is on fire.
 
-## When to start
+## The list
 
-- Confirm `events/current.endTime` has passed.
-- Confirm final Clash standings are recorded (screenshot or Firestore
-  export of every `clans/{id}` doc while data is still in the old shape).
-- Nobody actively grinding for the current event.
+1. [Split the code into smaller files](#1-split-the-code-into-smaller-files)
+2. [Firestore cleanup after Clan Clash ends](#2-firestore-cleanup-after-clan-clash-ends)
+3. [Donation unlocks](#3-donation-unlocks)
+4. [Earn tokens by playing](#4-earn-tokens-by-playing)
 
-## Coordination requirements
+---
 
-- The companion site at `wiljdaws.github.io/RG_Clan_Leaderboard/` reads
-  the same Firestore. Its `js/scoring.js` is a line-for-line port of
-  ATLAS's clan scoring math. Update the site in the same release window
-  or standings on the site will diverge from standings in the HUD.
-- Bumping `admin/blacklist.minVersion` is the enforcement lever. Old
-  clients hit the update nag on boot. Version gate is spoofable, so
-  50-person trust assumption still applies.
-- Migration script needs Firebase admin SDK creds. Pal has these.
+## 1. Split the code into smaller files
 
-## Post-event work, in order
+`rg_hud.user.js` is 7,500 lines now. It works fine, but it's a pain to
+find anything. The plan is to break it into a few smaller files and use a
+tool called **vite-plugin-monkey** to glue them back into one userscript
+when I build.
 
-### Phase A — bridge release (ATLAS 13.7)
+Two things worth remembering:
 
-Dual-write everything. Read new shape if present, fall back to old.
+- **Users won't notice a thing.** They still install the same
+  `rg_hud.user.js` from the same GitHub URL. The `@updateURL` keeps working
+  because it points at the built file.
+- **It's free.** vite-plugin-monkey, Vite, and Node are all free and open
+  source. The only cost is disk space for `node_modules` on my machine.
 
-Files:
-- `rg_hud.user.js` clan writes: 1629 (updateMyClanMMR), 2124 (baseline),
-  2985 (requestJoin), 3021 (approveRequest), 3056 (kickMember), 3149
-  (setMemberRole), 3244 (transferLeadership), 3442 (leaveClan).
-- `rg_hud.user.js` clan reads: 2429 (onSnapshot), 2479 (loadClanData),
-  2486 (own clan refresh).
-- Companion site `js/scoring.js`: same dual-read.
+### Setup, when I get around to it
 
-Bump `minVersion` to 13.7 in `admin/blacklist`. Wait 3-5 days.
+Do this once, at the repo root:
 
-### Phase B — schema changes to run in the migration script
+1. Install Node 18 or newer if I don't have it.
+2. Set up the package and install the plugin:
+   ```bash
+   npm init -y
+   npm install --save-dev vite vite-plugin-monkey
+   ```
+3. Add a `vite.config.js`. The plugin's README
+   (https://github.com/lisonge/vite-plugin-monkey) has the exact template.
+   Just copy the `==UserScript==` header fields (name, match, version,
+   updateURL, downloadURL, icon) into the `userscript` block, and point the
+   `entry` at `src/main.js`. Set the output to `rg_hud.user.js` at the repo
+   root so the existing `@updateURL` keeps working.
+4. Add scripts to `package.json`:
+   ```json
+   "scripts": {
+     "dev": "vite",
+     "build": "vite build"
+   }
+   ```
+5. Make a `src/` folder and start moving pieces over (see below). **Do
+   this in slices**, not one giant rewrite. Build and reinstall after each
+   slice so I catch anything I broke early.
+6. Once the built file behaves like the old one, commit it. Users pull the
+   built file via `@updateURL`; the split-up source lives in `src/`.
+7. Later, maybe set up a GitHub Action that runs `npm ci && npm run build`
+   on push so I don't have to remember.
 
-Node + firebase-admin, idempotent, safe to re-run.
+### How to split the folder
 
-1. **`clans/{id}.members[]` → `clans/{id}.members{}` map keyed by uid.**
-   Kills the whole-array clobber class (H3, M9). Enables atomic
-   `updateDoc({[`members.${uid}.mmr`]: n})`.
-2. **Move `eventBaseline` INTO the member row.**
-   `clans/{id}.eventBaseline{uid: mmr}` → `members.{uid}.eventBaseline`.
-   Baseline lives on the member; disappears when they leave; no
-   cross-user clobber (H2).
-3. **`clans_directory/index` singleton → `clans_directory/{clanId}`.**
-   One doc per clan. Kills the race where two clients rebuild the whole
-   index concurrently (C4). Site's browse view uses `getDocs` on the
-   collection.
-4. **`leaderboard/{autoId}` → `leaderboard/{sourceUserId}`.**
-   Kills the query-then-patch-or-add dance at rg_hud.user.js:1510-1529.
-   Consolidate: for each unique sourceUserId, keep freshest doc, rekey
-   to `leaderboard/{sourceUserId}`, delete auto-ID original.
-5. **`admin/blacklist.deviceHashes[]` → `admin_blacklist/{hash}` subcoll.**
-   Rules do doc-exists check per write, O(1) not O(n). Client never
-   reads the array anyway (only checks `minVersion` at line 1122).
-   Safe to do earlier if wanted.
-6. **`clan_notices/{userId}` → `users/{uid}/notices/{noticeId}`.**
-   Not a data-corruption fix, an access-control fix. Requires the same
-   dual-read bridge as members. Rules then require writer to be an
-   authorized officer of the target's ex-clan. Only meaningful with
-   auth (see Phase D).
+```
+src/
+  main.js     the outer wrapper, wires everything up
+  debug/      dbg, dbgWarn, pushError, probeInput
+  buddy/      state, skins, voice lines, view, sprite loading
+  clan/       firebase, actions, view, roles
+  forge/      RGNF (already fairly self-contained)
+  hud/        shell, dialog, settings, title glow, toast
+```
 
-### Phase C — ATLAS 13.8, drop the bridge
+### Order to do it in
 
-Remove old-shape writes. Firestore rules reject
-`request.resource.data.members is list`. `versionNum < 13.7` also
-rejected once we have >95% updated clients.
+1. **Debug stuff first.** Small, self-contained, nothing else touches it.
+   Safest to move first.
+2. **Buddy next.** Already the most self-contained chunk.
+3. **Clan after that.** Bigger but cleanly scoped.
+4. **Forge is easy.** It's already wrapped in an `RGNF` object.
+5. **HUD shell last.** `main.js` pulls all the above together.
 
-### Phase D — Firestore rules tightening (parallel to A-C)
+---
 
-Even without CF auth, these help:
-- `clans/{id}`: `leaderId` immutable except by current leader.
-  `request.resource.data.leaderId in [null, resource.data.leaderId, request.auth.uid]`.
-- `script_submissions/{playerId}` and `leaderboard/{playerId}`:
-  `request.resource.data.sourceUserId == playerId`. Forces doc key to
-  match the claim. Cheap identity binding.
-- `admin/blacklist`: read-only except by admin.
+## 2. Firestore cleanup after Clan Clash ends
+
+There are a few race conditions and data-overwriting bugs in the Firestore
+setup. All the fixes are fine on paper, but running them mid-event could
+mess up live standings. So they wait.
+
+### When it's safe to start
+
+- The current Clan Clash event has ended.
+- Final Clash standings are saved somewhere. Screenshot or Firestore
+  export of every `clans/{id}` doc while the data still has the old shape.
+- Nobody is actively grinding for the current event.
+
+### Stuff to line up before touching anything
+
+- The companion site at `wiljdaws.github.io/RG_Clan_Leaderboard/` reads the
+  same Firestore. Its `js/scoring.js` is a copy of ATLAS's clan scoring
+  math. Update the site in the same release window or the standings will
+  drift between HUD and site.
+- Bumping `admin/blacklist.minVersion` is how I nudge old clients to
+  update.
+- The migration script needs Firebase admin creds. Pal has them.
+
+### Phase A, bridge release (ATLAS 13.7)
+
+Write to both the old shape AND the new shape at the same time. Read the
+new shape first, fall back to the old one if it's not there.
+
+**Clan writes to update** in `rg_hud.user.js`:
+
+- 1629 (updateMyClanMMR)
+- 2124 (baseline)
+- 2985 (requestJoin)
+- 3021 (approveRequest)
+- 3056 (kickMember)
+- 3149 (setMemberRole)
+- 3244 (transferLeadership)
+- 3442 (leaveClan)
+
+**Clan reads to update:**
+
+- 2429 (onSnapshot)
+- 2479 (loadClanData)
+- 2486 (own clan refresh)
+
+Same dual-read change in the companion site's `js/scoring.js`.
+
+Bump `minVersion` to 13.7 in `admin/blacklist`. Wait 3 to 5 days for
+people to update.
+
+### Phase B, actually change the data shape
+
+Write this as a Node script using firebase-admin. Make it safe to run
+more than once (skip anything already migrated).
+
+1. **Change `clans/{id}.members` from a list to a map keyed by user id.**
+   Right now every write replaces the whole list. Once it's a map, I can
+   update just one member's field at a time. No more accidentally wiping
+   someone else's data. (Fixes H3, M9.)
+2. **Move `eventBaseline` into the member entry.** Was
+   `clans/{id}.eventBaseline{uid: mmr}`, becomes
+   `members.{uid}.eventBaseline`. Baseline lives on the member, disappears
+   when they leave. No more cross-member overwriting. (Fixes H2.)
+3. **Break up `clans_directory/index` into one doc per clan** at
+   `clans_directory/{clanId}`. Right now every client rebuilds one shared
+   doc, and if two do it at once they clobber each other. (Fixes C4.) The
+   site's browse view already uses `getDocs` on the whole collection so it
+   still works.
+4. **Change leaderboard docs from `leaderboard/{autoId}` to
+   `leaderboard/{sourceUserId}`.** Kills the query-then-patch-or-add
+   awkwardness at `rg_hud.user.js:1510-1529`. For each unique
+   `sourceUserId`, keep the newest doc, rekey it, delete the auto-ID one.
+5. **`admin/blacklist.deviceHashes[]` becomes a subcollection**
+   `admin_blacklist/{hash}`. Rules can do a fast doc-exists check per
+   write instead of walking the whole list. Safe to do independently. The
+   client never reads `deviceHashes` anyway.
+6. **`clan_notices/{userId}` becomes `users/{uid}/notices/{noticeId}`.**
+   Access control fix, not a data fix. Needs the same dual-read bridge.
+   Only matters once I have real auth (see Phase E).
+
+### Phase C, ATLAS 13.8, drop the bridge
+
+Stop writing the old shape. Add a Firestore rule that rejects
+`request.resource.data.members is list`. Also reject `versionNum < 13.7`
+once basically everyone's on the new version.
+
+### Phase D, tighten Firestore rules (can run alongside A to C)
+
+Even without server-side auth, these help:
+
+- `clans/{id}`: `leaderId` can only be changed by the current leader.
+- `script_submissions/{playerId}` and `leaderboard/{playerId}`: doc key
+  has to match the claimed `sourceUserId`. Cheap identity check.
+- `admin/blacklist`: read-only for clients, admin-only writes.
 - `versionNum is number && versionNum >= 13.7`.
-- `clans/{id}.joinRequests.size() < 50` to cap DoS surface.
+- Cap `clans/{id}.joinRequests` at 50 entries so nobody can DoS a clan.
 
-### Phase E — optional, only if griefing becomes real
+### Phase E, only if trolling actually becomes a problem
 
-Cloud Function auth for leaderboard writes and clan mutations. Uses
-Firebase ID token from the game's own auth. The endpoint at
-`v0304_player/nickname` already does this — same pattern.
+Server functions that verify who you are before letting you write to the
+leaderboard or clan docs. Uses the Firebase ID token the game itself
+already hands out. `v0304_player/nickname` already does this pattern.
 
-Don't do this until abuse is observed. It's the right architecture but
-weeks of work for a 50-person community that mostly self-polices.
+Don't do it until abuse actually happens. It's the right way to do it,
+but it's weeks of work for a 50-person group that mostly self-polices.
 
-## Verification checklist post-migration
+### Check when the migration's done
 
-- [ ] No `members: [...]` array writes visible in Firestore for 24h.
-- [ ] Every active clan has `members.{uid}.eventBaseline` populated
-      (for the CURRENT event; old events not backfilled).
-- [ ] `leaderboard` collection has zero duplicate `sourceUserId` values.
-- [ ] `clans_directory` collection has one doc per clan; singleton
-      `/index` is either deleted or ignored.
-- [ ] Companion site loads clan standings and totals match the HUD.
-- [ ] Clan Clash contribution math matches between HUD and site to the
-      MMR unit.
-- [ ] `admin/blacklist.minVersion == 13.7` (or whatever we shipped).
+- [ ] No `members: [...]` array writes in Firestore for 24 hours.
+- [ ] Every active clan has `members.{uid}.eventBaseline` filled in for
+      the current event.
+- [ ] `leaderboard` has zero duplicate `sourceUserId` values.
+- [ ] `clans_directory` has one doc per clan; the old `/index` doc is
+      gone or ignored.
+- [ ] Companion site loads clan standings and they match the HUD.
+- [ ] Clan Clash points line up between HUD and site to the exact number.
+- [ ] `admin/blacklist.minVersion == 13.7` (or whatever I shipped).
 
-## v13.6 followups (not blocking, do when convenient)
+### v13.6 followups (not blocking, do whenever)
 
-- **Firestore rules for `match_audits/{autoId}`**: this new collection was
-  added in 13.6 as write-only, append-only, non-breaking. The client
-  gracefully degrades if writes are rejected. To actually populate the
-  collection, add rules like:
+**Firestore rules for `match_audits/{autoId}`.** New collection added in
+13.6. It's write-only and append-only. The client shrugs it off if writes
+fail. To actually collect the data:
 
-  ```
-  match match_audits/{doc} {
-      allow create: if request.resource.data.sourceUserId is string
-                    && request.resource.data.versionNum is number
-                    && request.resource.data.versionNum >= 13.6
-                    && !("clientTs" in resource.data || false);
-      allow read: if false;   // dashboard reads only via admin SDK
-      allow update, delete: if false;
-  }
-  ```
-  Cost is one small doc per player per ranked match end. For a 50-user
-  community that's maybe 500-2000 docs/day. Trivial storage.
+```
+match match_audits/{doc} {
+    allow create: if request.resource.data.sourceUserId is string
+                  && request.resource.data.versionNum is number
+                  && request.resource.data.versionNum >= 13.6
+                  && !("clientTs" in resource.data || false);
+    allow read: if false;   // dashboard reads only via admin SDK
+    allow update, delete: if false;
+}
+```
 
-- **Rules for existing `admin/blacklist.deviceHashes[]` migration** (S5 in
-  the schema section below) — safe to do independently, client doesn't
-  read `deviceHashes` anyway. Split into `admin_blacklist/{hash}` docs so
-  rules evaluate O(1) instead of walking the whole array.
+One small doc per player per ranked match ends up being around 500 to 2000
+docs a day at 50 users. Basically free.
 
-## Tier 2 — Donation unlocks (talk to Pal first, then ~1 weekend build)
+---
 
-Real payment → real unlock. Unspoofable signal. Best-precedented feature to add.
+## 3. Donation unlocks
 
-### Payment side (out of ATLAS's control)
+### Why bother
 
-- Set up Ko-fi (simplest) or Stripe (more control). Ko-fi has one-time and
-  monthly tiers, no tax handling required for the maintainer up to ~$400/mo,
-  and 0% platform fee if paid directly. Stripe is more work but scales.
-- Decide tier structure. Suggestion:
-  - **Supporter** ($3 one-time) → 💎 badge next to name in HUD (local only)
-  - **Ace** ($10 one-time) → premium name effects (chrome, sparkle, wave)
-  - **Legend** ($5/mo recurring) → animated name effects + custom color palettes
-- Attribute payments to a Firebase UID. Ko-fi lets buyers add a custom note;
-  instruct them to paste their in-game player ID there. Manual reconciliation
-  is fine at 50 users.
+ATLAS runs on Firebase's free plan today. That's fine for what it does
+right now, but everything I want to build next (more clan features, live
+match data, richer stats, more reads and writes across the board) will
+eventually push it past the free tier. Donations would go straight back
+into the HUD: paying for the Firebase upgrade, covering storage as it
+grows, and funding time to build the features people keep asking for.
 
-### ATLAS-side integration
+Donors get a small cosmetic thank-you on their end. Nothing about gameplay
+changes.
 
-- New Firestore collection `donor_unlocks/{uid}` written by admin only.
-  Rules:
+### The plan
+
+Real money in, real unlock out. Nobody can fake it. Probably a weekend of
+work total. Talk to Pal first.
+
+### The payment side (not my problem to code)
+
+- **Ko-fi** is simplest. **Stripe** if I want more control. Ko-fi does
+  one-time and monthly, doesn't make me deal with taxes below about
+  $400/mo, and takes 0% if paid directly. Stripe is more setup but scales.
+- Tier idea:
+  - **Supporter** at $3 one-time gets a 💎 badge next to name in HUD (local only)
+  - **Ace** at $10 one-time gets premium name effects (chrome, sparkle, wave)
+  - **Legend** at $5/mo gets animated name effects and custom palettes
+- Attribute payments to a Firebase user ID. Ko-fi lets buyers add a note.
+  Tell them to paste their in-game player ID there. At 50 users I can
+  match them up by hand.
+
+### The ATLAS side
+
+- New Firestore collection `donor_unlocks/{uid}`, admin writes only:
   ```
   match donor_unlocks/{uid} {
-      allow read: if request.auth != null || true;  // public for now
+      allow read: if true;
       allow write: if false;   // admin SDK only
   }
   ```
   Shape: `{ tier: "supporter" | "ace" | "legend", unlocks: [ids], expiresAt?: ts }`.
-- Client fetches `donor_unlocks/{myUid}` on boot, caches locally.
-- Forge panel gets a new "🎁 Supporter unlocks" section. Locked entries show
-  a lock icon + "Donate to unlock" button that opens Ko-fi in a new tab.
-  Unlocked entries can be selected like any other Forge effect.
-- HUD title bar picks up a subtle 💎 badge for donors (local render).
+- Client grabs `donor_unlocks/{myUid}` on boot, caches it locally.
+- Forge panel gets a "🎁 Supporter unlocks" section. Locked entries show a
+  lock icon and a "Donate to unlock" button that opens Ko-fi in a new tab.
+- HUD title bar picks up a subtle 💎 badge for donors (local only).
 
-### Redemption flow (maintainer script)
+### Redeeming payments
 
-- Weekly (or on-demand): read Ko-fi payment log, match payer-noted UID to a
-  Firebase user, add/renew `donor_unlocks/{uid}` doc. 15-line Node script,
-  runs manually until it's worth automating.
+Once a week or when someone pings me, read the Ko-fi payment log, find
+the noted user ID, add or renew `donor_unlocks/{uid}`. Maybe 15 lines of
+Node. Run by hand until it's worth automating.
 
-### Design mockup
-
-Forge panel gets a new section between existing effects and Save. Locked
-tiles use a lock overlay; unlocked ones look like any other Forge effect.
+### Rough forge mockup
 
 ```
 ┌─── Name Forge ────────────────────┐
@@ -195,103 +294,105 @@ tiles use a lock overlay; unlocked ones look like any other Forge effect.
 └────────────────────────────────────┘
 ```
 
-### Legal / ops notes
+### Legal and operational stuff
 
-- Ko-fi handles taxes for you below thresholds. Above them, you'll need to
-  self-report.
-- Refunds: honor them by revoking the unlock doc. Manual process is fine.
+- Ko-fi handles taxes below their thresholds. Above that I self-report.
+- Refunds: give the money back, remove the unlock doc.
 - Chargebacks: same. Rare at these amounts.
-- Absolutely do NOT accept payment info directly. Always through Ko-fi/Stripe.
-- Terms of service: one-page "unlocks are cosmetic, no gameplay advantage,
-  fan-project not affiliated with the game" disclaimer.
+- **Never accept payment info directly.** Always through Ko-fi or Stripe.
+- Write a one-page terms page: "unlocks are cosmetic, no gameplay
+  advantage, this is a fan project, not affiliated with the game."
 
 ---
 
-## Tier 3 — Token earning system (post-Cloud-Functions migration)
+## 4. Earn tokens by playing
 
-DEFER until:
-1. The schema migration in the Post-event section above ships.
-2. `match_audits` collection has been collecting data for a few weeks (needs
-   history to run the cross-check).
-3. Cloud Functions are set up for authenticated writes (Phase E).
+**Not until:**
 
-### If we ever upgrade Firebase plan or switch to Blaze
+1. The Firestore cleanup in section 2 has shipped.
+2. `match_audits` has been collecting data for a few weeks. Need history
+   before the cross-check makes sense.
+3. Server functions are set up (Phase E in section 2).
 
-**Status: deferred while ATLAS stays on the no-payment-method Spark plan.**
+### Firebase plan problem
 
-Spark has enough Firestore quota for this community, but Firebase does not
-allow Cloud Functions or scheduled functions without linking a billing
-account and switching to Blaze. The secure coin design depends on those
-trusted functions to mint rewards and process purchases.
+ATLAS is on Firebase's free Spark plan (no billing account attached).
+Spark has plenty of Firestore quota, but Firebase won't run server
+functions without a billing account (Blaze). This whole token idea needs
+server functions to hand out and spend tokens safely.
 
-While ATLAS remains on Spark:
-- Do not add a client-writable coin balance.
-- Do not store spendable coins or owned unlocks only in `localStorage`.
-- Do not let the userscript submit its own reward amount, price, or resulting
-  balance.
-- Keep Rocket Buddy progression and Name Forge options cosmetic/local.
-- A manual or external scheduled process could be explored separately, but it
-  is not equivalent to the authenticated real-time purchase design below.
+**While I'm on Spark, DO NOT:**
 
-If the project ever moves to Blaze:
+- Add a token balance the client can write to.
+- Store spendable tokens or owned unlocks only in localStorage.
+- Let the userscript tell the server how many tokens to give it or what a
+  price is.
+- Make Buddy or Forge unlocks anything but cosmetic and local.
+
+**If I ever move to Blaze:**
+
 1. Add strict create-only rules for `match_audits`.
-2. Deploy the corroborating reward aggregator in shadow mode first.
-3. Keep balances and the reward ledger server-writable only.
-4. Add an authenticated purchase function that looks up prices server-side.
-5. Run shadow mode for at least two weeks before enabling purchases.
-6. Configure budget alerts, `minInstances: 0`, low `maxInstances`, and usage
-   monitoring before launch. Budget alerts are warnings, not a hard spend cap.
+2. Deploy the reward aggregator in test mode first (writes to a fake
+   field, no real balance change).
+3. Balances and the reward log are server-writable only.
+4. Purchases go through a server function that looks up the price on the
+   server, not the client.
+5. Run test mode for at least two weeks before letting anyone actually
+   spend tokens.
+6. Set budget alerts, keep `minInstances: 0`, low `maxInstances`, and
+   watch usage. **Budget alerts are warnings, not a hard cap.**
 
-### Concept
+### The idea
 
 Players earn tokens for verified activity:
-- Playing matches (with `match_audits` corroboration)
-- Winning matches (same corroboration)
-- Participating in Clan Clash events (weighted higher during events)
-- MMR grind (rank-tier-based; top players earn more per match)
-- Long-term ATLAS use (small trickle to reward retention)
+
+- Playing matches (backed up by `match_audits` from other players)
+- Winning matches (same backup)
+- Playing during Clan Clash events (worth more)
+- MMR grind (higher-rank players earn more per match)
+- Sticking around long-term (small trickle for coming back)
 
 Tokens spend on:
+
 - Cosmetic name effects (same catalog as donor unlocks, or a parallel one)
-- Buddy customizations (skins, evolution shortcuts, retire-buddy-to-hall-of-fame)
-- Clan Clash boosts (purely visual — leaderboard flair, banner colors during
-  a specific event, "MVP" title on standings display)
+- Buddy stuff (skins, evolution shortcuts, retire your buddy to a hall of
+  fame)
+- Clan Clash flair (visual only, so leaderboard highlights, banner colors,
+  "MVP" tag on standings)
 
-### Why this is hard without CF
+### Why this is hard without server functions
 
-Client-computed token balances are trivially spoofable — one DevTools edit
-and your balance is 999,999. The moment ONE person shows off a skin nobody
-saw them earn, the system stops meaning anything.
+Anything the client calculates can be faked in 10 seconds with DevTools.
+The instant one person shows off a skin nobody remembers them earning,
+the whole system feels pointless.
 
-### The correct architecture
+### How it needs to actually work
 
-Nightly Cloud Function job:
-1. Read `match_audits` for the past 24h.
-2. Group by match (same participants + timestamp window).
-3. For each match, require N ≥ 2 corroborating audits from distinct
-   players. Discard un-corroborated matches (probably fabricated).
-4. Aggregate per-player token grants from validated matches only.
-5. Write to `users/{uid}.tokens` (admin-only writable).
-6. Client reads `users/{uid}.tokens`, spends via authenticated CF call
-   that debits + grants unlock.
+Nightly server job:
 
-### Token math (rough starting point)
+1. Read `match_audits` for the last 24 hours.
+2. Group by match (same players and timestamp window).
+3. Only count matches where at least 2 other players' audits back it up.
+   Throw the rest out. Probably fake.
+4. Add up token grants per player from the verified matches.
+5. Write to `users/{uid}.tokens` (server-only writes).
+6. Client reads `users/{uid}.tokens` and spends via a server function that
+   subtracts the balance and hands over the unlock in one step.
 
-- Match played: 1 token (both teams, so no incentive to throw)
-- Match won: +2 tokens
-- Clan Clash event match (during event window): 2× multiplier on both
-- MMR at time of match: +0.5 token per 100 MMR above 1000 (top players
-  earn faster but ceiling is still soft)
-- Daily first-match bonus: +5 tokens (retention nudge without idle grind)
-- Weekly session-count bonus: +50 for 4+ active days that week
+### Rough token math to start with
 
-Rough steady-state: casual player earns ~50 tokens/day, top grinder
-~200/day. Unlocks priced at 100-500 tokens for cosmetic effects, 1000+
-for the rare stuff.
+- Match played: 1 token (both teams get it, so no reason to throw matches)
+- Match won: +2
+- Match during a Clan Clash event: 2x everything
+- MMR at time of match: +0.5 per 100 MMR above 1000
+- First match of the day: +5
+- 4+ active days that week: +50
 
-### Design mockup — Token panel
+Typical: casual player earns around 50/day, hardcore grinder around
+200/day. Unlocks priced at 100 to 500 for common cosmetics, 1000+ for the
+rare stuff.
 
-Would live in the same tab as Rocket Buddy, or its own new tab.
+### Token panel mockup
 
 ```
 ┌─── Tokens ────────────────────────┐
@@ -314,46 +415,22 @@ Would live in the same tab as Rocket Buddy, or its own new tab.
 └────────────────────────────────────┘
 ```
 
-### Roll-out plan
+### Order to ship
 
-1. Ship Rocket Buddy (Tier 1). No servers.
-2. Ship donation unlocks (Tier 2). Manual admin reconciliation.
-3. Migrate the schema per Post-event plan above.
-4. Set up Cloud Functions.
-5. Run the token aggregator job for 2 weeks in a "shadow mode" (writes
-   to `users/{uid}.tokens_preview`, no spending enabled) so you can
-   sanity-check the numbers before anyone can spend fake tokens.
-6. Enable spending. Watch for abuse. Adjust.
+1. Ship Rocket Buddy (Tier 1). No servers needed.
+2. Ship donation unlocks (Tier 2). Reconcile payments by hand.
+3. Migrate the Firestore shape (section 2).
+4. Set up server functions.
+5. Run the reward aggregator in test mode for 2 weeks. Writes go to
+   `users/{uid}.tokens_preview`, spending disabled, so I can sanity-check
+   the numbers before anyone can spend fake tokens.
+6. Turn spending on. Watch for people trying to cheat. Adjust.
 
-### Alternative: peer-visible unlocks
+### Cheap backup plan if the audit thing never happens
 
-Even if the CF audit fails or is deferred forever, one social trick makes
-the system durable: every unlock announcement goes to a shared #atlas-unlocks
-channel. Bob unlocks a rainbow name at 500 tokens → ping shows in Discord.
-Community sees the unlock. If nobody remembers Bob grinding for it, he gets
-called out. Free anti-cheat via peer pressure at 50-user scale.
+Even without any real verification, one social trick makes this work at
+50 users: every unlock gets announced in a shared Discord channel. Bob
+unlocks a rainbow name at 500 tokens, ping shows up in `#atlas-unlocks`.
+Everyone sees it. If nobody remembers Bob grinding for it, he gets called
+out. Peer pressure is free.
 
----
-
-## Skipped, do not do
-
-- Full CF migration for every clan write. Not worth the eng cost for a
-  50-user community until abuse actually happens. See Phase E.
-- Version-gate / device-blacklist hardening. Spoofable by design. Not
-  fixable without CF auth. The current behavior is friction, not a
-  fortress, and the code comment at line 100 is honest about it.
-- Rewriting the `_inMatch` state machine. It works. v13.5 was the right
-  call. Just keep the watchdog we ship in 13.6.
-
-## Reference: review findings this todo came from
-
-The full review is in git history + the associated conversation. Key
-line numbers as of 13.5:
-- rg_hud.user.js:1629 - updateMyClanMMR, full members[] clobber
-- rg_hud.user.js:2124 - maybeCaptureEventBaseline, eventBaseline map clobber
-- rg_hud.user.js:2429 - onSnapshot clan listener
-- rg_hud.user.js:2479 - loadClanData
-- rg_hud.user.js:2899 - refreshDirectory, full-doc overwrite race
-- rg_hud.user.js:1510-1529 - leaderboard query-then-patch-or-add
-- rg_hud.user.js:1114-1134 - version gate (spoofable, don't try to fix)
-- rg_hud.user.js:104-113 - device ID (spoofable, don't try to fix)
