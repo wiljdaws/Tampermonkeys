@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      14.0
+// @version      14.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -126,6 +126,16 @@
     function buddySheetLoadStateFor(skinId) {
         return buddySheetLoadStateBySkin[skinId] || "idle";
     }
+    function buddySheetCssUrl(sheetUrl) {
+        // Single quotes inside url() so this is safe in HTML style="..." attributes.
+        return `url('${sheetUrl}')`;
+    }
+    function applyBuddySpriteSheet(el, sheetUrl) {
+        if (!el) return;
+        el.classList.remove("is-fallback");
+        el.style.setProperty("--rb-sheet-url", buddySheetCssUrl(sheetUrl));
+        el.textContent = "";
+    }
     function ensureBuddySheetLoaded(skinId) {
         const skin = getBuddySkin(skinId || buddyState?.skinId);
         const current = buddySheetLoadStateFor(skin.id);
@@ -138,6 +148,10 @@
             if (skin.id !== activeId) return;
             const view = document.getElementById("rgBuddyView");
             const buddyHasFocus = !!(view && view.contains(document.activeElement));
+            if (state === "ready") {
+                // Swap emoji → sprite in place so a focused control doesn't leave the fallback stuck.
+                applyBuddySpriteSheet(document.getElementById("rgBuddySprite"), skin.sheetUrl);
+            }
             if (view && view.style.display !== "none" && !buddyHasFocus) renderBuddyView();
             if (state === "ready" && buddyState?.equipped && lastKnownPlayerData) {
                 if (buddyHasFocus) {
@@ -150,6 +164,7 @@
         };
         img.onload = () => finish("ready");
         img.onerror = () => finish("failed");
+        img.referrerPolicy = "no-referrer";
         img.src = skin.sheetUrl;
     }
 
@@ -308,7 +323,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1666,7 +1681,7 @@
         ensureBuddySheetLoaded(skin.id);
         const moodSprite = BUDDY_MOOD_SPRITE[mood.key] || "idle";
         const useSpriteFallback = buddySheetLoadStateFor(skin.id) !== "ready";
-        const sheetCssUrl = `url("${skin.sheetUrl}")`;
+        const sheetCssUrl = buddySheetCssUrl(skin.sheetUrl);
         let spriteWrap = "";
         if (stage.level >= 5) {
             spriteWrap = "background:radial-gradient(circle, #ffd70044 0%, transparent 70%);padding:8px;border-radius:50%;";
@@ -1798,7 +1813,7 @@
     function buddyMiniVisualHtml(stage) {
         const skin = currentBuddySkin();
         return buddySheetLoadStateFor(skin.id) === "ready"
-            ? `<span class="rg-buddy-mini" style="--rb-mini-stage:${stage.level - 1};--rb-sheet-url:url('${skin.sheetUrl}');" aria-hidden="true"></span>`
+            ? `<span class="rg-buddy-mini" style="--rb-mini-stage:${stage.level - 1};--rb-sheet-url:${buddySheetCssUrl(skin.sheetUrl)};" aria-hidden="true"></span>`
             : stage.icon;
     }
 
