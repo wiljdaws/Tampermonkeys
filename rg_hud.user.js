@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      13.9
+// @version      14.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -20,8 +20,84 @@
 
     // img not emoji, stays crisp cross-OS
     const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png';
-    // pinned to a commit so a sheet change can't break old installs
-    const BUDDY_SHEET_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/e29161741cedca30b6a72be401a4dc51b50470a9/atlas/rocket_buddy_sheet.png';
+    const BUDDY_ATLAS_BASE = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/';
+    // Classic stays commit-pinned so older installs keep a known-good sheet.
+    // Newer skins track main so art updates ship with the repo.
+    const BUDDY_SKINS = {
+        classic: {
+            id: "classic",
+            label: "Rocket Car",
+            sheetUrl: "https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/e29161741cedca30b6a72be401a4dc51b50470a9/atlas/rocket_buddy_sheet.png",
+            stages: [
+                { name: "Ignition", icon: "🛞" },
+                { name: "Rookie Booster", icon: "🏎️" },
+                { name: "Ace Racer", icon: "🚗" },
+                { name: "Champion Ride", icon: "🏁" },
+                { name: "Legendary Fleet", icon: "🚀" },
+            ],
+        },
+        goblin: {
+            id: "goblin",
+            label: "Garage Goblin",
+            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_garage_goblin_sheet.png",
+            stages: [
+                { name: "Oily Apprentice", icon: "🔧" },
+                { name: "Pit Crew Rookie", icon: "⛑️" },
+                { name: "Crew Chief", icon: "📋" },
+                { name: "Championship Engineer", icon: "🏆" },
+                { name: "Legendary Tuner", icon: "✨" },
+            ],
+        },
+        scrap: {
+            id: "scrap",
+            label: "Scrapyard Scrapling",
+            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_scrapyard_sheet.png",
+            stages: [
+                { name: "Tin Can Skater", icon: "🥫" },
+                { name: "Cart Chassis", icon: "🛒" },
+                { name: "Derby Crate", icon: "📦" },
+                { name: "Scrap Tank", icon: "🛡️" },
+                { name: "Junkyard King", icon: "👑" },
+            ],
+        },
+        critter: {
+            id: "critter",
+            label: "Arena Critters",
+            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_arena_critters_sheet.png",
+            stages: [
+                { name: "Bumper Hamster", icon: "🐹" },
+                { name: "Turbo Raccoon", icon: "🦝" },
+                { name: "Octane Fox", icon: "🦊" },
+                { name: "Rocket Panther", icon: "🐆" },
+                { name: "Stadium Griffin", icon: "🦅" },
+            ],
+        },
+        peasant: {
+            id: "peasant",
+            label: "Peasant → King",
+            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_peasant_king_sheet.png",
+            stages: [
+                { name: "Mudfoot Peasant", icon: "🌾" },
+                { name: "Village Squire", icon: "🗡️" },
+                { name: "Knight Errant", icon: "🛡️" },
+                { name: "Royal Champion", icon: "🏅" },
+                { name: "Legendary King", icon: "👑" },
+            ],
+        },
+        feline: {
+            id: "feline",
+            label: "Cat → Lion",
+            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_cat_lion_sheet.png",
+            stages: [
+                { name: "Kitten Spark", icon: "🐱" },
+                { name: "Alley Racer", icon: "😺" },
+                { name: "Track Lynx", icon: "🐈" },
+                { name: "Arena Panther", icon: "🐆" },
+                { name: "Legendary Lion", icon: "🦁" },
+            ],
+        },
+    };
+    const BUDDY_SKIN_ORDER = ["classic", "goblin", "scrap", "critter", "peasant", "feline"];
     const atlasIconHtml = () => `<img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">`;
 
     // buddyMood() keys -> sheet mood block names
@@ -33,13 +109,33 @@
         neglected: "neglected",
     };
 
-    let buddySheetLoadState = "idle"; // idle | loading | ready | failed
-    function ensureBuddySheetLoaded() {
-        if (buddySheetLoadState !== "idle") return;
-        buddySheetLoadState = "loading";
+    const buddySheetLoadStateBySkin = Object.create(null); // skinId -> idle|loading|ready|failed
+    function getBuddySkin(skinId) {
+        const id = skinId && BUDDY_SKINS[skinId] ? skinId : "classic";
+        return BUDDY_SKINS[id];
+    }
+    function currentBuddySkin() {
+        ensureBuddy();
+        const skin = getBuddySkin(buddyState.skinId);
+        if (buddyState.skinId !== skin.id) {
+            buddyState.skinId = skin.id;
+            saveBuddyState();
+        }
+        return skin;
+    }
+    function buddySheetLoadStateFor(skinId) {
+        return buddySheetLoadStateBySkin[skinId] || "idle";
+    }
+    function ensureBuddySheetLoaded(skinId) {
+        const skin = getBuddySkin(skinId || buddyState?.skinId);
+        const current = buddySheetLoadStateFor(skin.id);
+        if (current === "loading" || current === "ready") return;
+        buddySheetLoadStateBySkin[skin.id] = "loading";
         const img = new Image();
         const finish = state => {
-            buddySheetLoadState = state;
+            buddySheetLoadStateBySkin[skin.id] = state;
+            const activeId = buddyState?.skinId || "classic";
+            if (skin.id !== activeId) return;
             const view = document.getElementById("rgBuddyView");
             const buddyHasFocus = !!(view && view.contains(document.activeElement));
             if (view && view.style.display !== "none" && !buddyHasFocus) renderBuddyView();
@@ -54,7 +150,7 @@
         };
         img.onload = () => finish("ready");
         img.onerror = () => finish("failed");
-        img.src = BUDDY_SHEET_URL;
+        img.src = skin.sheetUrl;
     }
 
     function ensureBuddySpriteStyles() {
@@ -68,11 +164,12 @@
   --rb-sheet-h: 560px;  /* 640 * (112/128) */
   --rb-mood: 0;
   --rb-stage: 0;
+  --rb-sheet-url: none;
   width: var(--rb-tile);
   height: var(--rb-tile);
   display: inline-block;
   flex-shrink: 0;
-  background-image: url("${BUDDY_SHEET_URL}");
+  background-image: var(--rb-sheet-url);
   background-repeat: no-repeat;
   background-size: var(--rb-sheet-w) var(--rb-sheet-h);
   background-position-x: calc(var(--rb-mood) * -4 * var(--rb-tile));
@@ -105,14 +202,25 @@
 }
 .rg-buddy-mini {
   --rb-mini-stage: 0;
+  --rb-sheet-url: none;
   width: 20px;
   height: 20px;
   display: inline-block;
   vertical-align: middle;
-  background-image: url("${BUDDY_SHEET_URL}");
+  background-image: var(--rb-sheet-url);
   background-repeat: no-repeat;
   background-size: 400px 100px;
   background-position: 0 calc(var(--rb-mini-stage) * -20px);
+}
+.rg-buddy-skin-select {
+  width: 100%;
+  margin-top: 4px;
+  background: #0c1218;
+  color: #e8f2f8;
+  border: 1px solid #00bfff55;
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-size: 11px;
 }
 @media (prefers-reduced-motion: reduce) {
   .rg-buddy-sprite { animation: none; }
@@ -200,7 +308,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "13.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -881,16 +989,19 @@
     // ---------- Rocket Buddy (v13.6) ----------
     // local-only tamagotchi. per-device not per-account. no Firestore.
     // stage gates: matches since install + rank floor at 3+. nothing retroactive.
-    const BUDDY_STAGES = [
-        { id: 1, name: "Ignition",         icon: "🛞", matches: 0,   rankTop: null },
-        { id: 2, name: "Rookie Booster",   icon: "🏎️", matches: 50,  rankTop: null },
-        { id: 3, name: "Ace Racer",        icon: "🚗", matches: 150, rankTop: 500 },
-        { id: 4, name: "Champion Ride",    icon: "🏁", matches: 400, rankTop: 100 },
-        { id: 5, name: "Legendary Fleet",  icon: "🚀", matches: 800, rankTop: 20  },
+    // Shared progression gates. Display names/icons come from the selected skin.
+    const BUDDY_STAGE_GATES = [
+        { id: 1, matches: 0,   rankTop: null },
+        { id: 2, matches: 50,  rankTop: null },
+        { id: 3, matches: 150, rankTop: 500 },
+        { id: 4, matches: 400, rankTop: 100 },
+        { id: 5, matches: 800, rankTop: 20  },
     ];
+    // Back-compat alias — some helpers still read .length / index by id.
+    const BUDDY_STAGES = BUDDY_STAGE_GATES;
     const BUDDY_PET_COOLDOWN_MS = 60 * 60 * 1000; // 1h between pets
     const BUDDY_STORAGE_KEY = "rgHudBuddy";
-    const BUDDY_SCHEMA_VERSION = 3;
+    const BUDDY_SCHEMA_VERSION = 4;
 
     let buddyState = null;
     let buddyRefreshTimer = null;
@@ -918,6 +1029,7 @@
             lastStatus: "",
             lastStatusAt: 0,
             lastMoodKey: "focused",
+            skinId: "classic",
         };
     }
 
@@ -1007,30 +1119,57 @@
 
     function buddyStage() {
         ensureBuddy();
+        const skin = currentBuddySkin();
         const matches = buddyState.matchesDriven;
         const bestRank = Object.values(buddyState.bestRankByMode)
             .filter(r => typeof r === "number")
             .reduce((m, r) => Math.min(m, r), Infinity);
-        // high -> low, first stage passing both gates wins
-        for (let i = BUDDY_STAGES.length - 1; i >= 0; i--) {
-            const s = BUDDY_STAGES[i];
-            const matchOk = matches >= s.matches;
-            const rankOk = s.rankTop == null || bestRank <= s.rankTop;
-            if (matchOk && rankOk) return { ...s, level: s.id, bestRank };
+        // Walk from highest to lowest; return the first stage whose gates
+        // this buddy has cleared. matches AND rank-floor (if any) both
+        // must pass -- stages 3+ need both.
+        for (let i = BUDDY_STAGE_GATES.length - 1; i >= 0; i--) {
+            const gate = BUDDY_STAGE_GATES[i];
+            const flavor = skin.stages[i] || skin.stages[0];
+            const matchOk = matches >= gate.matches;
+            const rankOk = gate.rankTop == null || bestRank <= gate.rankTop;
+            if (matchOk && rankOk) {
+                return {
+                    id: gate.id,
+                    level: gate.id,
+                    matches: gate.matches,
+                    rankTop: gate.rankTop,
+                    name: flavor.name,
+                    icon: flavor.icon,
+                    bestRank,
+                    skinId: skin.id,
+                };
+            }
         }
-        return { ...BUDDY_STAGES[0], level: 1, bestRank };
+        const flavor = skin.stages[0];
+        return {
+            id: 1,
+            level: 1,
+            matches: 0,
+            rankTop: null,
+            name: flavor.name,
+            icon: flavor.icon,
+            bestRank,
+            skinId: skin.id,
+        };
     }
 
     // null when maxed
     function buddyNextStageRequirement() {
         const cur = buddyStage();
-        if (cur.level >= BUDDY_STAGES.length) return null;
-        const next = BUDDY_STAGES[cur.level];
-        const matchGap = Math.max(0, next.matches - buddyState.matchesDriven);
-        const rankGap = next.rankTop == null || (cur.bestRank <= next.rankTop)
+        if (cur.level >= BUDDY_STAGE_GATES.length) return null;
+        const nextGate = BUDDY_STAGE_GATES[cur.level];
+        const skin = currentBuddySkin();
+        const nextFlavor = skin.stages[cur.level] || skin.stages[skin.stages.length - 1];
+        const matchGap = Math.max(0, nextGate.matches - buddyState.matchesDriven);
+        const rankGap = nextGate.rankTop == null || (cur.bestRank <= nextGate.rankTop)
             ? null
-            : next.rankTop;
-        return { matches: matchGap, rankTop: rankGap, stageName: next.name };
+            : nextGate.rankTop;
+        return { matches: matchGap, rankTop: rankGap, stageName: nextFlavor.name };
     }
 
     // streak + idle time. independent of stage.
@@ -1113,18 +1252,105 @@
                     `${name} has forgotten how losing works. Please do not remind them.`,
                     `${name} is requesting a trophy-shaped parking spot.`,
                     `${name} has achieved dangerous levels of zoom.`,
+                    `${name} is 8 wins deep. The other cars filed a restraining order.`,
+                    `${name} is un-lose-able. This is a legal problem now.`,
+                    `${name} has stopped acknowledging opponents as opponents.`,
+                    `${name} is on the podium so often it has a favorite step.`,
+                    `${name} has been offered an endorsement deal by boost.`,
+                    `${name} is currently in the leaderboard hall of fame's group chat.`,
+                    `${name} has weaponized momentum.`,
+                    `${name} is now legally distinct from "the winner." They are winning itself.`,
+                    `${name} has broken the sound barrier and possibly the ELO system.`,
+                    `${name} has been asked to slow down. Politely declined.`,
+                    `${name} skips warm-up because they were never cold to begin with.`,
+                    `${name} is on a first-name basis with the trophy.`,
+                    `${name} has entered a state scientists are calling "unhinged winning".`,
+                    `${name} has stopped needing wheels. They just win.`,
+                    `${name} has been added to the game's danger tips.`,
+                    `${name} is currently rewriting the meta.`,
+                    `${name} is speed. ${name} is destiny.`,
+                    `${name} stopped tracking wins and started counting hostages.`,
+                    `${name} was quietly banned from the practice server for scaring bots.`,
+                    `${name} is 8-0 and asking if anyone brought snacks.`,
+                    `${name} is playing a different game than everyone else.`,
+                    `${name} has entered god mode. Disabling requires a support ticket.`,
+                    `${name} is dominating so hard the leaderboard just typed "gg".`,
+                    `${name} has been offered a sponsorship by pure oxygen.`,
+                    `${name} has stopped losing. It's unclear what happens next.`,
+                    `${name} is the reason "unfair" was invented.`,
+                    `${name} has ascended to a plane matchmaking cannot follow.`,
+                    `${name} is playing chess. Everyone else is losing checkers.`,
+                    `${name} just hit ${Math.abs(streak)} wins straight. The referee is taking a lie-down.`,
                 ];
             } else if (streak >= 3) {
                 lines = [
                     `${name} is ON FIRE! Keep flammable decals at a safe distance.`,
                     `${name} is cooking. The recipe appears to be pure boost.`,
                     `${name} has entered main-character mode.`,
+                    `${name} is heating up. Please open a window.`,
+                    `${name} is on a roll. A very expensive one.`,
+                    `${name} has achieved "runs stapled to backboard" confidence.`,
+                    `${name} is winning at a rate that concerns the insurance company.`,
+                    `${name} smells victory. Also gasoline.`,
+                    `${name} is stacking Ws like it's a hobby.`,
+                    `${name} is doing that thing. The winning thing.`,
+                    `${name} is basically the villain in someone else's highlight reel.`,
+                    `${name} is on a heater. Literally. Please check the engine.`,
+                    `${name} is streaking, but in the wholesome car way.`,
+                    `${name} is drafting the trophy speech mid-match.`,
+                    `${name} is ${Math.abs(streak)} wins deep and unbearable already.`,
+                    `${name} is having a moment. A loud, obnoxious moment.`,
+                    `${name} has decided losing is not on today's schedule.`,
+                    `${name} has entered the "delete lobby" phase of the day.`,
+                    `${name} is smashing so hard opponents are quitting to Fortnite.`,
+                    `${name} is playing like the win button is broken. Broken their way.`,
+                    `${name} is on a mission. Mission unclear, but WINNING.`,
+                    `${name} just clicked their heels three times. Home is a trophy.`,
+                    `${name} is officially in the zone. Do not disturb the zone.`,
+                    `${name} is gaslighting matchmaking in real time.`,
+                    `${name} has that gleam in the headlights. Bad news for everyone.`,
+                    `${name} is dishing out Ws like a school cafeteria.`,
+                    `${name} is on fire and refuses to be extinguished.`,
+                    `${name} is now a firework. Please stand back.`,
+                    `${name} is playing on god-tier settings. Everyone else is on tutorial.`,
+                    `${name} is running hot. Cooling system is failing gracefully.`,
+                    `${name} is picking up steam. And wins.`,
+                    `${name} is the reason opponents believe in conspiracy theories.`,
                 ];
             } else if (result.wins > 1) {
                 lines = [
                     `${name} banked ${result.wins} wins. Turbo confidence engaged.`,
                     `${name} collected ${result.wins} wins and would like them framed.`,
                     `${name} just speed-ran ${result.wins} victories. Very normal behavior.`,
+                    `${name} bagged ${result.wins} in a row. The bag is starting to bulge.`,
+                    `${name} racked up ${result.wins} wins. Loading additional swagger...`,
+                    `${name} tossed ${result.wins} wins in the trunk. Room for more.`,
+                    `${name} secured ${result.wins} wins and is now unbearable at dinner.`,
+                    `${name} claimed ${result.wins} in a row. Ownership papers pending.`,
+                    `${name} bulk-bought ${result.wins} wins. Costco energy.`,
+                    `${name} chained ${result.wins} wins together. Chain restaurant of dominance.`,
+                    `${name} pocketed ${result.wins} wins. They clink when walking.`,
+                    `${name} stacked ${result.wins} wins. Stack structurally alarming.`,
+                    `${name} won ${result.wins} in a row. Keyboard filed for hazard pay.`,
+                    `${name} ran up ${result.wins} wins. Scoreboard is out of breath.`,
+                    `${name} clocked ${result.wins} back-to-back wins. Timepiece unimpressed.`,
+                    `${name} has ${result.wins} wins and zero regrets.`,
+                    `${name} bagged ${result.wins}. Feel free to be impressed.`,
+                    `${name} just did ${result.wins} in a row. Anyone need a witness?`,
+                    `${name} logged ${result.wins} wins into the permanent record.`,
+                    `${name} is up ${result.wins} matches. "Up" as in ascending.`,
+                    `${name} handed out ${result.wins} losses. Return to sender.`,
+                    `${name} rolled ${result.wins} wins. Vegas is watching.`,
+                    `${name} popped ${result.wins} wins like it was a hobby.`,
+                    `${name} bagged ${result.wins} wins with minimal drama.`,
+                    `${name} strung ${result.wins} wins together. Whole vibe.`,
+                    `${name} is ${result.wins}-0 and starting to feel it.`,
+                    `${name} put ${result.wins} wins in the win jar. Jar overflowing.`,
+                    `${name} did ${result.wins} wins. ${result.wins} more than the opponents.`,
+                    `${name} tacked on ${result.wins} wins. Bulletin board is filling.`,
+                    `${name} added ${result.wins} more Ws. Alphabet is out of Ls.`,
+                    `${name} landed ${result.wins} wins in a row. Plane says "same."`,
+                    `${name} closed out ${result.wins} matches. Books look good.`,
                 ];
             } else {
                 lines = [
@@ -1132,6 +1358,34 @@
                     `${name} added one win and approximately twelve horsepower.`,
                     `${name} found the boost button. This is getting dangerous.`,
                     `${name} says that was calculated. It was not.`,
+                    `${name} snagged a W. Momentum: initialized.`,
+                    `${name} pulled off a win. Nobody call it a fluke.`,
+                    `${name} won. The universe permits this.`,
+                    `${name} banked a win. Interest is compounding.`,
+                    `${name} clipped a W. Filing it under "important."`,
+                    `${name} did the thing. The thing is winning.`,
+                    `${name} took the W. Pretending it was easy.`,
+                    `${name} won and now walks a little taller.`,
+                    `${name} scored a win. Ticker tape parade cancelled for budget reasons.`,
+                    `${name} came, saw, and won ONE. Progress!`,
+                    `${name} punched a W ticket. Destination: leaderboard.`,
+                    `${name} secured a win. The clipboard is impressed.`,
+                    `${name} is 1 for 1. Statistically perfect.`,
+                    `${name} won. Solid start. Continue.`,
+                    `${name} bagged a W. Feel free to celebrate quietly.`,
+                    `${name} added one to the win column. Column growing.`,
+                    `${name} tapped in a win. Precision play.`,
+                    `${name} snagged a W. Warm-up complete.`,
+                    `${name} squeezed out a win. Toothpaste-tube style.`,
+                    `${name} clinched it. It: the match.`,
+                    `${name} pulled through. Rewarded with dopamine.`,
+                    `${name} rolled the ball and got a W. Physics approves.`,
+                    `${name} outlasted, outplayed, out-won.`,
+                    `${name} took the W and is being modest about it. So modest.`,
+                    `${name} unlocked achievement: "did not lose this one."`,
+                    `${name} got the dub. That's the technical term.`,
+                    `${name} logged one W. Log looking prettier.`,
+                    `${name} won the match. Confetti generator idling.`,
                 ];
             }
         } else if (result.losses > 0 && result.wins === 0) {
@@ -1140,18 +1394,105 @@
                     `${name} is building character. So much character.`,
                     `${name} has requested a tactical blanket and no follow-up questions.`,
                     `${name} insists this is an extremely long training montage.`,
+                    `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule.`,
+                    `${name} is on a losing streak so long it qualifies for benefits.`,
+                    `${name} has reached the "learning experience" boss level.`,
+                    `${name} has entered rock bottom's basement.`,
+                    `${name} is speed-running character development.`,
+                    `${name} is not losing, they are gathering data. Lots of data.`,
+                    `${name} has volunteered as the control group.`,
+                    `${name} is currently the "before" photo in the tutorial.`,
+                    `${name} is negative-vibing with impressive consistency.`,
+                    `${name} is 0 for ${Math.abs(streak)}. Perfectly imperfect.`,
+                    `${name} has ordered a helmet with extra character-building padding.`,
+                    `${name} is starring in "How Not To." Rave reviews from opponents.`,
+                    `${name} has entered the trenches. Snacks and morale welcome.`,
+                    `${name} is banking losses like they'll pay dividends. They won't.`,
+                    `${name} is spelunking the L-caves. Deep.`,
+                    `${name} is currently a cautionary tale. A verbose one.`,
+                    `${name} has become one with the L. The L accepts them.`,
+                    `${name} is on the wrong side of the highlight reel. Repeatedly.`,
+                    `${name} is stubbornly loyal to losing.`,
+                    `${name} is ${Math.abs(streak)} losses in and philosophically at peace with it.`,
+                    `${name} is starring in an art film called "The Fall."`,
+                    `${name} is not tilting. They fell over hours ago.`,
+                    `${name} has embraced the void. The void has embraced back.`,
+                    `${name} is undefeated at losing.`,
+                    `${name} has qualified for a losing-streak achievement. Congrats?`,
+                    `${name} is ${Math.abs(streak)} games into what appears to be a series.`,
+                    `${name} is being sponsored by regret.`,
+                    `${name} has become one with the concept of "trying again."`,
+                    `${name} is composing an autobiography titled "The L-Files."`,
                 ];
             } else if (streak <= -3) {
                 lines = [
-                    `${name} is Frosty. Warm-up laps and snacks have been prescribed.`,
+                    `${name} is Frosty. Warm-up laps and snacks prescribed.`,
                     `${name} filed a formal complaint against matchmaking.`,
                     `${name} needs encouragement, premium fuel, and perhaps a tiny scarf.`,
+                    `${name} is chilly. Emotionally.`,
+                    `${name} is going through it. "It" being three straight losses.`,
+                    `${name} is cold. Consider hot cocoa.`,
+                    `${name} has entered a Frosty Winter arc.`,
+                    `${name} is workshopping their comeback speech.`,
+                    `${name} needs a hug and possibly a new server region.`,
+                    `${name} is frosted. Not iced. Frosted.`,
+                    `${name} is on a slippery streak. Send salt.`,
+                    `${name} has been demanding a manager. Wal-Mart tone.`,
+                    `${name} is in a slump. A cozy, sad little slump.`,
+                    `${name} has requested a snow day.`,
+                    `${name} is cold-brewing revenge.`,
+                    `${name} is doing the "one more game to break the streak" thing. That's ${Math.abs(streak)} now.`,
+                    `${name} is officially in "put down the controller" territory.`,
+                    `${name} is negative-streaking. Send therapy dogs.`,
+                    `${name} is trying to remember what a W feels like.`,
+                    `${name} has entered thawing mode. Return in 20 minutes.`,
+                    `${name} is doing the freeze dance. Involuntarily.`,
+                    `${name} is the villain in their own hero's journey.`,
+                    `${name} is stuck in the ice storm arc.`,
+                    `${name} has ${Math.abs(streak)} losses and a bad attitude.`,
+                    `${name} needs a heater and possibly a new mouse.`,
+                    `${name} is frost-forming on the leaderboard.`,
+                    `${name} is being iced out by fortune.`,
+                    `${name} is cold-plunging into the L pool.`,
+                    `${name} is starring in "Frozen 3: Rocket Boogaloo."`,
+                    `${name} is chilly-billy. Snack up.`,
+                    `${name} is muttering "one more" but it means one more L.`,
+                    `${name} is going through a frosty patch. Ice cream may or may not help.`,
                 ];
             } else if (result.losses > 1) {
                 lines = [
                     `${name} survived ${result.losses} learning opportunities at supersonic speed.`,
                     `${name} lost ${result.losses}, but the wheels are still emotionally attached.`,
                     `${name} calls those ${result.losses} losses "extensive field research."`,
+                    `${name} chalked up ${result.losses} Ls. Chalk supply low.`,
+                    `${name} took ${result.losses} losses in stride. Stride is limping.`,
+                    `${name} dropped ${result.losses} in a row. Pick-up truck idling.`,
+                    `${name} logged ${result.losses} Ls into the shame ledger.`,
+                    `${name} caught ${result.losses} losses. Return receipt requested.`,
+                    `${name} took ${result.losses} on the chin. Chin holding up okay.`,
+                    `${name} tacked on ${result.losses} Ls. Filed under "growth."`,
+                    `${name} lost ${result.losses} matches. Number of feelings: too many.`,
+                    `${name} dropped ${result.losses}. Pick 'em back up soon.`,
+                    `${name} took ${result.losses} Ls to the face and kept going.`,
+                    `${name} banked ${result.losses} losses. Bank disapproves.`,
+                    `${name} incurred ${result.losses} L's. IRS unmoved.`,
+                    `${name} has ${result.losses} fresh losses. Piping hot.`,
+                    `${name} accepted ${result.losses} losses graciously. In private, less so.`,
+                    `${name} experienced ${result.losses} setbacks. Big comeback probably loading.`,
+                    `${name} collected ${result.losses} Ls. Displayed on the mantle. Reluctantly.`,
+                    `${name} said "next one for sure" ${result.losses} times.`,
+                    `${name} took ${result.losses} on the road. Road tired now.`,
+                    `${name} put ${result.losses} losses in the character-building pile.`,
+                    `${name} logged ${result.losses} lessons. Class dismissed.`,
+                    `${name} filed ${result.losses} losses under "not today."`,
+                    `${name} committed ${result.losses} losses to memory. Involuntarily.`,
+                    `${name} donated ${result.losses} MMR to charity. Charity refuses to accept.`,
+                    `${name} did ${result.losses} losses in one go. Efficient.`,
+                    `${name} lost ${result.losses} matches and gained ${result.losses} grievances.`,
+                    `${name} took ${result.losses} on the chin, ribs, and knees.`,
+                    `${name} racked up ${result.losses} Ls. Rack tipping.`,
+                    `${name} added ${result.losses} losses to the résumé. Under "experience."`,
+                    `${name} sold their soul for MMR and lost ${result.losses} anyway.`,
                 ];
             } else {
                 lines = [
@@ -1159,13 +1500,70 @@
                     `${name} lost the match, not the plot. Probably.`,
                     `${name} says the controller was slippery.`,
                     `${name} is shaken, not stalled. Tiny comeback loading.`,
+                    `${name} lost. Blames physics.`,
+                    `${name} took a loss. Filed under "input lag." (It wasn't.)`,
+                    `${name} lost one. Officially a rounding error.`,
+                    `${name} dropped a match. Match landed softly on ego.`,
+                    `${name} took an L. L takes ${name}.`,
+                    `${name} lost. Cosmic balance restored.`,
+                    `${name} took a loss. Sportsmanship: acceptable.`,
+                    `${name} lost a close one. "Close" in a philosophical sense.`,
+                    `${name} L-boarded a match. Skate away with pride.`,
+                    `${name} has one L. One is a small number.`,
+                    `${name} says "warm-up match." It wasn't.`,
+                    `${name} took an L. Happens to the best of tires.`,
+                    `${name} lost. Rest of the world unaffected.`,
+                    `${name} dropped a match. Bendable, not broken.`,
+                    `${name} took a loss. Insists it's teaching them.`,
+                    `${name} L'd out. Bouncing back in T-minus one match.`,
+                    `${name} lost. Feels like flat-tire weather.`,
+                    `${name} is 0-1 and grumpy.`,
+                    `${name} tanked a match. Tank functional. Ego bruised.`,
+                    `${name} took an L. Please clap gently anyway.`,
+                    `${name} skidded off a match. Traction control disagrees.`,
+                    `${name} lost one. It's just recon for the next one.`,
+                    `${name} took the L on principle.`,
+                    `${name} dropped a match. Momentum: paused.`,
+                    `${name} L'd. The scoreboard sighs.`,
+                    `${name} lost the match. Blames alignment.`,
+                    `${name} caught a loss. Please throw it back.`,
+                    `${name} took an L. Will pretend to learn from it.`,
                 ];
             }
         } else {
             lines = [
                 `${name} processed ${result.wins}W/${result.losses}L and now requires a tiny spreadsheet.`,
-                `${name} had a complicated session. The telemetry just sighed.`,
+                `${name} had a complicated session. Telemetry just sighed.`,
                 `${name} experienced both victory and character development.`,
+                `${name} went ${result.wins}-${result.losses}. Numerically confused.`,
+                `${name} split the difference: ${result.wins}W / ${result.losses}L.`,
+                `${name} had a bipartisan session.`,
+                `${name} banked wins AND losses. Equal opportunity garage.`,
+                `${name} went ${result.wins}-${result.losses}. Vibes: mixed salad.`,
+                `${name} had a "some you win, some you lose, mostly gray" session.`,
+                `${name} logged ${result.wins}W/${result.losses}L. Break-even energy.`,
+                `${name} had a moderate day. Moderate is a word we chose.`,
+                `${name} had a session with variety. Variety pack.`,
+                `${name} ran a ${result.wins}-${result.losses} session. Statistically valid, emotionally not.`,
+                `${name} had every kind of match today.`,
+                `${name} went ${result.wins}W ${result.losses}L. Officially "trying."`,
+                `${name} had wins. Also losses. It's a whole thing.`,
+                `${name} had a mixed bag session. Bag contents varied.`,
+                `${name} took ${result.wins} wins and gave back ${result.losses}. Balanced diet.`,
+                `${name} experienced a session. That's all we can say.`,
+                `${name} finished ${result.wins}-${result.losses}. Filed under "gray area."`,
+                `${name} had a whiplash session. Sports psychologist on standby.`,
+                `${name} was giving them AND taking them. Democracy in action.`,
+                `${name} had a "some wins, some losses" arc. Peak sitcom.`,
+                `${name} rolled ${result.wins}W ${result.losses}L. Dice uncooperative.`,
+                `${name} went ${result.wins}-${result.losses}. Emotionally uncommitted.`,
+                `${name} had a good-cop bad-cop session with themselves.`,
+                `${name} logged ${result.wins} wins, ${result.losses} losses, and one existential crisis.`,
+                `${name} had a session with dynamic range.`,
+                `${name} tried both directions today.`,
+                `${name} clocked ${result.wins} up, ${result.losses} down. Elevator vibes.`,
+                `${name} finished with ${result.wins}W and ${result.losses}L. Committee split.`,
+                `${name} had a "yes, and also no" kind of session.`,
             ];
         }
 
@@ -1263,10 +1661,12 @@
         const bar = `<span style="color:${barColor};font-family:monospace;letter-spacing:-1px;">${"█".repeat(filled)}${"░".repeat(10 - filled)}</span>`;
 
         // stage 4/5 get a radial ring behind
+        const skin = currentBuddySkin();
         ensureBuddySpriteStyles();
-        ensureBuddySheetLoaded();
+        ensureBuddySheetLoaded(skin.id);
         const moodSprite = BUDDY_MOOD_SPRITE[mood.key] || "idle";
-        const useSpriteFallback = buddySheetLoadState !== "ready";
+        const useSpriteFallback = buddySheetLoadStateFor(skin.id) !== "ready";
+        const sheetCssUrl = `url("${skin.sheetUrl}")`;
         let spriteWrap = "";
         if (stage.level >= 5) {
             spriteWrap = "background:radial-gradient(circle, #ffd70044 0%, transparent 70%);padding:8px;border-radius:50%;";
@@ -1276,13 +1676,23 @@
 
         const isNewbie = buddyState.matchesDriven === 0;
         const displayName = buddyDisplayName();
+        const skinOptions = BUDDY_SKIN_ORDER.map(id => {
+            const s = BUDDY_SKINS[id];
+            const sel = s.id === skin.id ? " selected" : "";
+            return `<option value="${s.id}"${sel}>${escapeHtml(s.label)}</option>`;
+        }).join("");
 
         view.innerHTML = `
             <div style="text-align:center;padding:8px 4px 12px;">
-                <div style="display:inline-block;${spriteWrap}"><div id="rgBuddySprite" class="rg-buddy-sprite stage-${stage.level} mood-${moodSprite}${useSpriteFallback ? " is-fallback" : ""}" role="img" aria-label="${escapeHtml(stage.name)}">${useSpriteFallback ? stage.icon : ""}</div></div>
+                <div style="display:inline-block;${spriteWrap}"><div id="rgBuddySprite" class="rg-buddy-sprite stage-${stage.level} mood-${moodSprite}${useSpriteFallback ? " is-fallback" : ""}" style="--rb-sheet-url:${sheetCssUrl};" role="img" aria-label="${escapeHtml(stage.name)}">${useSpriteFallback ? stage.icon : ""}</div></div>
                 <div style="margin-top:6px;font-size:14px;font-weight:bold;color:#00bfff;">${escapeHtml(displayName)}</div>
                 <div style="font-size:11px;opacity:0.85;">${escapeHtml(stage.name)} · Lv ${stage.level}</div>
                 <div style="margin-top:2px;font-size:13px;color:#ffd700;letter-spacing:2px;">${stars}</div>
+            </div>
+
+            <div style="font-size:11px;background:#00bfff11;border-radius:6px;padding:6px 8px;margin-bottom:8px;">
+                <label for="rgBuddySkin" style="opacity:0.7;">Buddy style</label>
+                <select id="rgBuddySkin" class="rg-buddy-skin-select" aria-label="Buddy style">${skinOptions}</select>
             </div>
 
             <div style="font-size:11px;background:#00bfff11;border-radius:6px;padding:6px 8px;margin-bottom:8px;">
@@ -1372,12 +1782,23 @@
                 document.getElementById(restoreFocus)?.focus({ preventScroll: true });
             });
         };
+
+        document.getElementById("rgBuddySkin").onchange = e => {
+            const next = getBuddySkin(e.target.value);
+            if (next.id === buddyState.skinId) return;
+            buddyState.skinId = next.id;
+            saveBuddyState();
+            ensureBuddySheetLoaded(next.id);
+            if (lastKnownPlayerData && buddyState.equipped) updateHUD(lastKnownPlayerData);
+            renderBuddyViewAndRestoreFocus("rgBuddySkin");
+        };
     }
 
     // mini buddy icon next to streak badge. local only.
     function buddyMiniVisualHtml(stage) {
-        return buddySheetLoadState === "ready"
-            ? `<span class="rg-buddy-mini" style="--rb-mini-stage:${stage.level - 1};" aria-hidden="true"></span>`
+        const skin = currentBuddySkin();
+        return buddySheetLoadStateFor(skin.id) === "ready"
+            ? `<span class="rg-buddy-mini" style="--rb-mini-stage:${stage.level - 1};--rb-sheet-url:url('${skin.sheetUrl}');" aria-hidden="true"></span>`
             : stage.icon;
     }
 
@@ -1386,8 +1807,9 @@
             ensureBuddy();
             if (!buddyState.equipped) return "";
             const stage = buddyStage();
+            const skin = currentBuddySkin();
             ensureBuddySpriteStyles();
-            ensureBuddySheetLoaded();
+            ensureBuddySheetLoaded(skin.id);
             return ` <span id="rgBuddyEquippedFlair" class="rgHasTip rgNoUnderline" data-tip="${escapeHtml(buddyDisplayName())} · ${escapeHtml(stage.name)}" aria-label="${escapeHtml(buddyDisplayName())} · ${escapeHtml(stage.name)}" style="font-size:14px;vertical-align:middle;">${buddyMiniVisualHtml(stage)}</span>`;
         } catch (e) {
             dbg("buddyEquippedFlairHtml threw: " + (e && e.message ? e.message : e));
