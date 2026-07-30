@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      14.1
+// @version      14.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -98,6 +98,441 @@
         },
     };
     const BUDDY_SKIN_ORDER = ["classic", "goblin", "scrap", "critter", "peasant", "feline"];
+
+    // Per-skin status voice. Classic keeps the original car garage lines below;
+    // other skins swap in themed copy for the same event keys.
+    const BUDDY_SKIN_VOICE = {
+        goblin: {
+            skinSelect: ({ name, label }) => [
+                `${name} clocked in as ${label}. Oil under the nails already.`,
+                `${name} grabbed a wrench bigger than their ego. Garage Goblin mode.`,
+                `${name} joined the pit crew. Someone hide the good sockets.`,
+            ],
+            sleepy: ({ name }) => [
+                `${name} is napping on a stack of tire catalogs. Do not start the impact gun.`,
+                `${name} entered sleep mode next to the oil drum. Snoring sounds like a loose belt.`,
+                `${name} is dreaming of perfectly torqued lug nuts and unlimited shop towels.`,
+            ],
+            neglected: ({ name }) => [
+                `${name} has started alphabetizing the rusted bolts. A pet might help.`,
+                `${name} wrote "WHERE HUMAN" in grease on the bay floor.`,
+                `${name} checked the toolbox again. Still no snacks. Only sockets.`,
+            ],
+            pet: ({ name }) => [
+                `${name} got a head pat and immediately tried to tune something that did not need tuning.`,
+                `${name} received affection. Horsepower of the heart: +12. Actual horsepower: classified.`,
+                `${name} was petted and left a tiny oily handprint of gratitude.`,
+                `${name} says "again." The cooldown and the shop manager both say no.`,
+            ],
+            evolve: ({ name, stageName }) => [
+                `${name} got promoted to ${stageName}. The pit wall just stood a little taller.`,
+                `${name} unlocked ${stageName}! Please admire the new grease stains responsibly.`,
+                `${name} evolved into ${stageName}. Somewhere, a tiny ratchet cried happy tears.`,
+            ],
+            matchBigWin: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} deep. The other cars asked for a different mechanic.`,
+                `${name} has entered championship-engineer rage. Telemetry is applauding.`,
+                `${name} is wrenching wins out of thin air. OSHA is concerned, impressed, then concerned.`,
+                `${name} tuned the lobby until it broke. In a good way.`,
+                `${name} is so hot the coolant is filing a complaint.`,
+            ],
+            matchHotWin: ({ name, streak }) => [
+                `${name} is ON FIRE in the bay. Keep flammable rags at a safe distance.`,
+                `${name} is ${Math.abs(streak)} wins deep and still asking for a smaller socket.`,
+                `${name} is cooking. Recipe: boost, spite, and a suspiciously clean air filter.`,
+                `${name} has entered main-character pit-crew mode.`,
+                `${name} smells victory. Also 5W-30.`,
+            ],
+            matchMultiWin: ({ name, wins }) => [
+                `${name} banked ${wins} wins and would like them hung above the tool chest.`,
+                `${name} chained ${wins} wins. Chain looks like a drive belt under tension.`,
+                `${name} racked up ${wins}. Loading additional swagger... and more rags.`,
+                `${name} secured ${wins} in a row. The clipboard is impressed.`,
+            ],
+            matchWin: ({ name }) => [
+                `${name} found the boost button and a torque wrench. Dangerous combo.`,
+                `${name} snagged a W. Momentum: initialized. Oil: everywhere.`,
+                `${name} says that was calculated. The dyno printout disagrees.`,
+                `${name} added one win and approximately twelve horsepower of attitude.`,
+            ],
+            matchBigLoss: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a shop towel.`,
+                `${name} requested a tactical blanket and no follow-up questions about alignment.`,
+                `${name} insists this is an extremely long training montage in the garage.`,
+                `${name} is building character. And a very sad parts list.`,
+            ],
+            matchColdLoss: ({ name, streak }) => [
+                `${name} is Frosty. Warm-up laps, snacks, and maybe a heated bay prescribed.`,
+                `${name} filed a formal complaint against matchmaking. In triplicate. Greasy.`,
+                `${name} needs encouragement, premium fuel, and a tiny scarf over the goggles.`,
+                `${name} is ${Math.abs(streak)} cold. Consider hot cocoa. Do not drink the coolant.`,
+            ],
+            matchMultiLoss: ({ name, losses }) => [
+                `${name} survived ${losses} learning opportunities at shop-floor speed.`,
+                `${name} calls those ${losses} losses "extensive field research."`,
+                `${name} logged ${losses} Ls into the shame ledger next to the invoices.`,
+                `${name} took ${losses} on the chin. Chin still has grease on it.`,
+            ],
+            matchLoss: ({ name }) => [
+                `${name} hit a learning opportunity at supersonic speed. Air filter unimpressed.`,
+                `${name} says the controller was slippery. Also everything else was oily.`,
+                `${name} lost. Blames physics. And that one mystery rattle.`,
+                `${name} took an L. Happens to the best of sockets.`,
+            ],
+            matchMixed: ({ name, wins, losses }) => [
+                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of torque specs.`,
+                `${name} had a complicated session. Telemetry just sighed in the bay.`,
+                `${name} went ${wins}-${losses}. Vibes: mixed oil grades.`,
+                `${name} banked wins AND losses. Equal-opportunity garage.`,
+            ],
+        },
+        scrap: {
+            skinSelect: ({ name, label }) => [
+                `${name} rolled out of the pile as ${label}. Rust is a lifestyle.`,
+                `${name} chose the scrapyard life. Magnet crane approved.`,
+                `${name} is now certified junkyard royalty. Tin crown pending.`,
+            ],
+            sleepy: ({ name }) => [
+                `${name} is sleeping inside a discarded fridge. Do not close the door.`,
+                `${name} parked for a power nap on a stack of license plates.`,
+                `${name} is dreaming of unlimited scrap and suspiciously shiny hubcaps.`,
+            ],
+            neglected: ({ name }) => [
+                `${name} has started collecting dust as a rare metal. A pet might help.`,
+                `${name} is composing a ballad titled "Where Did My Human Go (feat. Magnet)."`,
+                `${name} checked the scrap pile again. Still no snacks. Only bolts.`,
+            ],
+            pet: ({ name }) => [
+                `${name} was just petted. Structural integrity increased by emotionally significant amounts.`,
+                `${name} received head pats and is now legally unstoppable. Also slightly more rustproof.`,
+                `${name} has been petted and is pretending the tin exterior doesn't love it.`,
+                `${name} says "again." The cooldown says "absolutely not, scrapling."`,
+            ],
+            evolve: ({ name, stageName }) => [
+                `${name} welded up into ${stageName}. Insurance refused the call.`,
+                `${name} unlocked ${stageName}! Please admire the new dents responsibly.`,
+                `${name} evolved into ${stageName}. Somewhere, a dumpster is crying happy tears.`,
+            ],
+            matchBigWin: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} deep. The junkyard filed a restraining order on the lobby.`,
+                `${name} has weaponized scrap. Matchmaking is scared of magnets now.`,
+                `${name} is dominating so hard the leaderboard just typed "gg" in rust.`,
+                `${name} ascended to Junkyard King energy. Bow before the tin.`,
+            ],
+            matchHotWin: ({ name, streak }) => [
+                `${name} is ON FIRE! Keep flammable scrap at a safe distance.`,
+                `${name} is ${Math.abs(streak)} wins deep and unbearable already.`,
+                `${name} smells victory. Also acetylene.`,
+                `${name} is stacking Ws like crushed cars.`,
+            ],
+            matchMultiWin: ({ name, wins }) => [
+                `${name} bagged ${wins} wins. The bag is a shopping cart and it's bulging.`,
+                `${name} bulk-bought ${wins} wins. Costco of the scrapyard.`,
+                `${name} chained ${wins} wins together with actual chain. Artistic.`,
+                `${name} racked up ${wins}. Loading additional scrap swagger...`,
+            ],
+            matchWin: ({ name }) => [
+                `${name} snagged a W. Filed under "valuable scrap."`,
+                `${name} found the boost button in a glovebox they didn't own.`,
+                `${name} won. The magnet crane salutes.`,
+                `${name} added one win and approximately twelve rattles.`,
+            ],
+            matchBigLoss: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a tarp.`,
+                `${name} has entered rock bottom's scrap basement.`,
+                `${name} is speed-running character development in the junkyard.`,
+                `${name} volunteered as the control group. Again.`,
+            ],
+            matchColdLoss: ({ name }) => [
+                `${name} is Frosty. Warm-up laps and a heated seat from a donor car prescribed.`,
+                `${name} filed a formal complaint against matchmaking. Written on a license plate.`,
+                `${name} needs encouragement, premium fuel, and perhaps a tiny tarp-scarf.`,
+                `${name} is chilly. Emotionally. Structurally still holding.`,
+            ],
+            matchMultiLoss: ({ name, losses }) => [
+                `${name} survived ${losses} learning opportunities at dumpster speed.`,
+                `${name} lost ${losses}, but the wheels are still emotionally attached. Barely.`,
+                `${name} calls those ${losses} losses "extensive field research."`,
+                `${name} logged ${losses} Ls into the shame ledger. Ledger is a napkin.`,
+            ],
+            matchLoss: ({ name }) => [
+                `${name} hit a learning opportunity at supersonic scrap speed.`,
+                `${name} lost. Blames physics. And that one mystery rattle. All of them, actually.`,
+                `${name} took an L. Happens to the best of tin cans.`,
+                `${name} dropped a match. Match landed softly on a stack of hubcaps.`,
+            ],
+            matchMixed: ({ name, wins, losses }) => [
+                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of scrap grades.`,
+                `${name} went ${wins}-${losses}. Vibes: mixed metals.`,
+                `${name} had a bipartisan session in the junkyard.`,
+                `${name} banked wins AND losses. Equal-opportunity scrap pile.`,
+            ],
+        },
+        critter: {
+            skinSelect: ({ name, label }) => [
+                `${name} scampered into ${label} form. Stadium security unprepared.`,
+                `${name} chose Arena Critters. Tiny paws, catastrophic speed.`,
+                `${name} is now a mascot with teeth. Cheer carefully.`,
+            ],
+            sleepy: ({ name }) => [
+                `${name} is curled up in a goal hoop for a power nap.`,
+                `${name} entered sleep mode. Snoring is now available in surround squeak.`,
+                `${name} is dreaming of unlimited boost and suspiciously large sunflower seeds.`,
+            ],
+            neglected: ({ name }) => [
+                `${name} has started collecting dust bunnies as pets. A real pet might help.`,
+                `${name} is composing a dramatic ballad titled "Where Did My Human Go (feat. Hamster)."`,
+                `${name} checked the tunnel again. Still no snacks. Only echo.`,
+            ],
+            pet: ({ name }) => [
+                `${name} was just petted. Fluff-to-power ratio increased dramatically.`,
+                `${name} received head pats and is now legally unstoppable. Whiskers approved.`,
+                `${name} has been petted and is pretending not to purr-adjacent.`,
+                `${name} says "again." The cooldown says "absolutely not, critter."`,
+            ],
+            evolve: ({ name, stageName }) => [
+                `${name} evolved into ${stageName}. The stadium just got cuter and meaner.`,
+                `${name} unlocked ${stageName}! Please admire the new claws responsibly.`,
+                `${name} became ${stageName}. Somewhere, a tiny cheer squad lost its mind.`,
+            ],
+            matchBigWin: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} deep. The other cars filed a restraining order against the mascot.`,
+                `${name} has achieved dangerous levels of zoom. And squeak.`,
+                `${name} is dominating so hard the leaderboard just typed "gg" in pawprints.`,
+                `${name} has ascended. Matchmaking cannot follow the scent trail.`,
+            ],
+            matchHotWin: ({ name, streak }) => [
+                `${name} is ON FIRE! Keep flammable snacks at a safe distance.`,
+                `${name} is ${Math.abs(streak)} wins deep and unbearable already.`,
+                `${name} is cooking. Recipe: boost, spite, and sunflower seeds.`,
+                `${name} has that gleam in the whiskers. Bad news for everyone.`,
+            ],
+            matchMultiWin: ({ name, wins }) => [
+                `${name} bagged ${wins} wins. The bag is a cheek pouch and it's full.`,
+                `${name} chained ${wins} wins. Chain looks like a happy little stampede.`,
+                `${name} racked up ${wins}. Loading additional critter swagger...`,
+                `${name} secured ${wins} in a row. Ownership papers pending. Soft ones.`,
+            ],
+            matchWin: ({ name }) => [
+                `${name} snagged a W. Momentum: initialized. Tail: up.`,
+                `${name} found the boost button. This is getting dangerous. And adorable.`,
+                `${name} won. The universe permits this. The stadium cheers.`,
+                `${name} added one win and approximately twelve zoomies.`,
+            ],
+            matchBigLoss: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a tiny blanket.`,
+                `${name} requested a tactical burrow and no follow-up questions.`,
+                `${name} insists this is an extremely long training montage in the tunnels.`,
+                `${name} is building character. So much character. Very small body.`,
+            ],
+            matchColdLoss: ({ name }) => [
+                `${name} is Frosty. Warm-up laps and snacks prescribed. Prefer seeds.`,
+                `${name} filed a formal complaint against matchmaking. In squeaks.`,
+                `${name} needs encouragement, premium fuel, and perhaps a tiny scarf.`,
+                `${name} is chilly. Emotionally. Fur helps. Barely.`,
+            ],
+            matchMultiLoss: ({ name, losses }) => [
+                `${name} survived ${losses} learning opportunities at critter speed.`,
+                `${name} lost ${losses}, but the whiskers are still emotionally attached.`,
+                `${name} calls those ${losses} losses "extensive field research."`,
+                `${name} logged ${losses} Ls into the shame ledger. Ledger is a leaf.`,
+            ],
+            matchLoss: ({ name }) => [
+                `${name} hit a learning opportunity at supersonic squeak.`,
+                `${name} lost. Blames physics. And that one scary loud noise.`,
+                `${name} took an L. Happens to the best of paws.`,
+                `${name} dropped a match. Match landed softly in the burrow.`,
+            ],
+            matchMixed: ({ name, wins, losses }) => [
+                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of snacks.`,
+                `${name} went ${wins}-${losses}. Vibes: mixed nuts.`,
+                `${name} had a bipartisan session. Party animals only.`,
+                `${name} banked wins AND losses. Equal-opportunity stadium.`,
+            ],
+        },
+        peasant: {
+            skinSelect: ({ name, label }) => [
+                `${name} took up the ${label} path. Pitchfork optional. Attitude required.`,
+                `${name} chose Peasant → King. The mud remembers this decision.`,
+                `${name} is now on a royal arc. Try not to lose the crown in a ditch.`,
+            ],
+            sleepy: ({ name }) => [
+                `${name} is napping against a hay bale. Do not start the joust.`,
+                `${name} entered sleep mode. Snoring is now available in surround kingdom.`,
+                `${name} is dreaming of unlimited boost and suspiciously large feasts.`,
+            ],
+            neglected: ({ name }) => [
+                `${name} has started collecting dust as a noble hobby. A pet might help.`,
+                `${name} is composing a dramatic ballad titled "Where Did My Liege Go?"`,
+                `${name} checked the castle gate again. Still no snacks. Only mud.`,
+            ],
+            pet: ({ name }) => [
+                `${name} was just petted. Morale increased by emotionally significant amounts.`,
+                `${name} received head pats and is now legally unstoppable. Crown slightly crooked.`,
+                `${name} has been petted and is pretending knights don't love that.`,
+                `${name} says "again." The cooldown says "absolutely not, your muddiness."`,
+            ],
+            evolve: ({ name, stageName }) => [
+                `${name} ascended to ${stageName}. The village insurance premium just moved.`,
+                `${name} unlocked ${stageName}! Please admire the new armor responsibly.`,
+                `${name} evolved into ${stageName}. Somewhere, a tiny squire is crying happy tears.`,
+            ],
+            matchBigWin: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} deep. The other knights filed a restraining order.`,
+                `${name} has forgotten how losing works. Please do not remind the throne.`,
+                `${name} is on the podium so often it has a favorite step. And a crown polish.`,
+                `${name} has ascended to a plane matchmaking cannot follow. Royal decree.`,
+            ],
+            matchHotWin: ({ name, streak }) => [
+                `${name} is ON FIRE! Keep flammable banners at a safe distance.`,
+                `${name} is ${Math.abs(streak)} wins deep and unbearable already. Court agrees.`,
+                `${name} has entered main-character mode. Narrator sweating.`,
+                `${name} smells victory. Also mud. Mostly victory.`,
+            ],
+            matchMultiWin: ({ name, wins }) => [
+                `${name} banked ${wins} wins. Turbo confidence engaged. Feudal style.`,
+                `${name} claimed ${wins} in a row. Ownership papers pending. Very fancy.`,
+                `${name} stacked ${wins} wins. Stack structurally alarming. Also regal.`,
+                `${name} secured ${wins}. The clipboard (and the court) are impressed.`,
+            ],
+            matchWin: ({ name }) => [
+                `${name} snagged a W. Momentum: initialized. Pitchfork: raised.`,
+                `${name} won. The universe permits this. The village cheers.`,
+                `${name} says that was calculated. It was not. Still counts.`,
+                `${name} added one win and approximately twelve horsepower of destiny.`,
+            ],
+            matchBigLoss: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a warm hearth.`,
+                `${name} requested a tactical blanket and no follow-up questions about the joust.`,
+                `${name} insists this is an extremely long training montage in the mud.`,
+                `${name} is building character. So much character. Very royal suffering.`,
+            ],
+            matchColdLoss: ({ name }) => [
+                `${name} is Frosty. Warm-up laps, snacks, and a tiny scarf prescribed.`,
+                `${name} filed a formal complaint against matchmaking. Sealed with a sad crest.`,
+                `${name} needs encouragement, premium fuel, and perhaps a tiny cape.`,
+                `${name} is chilly. Emotionally. Crown frost forming.`,
+            ],
+            matchMultiLoss: ({ name, losses }) => [
+                `${name} survived ${losses} learning opportunities at quest speed.`,
+                `${name} lost ${losses}, but the honor is still emotionally attached.`,
+                `${name} calls those ${losses} losses "extensive field research."`,
+                `${name} logged ${losses} Ls into the shame ledger. Ledger is a scroll.`,
+            ],
+            matchLoss: ({ name }) => [
+                `${name} hit a learning opportunity at supersonic chivalry.`,
+                `${name} lost. Blames physics. And that one muddy pothole.`,
+                `${name} took an L. Happens to the best of knights.`,
+                `${name} dropped a match. Match landed softly on the village green.`,
+            ],
+            matchMixed: ({ name, wins, losses }) => [
+                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of quests.`,
+                `${name} went ${wins}-${losses}. Vibes: mixed feudalism.`,
+                `${name} had a bipartisan session. Court divided.`,
+                `${name} banked wins AND losses. Equal-opportunity kingdom.`,
+            ],
+        },
+        feline: {
+            skinSelect: ({ name, label }) => [
+                `${name} stretched into ${label}. The pride accepts this appointment.`,
+                `${name} chose Cat → Lion. Expect napping and sudden violence.`,
+                `${name} is now feline-coded. Pet at your own risk. Also please pet.`,
+            ],
+            sleepy: ({ name }) => [
+                `${name} is loafing in a sunbeam. Do not disturb the loaf.`,
+                `${name} entered sleep mode. Snoring is now available in surround purr.`,
+                `${name} is dreaming of unlimited boost and suspiciously large cardboard boxes.`,
+            ],
+            neglected: ({ name }) => [
+                `${name} has started collecting dust as a hobby. A pet might help. Immediately.`,
+                `${name} is composing a dramatic ballad titled "Where Did My Human Go (3am remix)."`,
+                `${name} knocked something off the counter for attention. Still no snacks.`,
+            ],
+            pet: ({ name }) => [
+                `${name} was just petted. Purr-to-power ratio increased dramatically.`,
+                `${name} received head pats and is now legally unstoppable. Chin scratches pending.`,
+                `${name} has been petted and is pretending not to love it. Tail says otherwise.`,
+                `${name} says "again." The cooldown says "absolutely not, legend."`,
+            ],
+            evolve: ({ name, stageName }) => [
+                `${name} evolved into ${stageName}. The pride just got louder.`,
+                `${name} unlocked ${stageName}! Please admire the new mane responsibly.`,
+                `${name} became ${stageName}. Somewhere, a tiny laser pointer is crying happy tears.`,
+            ],
+            matchBigWin: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} deep. The other cars filed a restraining order against the cat.`,
+                `${name} has forgotten how losing works. Cats invented that attitude.`,
+                `${name} is dominating so hard the leaderboard just typed "gg" in pawprints.`,
+                `${name} has ascended. Matchmaking cannot follow. Neither can gravity, apparently.`,
+            ],
+            matchHotWin: ({ name, streak }) => [
+                `${name} is ON FIRE! Keep flammable yarn at a safe distance.`,
+                `${name} is ${Math.abs(streak)} wins deep and unbearable already.`,
+                `${name} has entered main-character mode. Side characters fleeing.`,
+                `${name} smells victory. Also tuna. Mostly victory.`,
+            ],
+            matchMultiWin: ({ name, wins }) => [
+                `${name} bagged ${wins} wins. The bag is a paper bag. They sit in it now.`,
+                `${name} chained ${wins} wins. Chain looks like a happy little pounce streak.`,
+                `${name} racked up ${wins}. Loading additional feline swagger...`,
+                `${name} secured ${wins} in a row. Ownership papers pending. Of everything.`,
+            ],
+            matchWin: ({ name }) => [
+                `${name} snagged a W. Momentum: initialized. Tail: question mark → exclamation.`,
+                `${name} found the boost button. Knocked it off the table first, then used it.`,
+                `${name} won. The universe permits this. The cat permitted it first.`,
+                `${name} added one win and approximately twelve zoomies.`,
+            ],
+            matchBigLoss: ({ name, streak }) => [
+                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a warm lap.`,
+                `${name} requested a tactical box and no follow-up questions.`,
+                `${name} insists this is an extremely long training montage in the sunbeam.`,
+                `${name} is building character. So much character. Very judgmental eyes.`,
+            ],
+            matchColdLoss: ({ name }) => [
+                `${name} is Frosty. Warm-up laps, snacks, and a tiny scarf prescribed.`,
+                `${name} filed a formal complaint against matchmaking. In meows. Loud ones.`,
+                `${name} needs encouragement, premium fuel, and perhaps a tiny sweater.`,
+                `${name} is chilly. Emotionally. Fur helps. Attitude does not.`,
+            ],
+            matchMultiLoss: ({ name, losses }) => [
+                `${name} survived ${losses} learning opportunities at cat speed.`,
+                `${name} lost ${losses}, but the pride is still emotionally attached.`,
+                `${name} calls those ${losses} losses "extensive field research."`,
+                `${name} logged ${losses} Ls into the shame ledger. Ledger was knocked off the table.`,
+            ],
+            matchLoss: ({ name }) => [
+                `${name} hit a learning opportunity at supersonic meow.`,
+                `${name} lost. Blames physics. And that one laser pointer distraction.`,
+                `${name} took an L. Happens to the best of legends.`,
+                `${name} dropped a match. Match landed softly. Then got batted under the couch.`,
+            ],
+            matchMixed: ({ name, wins, losses }) => [
+                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of naps.`,
+                `${name} went ${wins}-${losses}. Vibes: mixed treats.`,
+                `${name} had a bipartisan session. Party animals / house cats only.`,
+                `${name} banked wins AND losses. Equal-opportunity pride.`,
+            ],
+        },
+    };
+
+    function buddyStatusLines(kind, ctx = {}) {
+        const skin = currentBuddySkin();
+        const pack = BUDDY_SKIN_VOICE[skin.id];
+        const make = pack && pack[kind];
+        if (!make) return null;
+        const name = ctx.name || buddyDisplayName();
+        return make({
+            name,
+            label: skin.label,
+            streak: ctx.streak ?? 0,
+            wins: ctx.wins ?? 0,
+            losses: ctx.losses ?? 0,
+            stageName: ctx.stageName || "",
+            skin,
+        });
+    }
+
     const atlasIconHtml = () => `<img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">`;
 
     // buddyMood() keys -> sheet mood block names
@@ -323,7 +758,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1123,11 +1558,14 @@
         } else if (currentStage.level > buddyState.lastSeenStage) {
             buddyState.lastSeenStage = currentStage.level;
             saveBuddyState();
-            setBuddyStatus(pickBuddyLine([
-                `${buddyDisplayName()} evolved into ${currentStage.name}. The garage insurance premium just moved.`,
-                `${buddyDisplayName()} unlocked ${currentStage.name}! Please admire the new hardware responsibly.`,
-                `${buddyDisplayName()} evolved! Somewhere, a tiny mechanic is crying happy tears.`,
-            ], currentStage.level));
+            setBuddyStatus(pickBuddyLine(
+                buddyStatusLines("evolve", { stageName: currentStage.name }) || [
+                    `${buddyDisplayName()} evolved into ${currentStage.name}. The garage insurance premium just moved.`,
+                    `${buddyDisplayName()} unlocked ${currentStage.name}! Please admire the new hardware responsibly.`,
+                    `${buddyDisplayName()} evolved! Somewhere, a tiny mechanic is crying happy tears.`,
+                ],
+                currentStage.level
+            ));
             showBanner(`🚀 ${currentStage.name.toUpperCase()} UNLOCKED!`, currentStage.level >= 4 ? "#ffd700" : "#00bfff");
         }
     }
@@ -1234,13 +1672,13 @@
         const name = buddyDisplayName();
         let lines = null;
         if (mood.key === "sleepy") {
-            lines = [
+            lines = buddyStatusLines("sleepy", { name }) || [
                 `${name} entered sleep mode. Snoring is now available in surround sound.`,
                 `${name} parked for a power nap and left the hazards on.`,
                 `${name} is dreaming of unlimited boost and suspiciously large snacks.`,
             ];
         } else if (mood.key === "neglected") {
-            lines = [
+            lines = buddyStatusLines("neglected", { name }) || [
                 `${name} has started collecting dust as a hobby. A pet might help.`,
                 `${name} is composing a dramatic ballad titled "Where Did My Human Go?"`,
                 `${name} checked the garage door again. Still no snacks.`,
@@ -1259,8 +1697,28 @@
         ensureBuddy();
         const name = buddyDisplayName();
         const streak = result.streak ?? 0;
-        let lines;
+        let kind = "matchMixed";
+        if (result.wins > 0 && result.losses === 0) {
+            if (streak >= 8) kind = "matchBigWin";
+            else if (streak >= 3) kind = "matchHotWin";
+            else if (result.wins > 1) kind = "matchMultiWin";
+            else kind = "matchWin";
+        } else if (result.losses > 0 && result.wins === 0) {
+            if (streak <= -8) kind = "matchBigLoss";
+            else if (streak <= -3) kind = "matchColdLoss";
+            else if (result.losses > 1) kind = "matchMultiLoss";
+            else kind = "matchLoss";
+        }
 
+        let lines = buddyStatusLines(kind, {
+            name,
+            streak,
+            wins: result.wins,
+            losses: result.losses,
+        });
+
+        // Classic (and any skin without a voice pack) keeps the original garage lines.
+        if (!lines) {
         if (result.wins > 0 && result.losses === 0) {
             if (streak >= 8) {
                 lines = [
@@ -1581,6 +2039,7 @@
                 `${name} had a "yes, and also no" kind of session.`,
             ];
         }
+        }
 
         setBuddyStatus(pickBuddyLine(lines, buddyState.matchesDriven + Math.abs(streak) + result.matches));
     }
@@ -1595,12 +2054,15 @@
         }
         buddyState.lastPetAt = now;
         const name = buddyDisplayName();
-        setBuddyStatus(pickBuddyLine([
-            `${name} was just petted. Horsepower increased by emotionally significant amounts.`,
-            `${name} received head pats and is now legally unstoppable.`,
-            `${name} says "again." The cooldown says "absolutely not."`,
-            `${name} has been petted and is pretending not to love it.`,
-        ], buddyState.matchesDriven + Math.floor(now / BUDDY_PET_COOLDOWN_MS)));
+        setBuddyStatus(pickBuddyLine(
+            buddyStatusLines("pet", { name }) || [
+                `${name} was just petted. Horsepower increased by emotionally significant amounts.`,
+                `${name} received head pats and is now legally unstoppable.`,
+                `${name} says "again." The cooldown says "absolutely not."`,
+                `${name} has been petted and is pretending not to love it.`,
+            ],
+            buddyState.matchesDriven + Math.floor(now / BUDDY_PET_COOLDOWN_MS)
+        ));
         return true;
     }
 
@@ -1804,6 +2266,15 @@
             buddyState.skinId = next.id;
             saveBuddyState();
             ensureBuddySheetLoaded(next.id);
+            const switchLines = buddyStatusLines("skinSelect", {
+                name: buddyDisplayName(),
+                label: next.label,
+            }) || [
+                `${buddyDisplayName()} switched to ${next.label}. Looking sharp.`,
+                `${buddyDisplayName()} tried on ${next.label}. The vibe shifted.`,
+                `${buddyDisplayName()} is now rocking ${next.label}.`,
+            ];
+            setBuddyStatus(pickBuddyLine(switchLines, Date.now()), false);
             if (lastKnownPlayerData && buddyState.equipped) updateHUD(lastKnownPlayerData);
             renderBuddyViewAndRestoreFocus("rgBuddySkin");
         };
