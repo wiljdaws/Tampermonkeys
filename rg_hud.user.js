@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      14.2
+// @version      14.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -15,6 +15,78 @@
 
 (function () {
     'use strict';
+
+    // Debug logging lives up here so anything below can call dbg() safely,
+    // including the early localStorage try/catches.
+    const oldLog = console.log;
+    const RG_DEBUG = true;
+    const _rgLogBuf = [];
+    const _rgWarnBuf = [];
+    const _rgErrorBuf = [];
+    function dbg(msg) {
+        const line = `[RG HUD ${(performance.now() / 1000).toFixed(2)}s] ${msg}`;
+        _rgLogBuf.push(line);
+        if (_rgLogBuf.length > 300) _rgLogBuf.shift();
+        if (RG_DEBUG) oldLog.call(console, line);
+    }
+    function dbgWarn(msg) {
+        dbg("[WARN] " + msg);
+        _rgWarnBuf.push({ msg, at: Date.now() });
+        if (_rgWarnBuf.length > 5) _rgWarnBuf.shift();
+        const dot = typeof document !== "undefined" && document.getElementById("rgWarnDot");
+        if (dot) {
+            dot.style.display = "inline";
+            dot.title = _rgWarnBuf.map(w => new Date(w.at).toLocaleTimeString() + " — " + w.msg).join("\n");
+        }
+    }
+    function pushError(err, origin) {
+        try {
+            const message = (err && err.message) ? err.message : String(err);
+            const stack = (err && err.stack) ? String(err.stack).split("\n").slice(0, 6).join(" | ") : "";
+            _rgErrorBuf.push({ origin, msg: message, stack, at: Date.now() });
+            if (_rgErrorBuf.length > 20) _rgErrorBuf.shift();
+            dbg(`[ERROR:${origin}] ${message}${stack ? " :: " + stack : ""}`);
+        } catch (loggingFailed) {
+            try { oldLog.call(console, "[RG HUD] pushError failed:", loggingFailed); } catch (e) {}
+        }
+    }
+    // Wire a text input so a "can't type" bug leaves a trail in the log:
+    // did focus land, did a keystroke ever arrive, did focus get yanked away.
+    function probeInput(el, label) {
+        if (!el) { dbg(`probeInput(${label}): element missing`); return; }
+        setTimeout(() => {
+            try {
+                const active = document.activeElement;
+                const cs = window.getComputedStyle(el);
+                dbg(`${label} probe: activeId=${active?.id || "none"} focused=${active === el} disabled=${el.disabled} readOnly=${el.readOnly} display=${cs.display} visibility=${cs.visibility} pointerEvents=${cs.pointerEvents}`);
+            } catch (e) { pushError(e, `probeInput:${label}`); }
+        }, 120);
+        const onFirstInput = () => {
+            dbg(`${label} first keystroke received (len=${el.value.length})`);
+            el.removeEventListener("input", onFirstInput);
+        };
+        const onFirstBlur = () => {
+            const active = document.activeElement;
+            dbg(`${label} focus lost -> ${active?.id || active?.tagName || "unknown"}`);
+            el.removeEventListener("focusout", onFirstBlur);
+        };
+        el.addEventListener("input", onFirstInput);
+        el.addEventListener("focusout", onFirstBlur);
+    }
+
+    // Expose on the page window so DevTools "top" context can hit rgDump().
+    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).rgDump =
+        () => oldLog.call(console, _rgLogBuf.join("\n"));
+    // Catch anything a handler throws so it shows up in the debug bundle
+    // instead of vanishing silently.
+    if (typeof window !== "undefined") {
+        window.addEventListener("error", ev => {
+            pushError(ev.error || ev.message || "unknown error", "window.error");
+        });
+        window.addEventListener("unhandledrejection", ev => {
+            pushError(ev.reason || "unhandled rejection", "unhandledrejection");
+        });
+    }
 
     let hud;
 
@@ -694,10 +766,13 @@
     let settings = { ...DEFAULT_SETTINGS };
     try {
         settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("rgHudSettings") ?? "{}") };
-    } catch (e) {}
+    } catch (e) {
+        pushError(e, "loadSettings");
+    }
 
     function saveSettings() {
-        try { localStorage.setItem("rgHudSettings", JSON.stringify(settings)); } catch (e) {}
+        try { localStorage.setItem("rgHudSettings", JSON.stringify(settings)); }
+        catch (e) { pushError(e, "saveSettings"); }
     }
 
     function hexToRgba(hex, alpha) {
@@ -758,7 +833,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1038,6 +1113,7 @@
             window.open(url, "_blank", "noopener");
         };
         document.getElementById("rgRename").onclick = () => {
+            dbg(`Rename me clicked (hasPlayer=${!!lastKnownPlayerData})`);
             if (!lastKnownPlayerData) {
                 showNameModal("Play a match or log in first!", "", false, () => {});
                 hideNameModalSoon();
@@ -1070,6 +1146,7 @@
         }
         document.getElementById("rgClanBtn").onclick = () => {
             const showingClan = clanView.style.display !== "none";
+            dbg(`Clan panel ${showingClan ? "closed" : "opened"}`);
             if (showingClan) { showStatsOnly(); return; }
             showStatsOnly();
             statsView.style.display = "none";
@@ -1079,6 +1156,7 @@
 
         document.getElementById("rgForgeBtn").onclick = () => {
             const showingForge = forgeView.style.display !== "none";
+            dbg(`Forge panel ${showingForge ? "closed" : "opened"}`);
             if (showingForge) { showStatsOnly(); return; }
             showStatsOnly();
             statsView.style.display = "none";
@@ -1103,6 +1181,7 @@
         // Buddy tab, same pattern as Clan/Forge
         document.getElementById("rgBuddyBtn").onclick = () => {
             const showingBuddy = buddyView.style.display !== "none";
+            dbg(`Buddy panel ${showingBuddy ? "closed" : "opened"}`);
             if (showingBuddy) { showStatsOnly(); return; }
             showStatsOnly();
             statsView.style.display = "none";
@@ -1116,6 +1195,7 @@
         // route through showStatsOnly so opening from Forge doesn't stack views
         document.getElementById("rgSettingsBtn").onclick = () => {
             const opening = panel.style.display === "none";
+            dbg(`Settings panel ${opening ? "opened" : "closed"}`);
             showStatsOnly();
             if (opening) panel.style.display = "block";
         };
@@ -1148,16 +1228,21 @@
         setColor1.oninput = () => { settings.glowColor1 = setColor1.value; saveSettings(); applyGlowSettings(); };
         setColor2.oninput = () => { settings.glowColor2 = setColor2.value; saveSettings(); applyGlowSettings(); };
         document.getElementById("rgSetReset").onclick = () => {
+            dbg("Settings reset to defaults");
             settings = { ...DEFAULT_SETTINGS };
             saveSettings();
             syncSettingInputs();
             applyGlowSettings();
         };
 
-        document.getElementById("rgSetRecap").onclick = () => showSessionRecap();
+        document.getElementById("rgSetRecap").onclick = () => {
+            dbg("Session recap opened");
+            showSessionRecap();
+        };
 
         // trim player data, don't dump the whole login blob
         document.getElementById("rgSetCopyDebug").onclick = async () => {
+            dbg("Copy debug bundle clicked");
             try {
                 const trimmedPlayer = lastKnownPlayerData ? {
                     Id: lastKnownPlayerData.Id,
@@ -1165,10 +1250,63 @@
                     ModesGlicko: lastKnownPlayerData.ModesGlicko,
                     ModesData: lastKnownPlayerData.ModesData,
                 } : null;
+                // Trimmed so we see the important bits without dumping every
+                // per-account match-total we've ever tracked.
+                const trimmedBuddy = buddyState ? {
+                    schemaVersion: buddyState.schemaVersion,
+                    name: buddyState.name,
+                    skinId: buddyState.skinId,
+                    equipped: buddyState.equipped,
+                    matchesDriven: buddyState.matchesDriven,
+                    birthAt: buddyState.birthAt,
+                    lastPetAt: buddyState.lastPetAt,
+                    lastMatchAt: buddyState.lastMatchAt,
+                    lastMoodKey: buddyState.lastMoodKey,
+                    lastSeenStage: buddyState.lastSeenStage,
+                    lastStatus: buddyState.lastStatus,
+                    lastStatusAt: buddyState.lastStatusAt,
+                    bestRankByMode: buddyState.bestRankByMode,
+                    accountKeys: Object.keys(buddyState.accountMatchTotals || {}).length,
+                } : null;
+                // Snapshot of what the user is looking at right now — tells us
+                // whether the buddy view / a dialog was even visible when a
+                // click didn't work.
+                const ui = (() => {
+                    const q = id => document.getElementById(id);
+                    const visible = el => !!(el && el.style.display !== "none");
+                    const dlg = q("rgDialog");
+                    return {
+                        hudExists: !!q("rgHud"),
+                        buddyBtnExists: !!q("rgBuddyBtn"),
+                        buddyViewOpen: visible(q("rgBuddyView")),
+                        clanViewOpen: visible(q("rgClanView")),
+                        forgeViewOpen: visible(q("rgForgeView")),
+                        settingsOpen: visible(q("rgSettingsPanel")),
+                        dialogOpen: dlg && dlg.style.display === "flex",
+                        buddyRenameBtn: !!q("rgBuddyRename"),
+                        buddySkinSelect: !!q("rgBuddySkin"),
+                    };
+                })();
+                // Basic device fingerprint — tells us if a report is from
+                // mobile Safari vs desktop Chrome, tiny viewport, etc.
+                const device = (() => {
+                    const n = typeof navigator !== "undefined" ? navigator : {};
+                    const s = typeof screen !== "undefined" ? screen : {};
+                    return {
+                        userAgent: n.userAgent || "",
+                        platform: n.platform || "",
+                        language: n.language || "",
+                        touch: (n.maxTouchPoints ?? 0) > 0,
+                        screen: `${s.width || 0}x${s.height || 0}`,
+                        viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
+                        pixelRatio: window.devicePixelRatio || 1,
+                    };
+                })();
                 const bundle = {
                     version: SCRIPT_VERSION,
                     versionNum: SCRIPT_VERSION_NUM,
                     deviceId: getDeviceId(),
+                    device,
                     timestamp: new Date().toISOString(),
                     settings: settings,
                     player: trimmedPlayer,
@@ -1180,6 +1318,8 @@
                         _lastRecoverySignalAt,
                         _lastValidRatingsAt,
                     },
+                    buddy: trimmedBuddy,
+                    ui,
                     clan: myClan ? {
                         id: myClan.id,
                         name: myClan.name,
@@ -1193,11 +1333,13 @@
                         phase: eventPhase(),
                     } : null,
                     warnings: _rgWarnBuf,
+                    errors: _rgErrorBuf,
                     log: _rgLogBuf.slice(-100),
                 };
                 await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
                 showToast("Debug bundle copied — paste it in a bug report");
             } catch (e) {
+                pushError(e, "copyDebugBundle");
                 console.error("[RG HUD] Copy debug bundle failed:", e);
                 showToast("Copy failed — see console");
             }
@@ -1319,10 +1461,12 @@
     // +ve = win streak, -ve = loss streak. resets on account change / session end.
 
     let streakData = null;
-    try { streakData = JSON.parse(localStorage.getItem("rgHudStreak") ?? "null"); } catch (e) {}
+    try { streakData = JSON.parse(localStorage.getItem("rgHudStreak") ?? "null"); }
+    catch (e) { pushError(e, "loadStreak"); }
 
     function saveStreak() {
-        try { localStorage.setItem("rgHudStreak", JSON.stringify(streakData)); } catch (e) {}
+        try { localStorage.setItem("rgHudStreak", JSON.stringify(streakData)); }
+        catch (e) { pushError(e, "saveStreak"); }
     }
 
     function resetStreak(accountId, totalWins, totalMatches) {
@@ -1383,7 +1527,8 @@
     const SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
 
     let sessionStart = null;
-    try { sessionStart = JSON.parse(localStorage.getItem("rgHudSessionStart") ?? "null"); } catch (e) {}
+    try { sessionStart = JSON.parse(localStorage.getItem("rgHudSessionStart") ?? "null"); }
+    catch (e) { pushError(e, "loadSessionStart"); }
 
     function captureSessionStart(data) {
         const now = Date.now();
@@ -1393,7 +1538,8 @@
         if (sameAccount && !idledOut) {
             // same session, bump timestamp
             sessionStart.lastSeen = now;
-            try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
+            try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); }
+            catch (e) { pushError(e, "saveSessionStart"); }
             return;
         }
 
@@ -1455,10 +1601,12 @@
 
     let buddyState = null;
     let buddyRefreshTimer = null;
-    try { buddyState = JSON.parse(localStorage.getItem(BUDDY_STORAGE_KEY) ?? "null"); } catch (e) {}
+    try { buddyState = JSON.parse(localStorage.getItem(BUDDY_STORAGE_KEY) ?? "null"); }
+    catch (e) { pushError(e, "loadBuddyState"); }
 
     function saveBuddyState() {
-        try { localStorage.setItem(BUDDY_STORAGE_KEY, JSON.stringify(buddyState)); } catch (e) {}
+        try { localStorage.setItem(BUDDY_STORAGE_KEY, JSON.stringify(buddyState)); }
+        catch (e) { pushError(e, "saveBuddyState"); }
     }
 
     function newBuddyState() {
@@ -2213,7 +2361,8 @@
         // bounce anim, cooldown-gated
         document.getElementById("rgBuddyPet").onclick = e => {
             const restoreFocus = e.detail === 0 ? "rgBuddyPet" : null;
-            if (!petBuddy()) return;
+            dbg("Buddy pet clicked");
+            if (!petBuddy()) { dbg("Buddy pet skipped (cooldown)"); return; }
             const sprite = document.getElementById("rgBuddySprite");
             const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
             if (sprite && !reduceMotion) {
@@ -2228,20 +2377,29 @@
         // empty name -> "Unnamed"
         document.getElementById("rgBuddyRename").onclick = async e => {
             const restoreFocus = e.detail === 0 ? "rgBuddyRename" : null;
-            const newName = await showDialog({
-                message: "Name your Buddy",
-                withInput: true,
-                inputPlaceholder: buddyDisplayName(),
-                okLabel: "Save",
-                cancelLabel: "Cancel",
-            });
+            dbg("Buddy rename opened");
+            let newName;
+            try {
+                newName = await showDialog({
+                    message: "Name your Buddy",
+                    withInput: true,
+                    inputPlaceholder: buddyDisplayName(),
+                    okLabel: "Save",
+                    cancelLabel: "Cancel",
+                });
+            } catch (err) {
+                pushError(err, "buddyRenameDialog");
+                return;
+            }
             if (newName === null) {
+                dbg("Buddy rename cancelled");
                 if (restoreFocus) requestAnimationFrame(() => {
                     document.getElementById(restoreFocus)?.focus({ preventScroll: true });
                 });
                 return;
             }
             const clean = String(newName).slice(0, 20).trim();
+            dbg(`Buddy rename saved: rawLen=${String(newName).length} cleanLen=${clean.length}`);
             buddyState.name = clean;
             saveBuddyState();
             renderBuddyViewAndRestoreFocus(restoreFocus);
@@ -2251,6 +2409,7 @@
         document.getElementById("rgBuddyEquip").onclick = e => {
             const restoreFocus = e.detail === 0 ? "rgBuddyEquip" : null;
             buddyState.equipped = !buddyState.equipped;
+            dbg(`Buddy equip toggled -> ${buddyState.equipped}`);
             saveBuddyState();
             // repaint so the flair reflects the toggle
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
@@ -2263,6 +2422,7 @@
         document.getElementById("rgBuddySkin").onchange = e => {
             const next = getBuddySkin(e.target.value);
             if (next.id === buddyState.skinId) return;
+            dbg(`Buddy skin changed: ${buddyState.skinId} -> ${next.id}`);
             buddyState.skinId = next.id;
             saveBuddyState();
             ensureBuddySheetLoaded(next.id);
@@ -2765,6 +2925,7 @@
         nameModalResolve = isRealPrompt ? resolve : null;
         if (isRealPrompt) {
             setTimeout(() => input.focus(), 50);
+            probeInput(input, "rgNameInput");
         }
     }
 
@@ -3368,7 +3529,8 @@
     // doesn't wipe the roster before the user opens Forge, 13.4 shipped that
     // bug and Imposter always showed empty state.
     let lastGamePlayers = [];   // frozen roster of the last match: [{name, uid}]
-    try { lastGamePlayers = JSON.parse(localStorage.getItem("rgHudLastRoster") ?? "[]"); } catch (e) {}
+    try { lastGamePlayers = JSON.parse(localStorage.getItem("rgHudLastRoster") ?? "[]"); }
+    catch (e) { pushError(e, "loadLastRoster"); }
     let _liveRoster = [];       // in-progress match: [{name, uid}]
 
     // "are we actually in a real match right now". set on the first init line
@@ -3391,43 +3553,11 @@
     let _matchEndArmedAt = 0;
     let _matchEndWatchdogTimer = null;
 
-    // ---------- Debug logging ----------
-    // dbg() routes through the ORIGINAL console.log so it never re-enters our
-    // own hook. 300-line ring buffer always kept, call rgDump() for a
-    // timestamped ATLAS-only timeline for bug reports.
-    const oldLog = console.log;
-    const RG_DEBUG = true; // flip before sharing builds
-    const _rgLogBuf = [];
-    function dbg(msg) {
-        const line = `[RG HUD ${(performance.now() / 1000).toFixed(2)}s] ${msg}`;
-        _rgLogBuf.push(line);
-        if (_rgLogBuf.length > 300) _rgLogBuf.shift();
-        if (RG_DEBUG) oldLog.call(console, line);
-    }
-    // v13.6: dbg + yellow warn dot in the title bar. red = hard failure,
-    // yellow = "couldn't parse this, might be a game update". tooltip shows
-    // the last warning so no DevTools needed.
-    const _rgWarnBuf = [];
-    function dbgWarn(msg) {
-        dbg("[WARN] " + msg);
-        _rgWarnBuf.push({ msg, at: Date.now() });
-        if (_rgWarnBuf.length > 5) _rgWarnBuf.shift();
-        const dot = typeof document !== "undefined" && document.getElementById("rgWarnDot");
-        if (dot) {
-            dot.style.display = "inline";
-            dot.title = _rgWarnBuf.map(w => new Date(w.at).toLocaleTimeString() + " — " + w.msg).join("\n");
-        }
-    }
-    // expose on the real page window (not the sandbox) so DevTools "top"
-    // context can call rgDump(). 13.5 shipped without unsafeWindow and
-    // rgDump appeared undefined in some Tampermonkey/browser combos.
-    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).rgDump =
-        () => oldLog.call(console, _rgLogBuf.join("\n"));
-
     function freezeRoster() {
         if (_liveRoster.length) {
             lastGamePlayers = _liveRoster.slice();
-            try { localStorage.setItem("rgHudLastRoster", JSON.stringify(lastGamePlayers)); } catch (e) {}
+            try { localStorage.setItem("rgHudLastRoster", JSON.stringify(lastGamePlayers)); }
+            catch (e) { pushError(e, "saveLastRoster"); }
             dbg(`Imposter roster captured: ${lastGamePlayers.length} player(s): ${lastGamePlayers.map(p => p.name).join(", ")}`);
             // repaint Forge live if it's open. can't focus-steal here, you
             // can't be typing in Forge while in a match.
@@ -4529,10 +4659,12 @@
                 createdAt: new Date().toISOString(),
             };
             const ref = await fb.addDoc(fb.collection(fb.db, "clans"), clan);
+            dbg(`Clan created: name="${name}" tag="${tag || ""}" id=${ref.id}`);
             myClan = { id: ref.id, ...clan };
             await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
+            pushError(e, "createClan");
             console.error("[RG HUD] Create clan failed:", e);
             showToast("Couldn't create clan (see console).");
         }
@@ -4564,9 +4696,11 @@
             }
             const joinRequests = [...(clan.joinRequests ?? []), { userId: uid, name: myName() }];
             await fb.setDoc(fb.doc(fb.db, "clans", clanId), { joinRequests }, { merge: true });
+            dbg(`Join request sent to clan ${clanId}`);
             showToast("Join request sent!");
             renderClanView();
         } catch (e) {
+            pushError(e, "requestJoin");
             console.error("[RG HUD] Request join failed:", e);
             showToast("Couldn't send join request — see console.");
         }
@@ -4597,11 +4731,13 @@
             }
 
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { joinRequests, members }, { merge: true });
+            dbg(`Join request ${approve ? "approved" : "denied"} for ${userId}`);
             myClan.joinRequests = joinRequests;
             myClan.members = members;
             await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
+            pushError(e, "approveRequest");
             console.error("[RG HUD] Approve request failed:", e);
             showToast(approve ? "Couldn't approve — see console." : "Couldn't deny — see console.");
         }
@@ -4627,6 +4763,7 @@
 
             const members = (myClan.members ?? []).filter(m => m.userId !== userId);
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
+            dbg(`Clan kick: ${userId} removed, msgLen=${(message ?? "").length}`);
             myClan.members = members;
 
             // one-time notice picked up + cleared by the kicked player's HUD
@@ -4641,6 +4778,7 @@
             await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
+            pushError(e, "kickMember");
             console.error("[RG HUD] Kick failed:", e);
             showToast("Couldn't kick member (see console).");
         }
@@ -4715,10 +4853,12 @@
                 m.userId === userId ? { ...m, role: newRole } : m
             );
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
+            dbg(`Clan role change: ${userId} ${target.role} -> ${newRole}`);
             myClan.members = members;
             await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
+            pushError(e, "setMemberRole");
             console.error("[RG HUD] Set role failed:", e);
             showToast("Couldn't change role (see console).");
         }
@@ -4743,12 +4883,14 @@
 
         try {
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { name: newName, tag: newTag }, { merge: true });
+            dbg(`Clan edited: name="${newName}" tag="${newTag}"`);
             myClan.name = newName;
             myClan.tag = newTag;
             await refreshDirectory(fb);
             showToast("Clan updated! Tag refreshes on members' next match.");
             renderClanView();
         } catch (e) {
+            pushError(e, "editClan");
             console.error("[RG HUD] Edit clan failed:", e);
             showToast("Couldn't update clan (see console).");
         }
@@ -4771,6 +4913,8 @@
                 </div>
             </div>`;
 
+        probeInput(document.getElementById("rgEditName"), "rgEditName");
+        probeInput(document.getElementById("rgEditTag"), "rgEditTag");
         const errEl = document.getElementById("rgEditErr");
         document.getElementById("rgEditGo").onclick = () => {
             const name = document.getElementById("rgEditName").value.trim();
@@ -4806,11 +4950,13 @@
                 return m;
             });
             await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members, leaderId: userId }, { merge: true });
+            dbg(`Clan leadership transferred to ${userId}`);
             myClan.members = members;
             myClan.leaderId = userId;
             await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
+            pushError(e, "transferLeadership");
             console.error("[RG HUD] Transfer leadership failed:", e);
             showToast("Couldn't transfer leadership (see console).");
         }
@@ -4968,9 +5114,11 @@
             }
             if (isLeader) {
                 // solo leader = disband
+                dbg(`Clan disbanded (solo leader): ${myClan.id}`);
                 detachClanListener();
                 await fb.deleteDoc(fb.doc(fb.db, "clans", myClan.id));
             } else {
+                dbg(`Clan left: ${myClan.id}`);
                 const members = (myClan.members ?? []).filter(m => m.userId !== uid);
                 await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
             }
@@ -4978,6 +5126,7 @@
             await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
+            pushError(e, "leaveClan");
             console.error("[RG HUD] Leave clan failed:", e);
             // v13.6: local state is already partially wiped above, surface it
             showToast("Couldn't leave clan — refresh the page to retry.");
@@ -5085,6 +5234,8 @@
         const nameEl = document.getElementById("rgClanName");
         const tagEl = document.getElementById("rgClanTag");
         const errEl = document.getElementById("rgClanErr");
+        probeInput(nameEl, "rgClanName");
+        probeInput(tagEl, "rgClanTag");
         [nameEl, tagEl].forEach(el => {
             el.addEventListener("keydown", e => e.stopPropagation(), true);
         });
@@ -5306,6 +5457,7 @@
             input.placeholder = inputPlaceholder;
             dlg.style.display = "flex";
             setTimeout(() => (withInput ? input : okBtn).focus(), 50);
+            if (withInput) probeInput(input, "rgDialogInput");
 
             const close = result => {
                 dlg.style.display = "none";
