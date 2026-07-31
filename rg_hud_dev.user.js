@@ -8,8 +8,8 @@
 // @match        https://rocketgoal.io/*
 // @grant        none
 // @run-at       document-start
-// @updateURL    https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud_dev.user.js
-// @downloadURL  https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud_dev.user.js
+// @updateURL    https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/dev/rg_hud_dev.user.js
+// @downloadURL  https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/dev/rg_hud_dev.user.js
 // @supportURL   https://github.com/wiljdaws/Tampermonkeys/issues
 // ==/UserScript==
 
