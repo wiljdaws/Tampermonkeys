@@ -3733,15 +3733,25 @@
             if (!bucket.some(p => p.uid === entry.uid)) bucket.push(entry);
             return;
         }
-        if (!isOpponent) return;
+        if (!isOpponent) {
+            dbg(`popup skip: "${entry.name}" is a teammate (${entry.team})`);
+            return;
+        }
         if (_shownPopupsThisMatch.has(entry.uid)) return;
         _shownPopupsThisMatch.add(entry.uid);
         const cache = await getLeaderboardCache();
-        if (!cache) return;
+        if (!cache) { dbg(`popup skip: no leaderboard cache available`); return; }
         const hit = lookupInCache(cache, entry.uid, _matchFormat);
-        if (!hit) return;
+        if (!hit) {
+            dbg(`popup skip: opponent "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${_matchFormat} top ${RG_LB_TOP_N}`);
+            return;
+        }
         const cfg = await getRemoteConfig();
-        if (hit.rank > (cfg.minRankToShow || 100)) return;
+        if (hit.rank > (cfg.minRankToShow || 100)) {
+            dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
+            return;
+        }
+        dbg(`popup fire: #${hit.rank} "${entry.name}" in ${_matchFormat}`);
         let teammate = null;
         for (const p of _liveRoster) {
             if (p.uid === lastKnownPlayerData?.Id) continue;
