@@ -7,8 +7,9 @@ None of it is on fire.
 
 1. [Split the code into smaller files](#1-split-the-code-into-smaller-files)
 2. [Firestore cleanup after Clan Clash ends](#2-firestore-cleanup-after-clan-clash-ends)
-3. [Donation unlocks](#3-donation-unlocks)
-4. [Earn tokens by playing](#4-earn-tokens-by-playing)
+3. [Keep MMR members earned when they leave](#3-keep-mmr-members-earned-when-they-leave)
+4. [Donation unlocks](#4-donation-unlocks)
+5. [Earn tokens by playing](#5-earn-tokens-by-playing)
 
 ---
 
@@ -221,7 +222,82 @@ docs a day at 50 users. Basically free.
 
 ---
 
-## 3. Donation unlocks
+## 3. Keep MMR members earned when they leave
+
+Right now, when someone leaves a clan or gets kicked, all the MMR they
+earned while in the clan just vanishes from `totalMMR`. Feels wrong — a
+member can grind 500 MMR for the clan, catch a ban or a beef, and the
+clan is worse off than before they joined. That shouldn't be how it works.
+
+Fix: bank the gains. When someone leaves, whatever they earned while
+they were in the clan sticks around in a retained bucket. They walk, the
+number stays.
+
+### Two new fields on the clan doc
+
+- `retainedMMR` at the top level. Running total of banked gains from
+  every past member. Starts at 0.
+- `joinMMR` on each member entry. Stamped when they join, never touched
+  again during their tenure.
+
+### What happens on kick or leave
+
+```js
+const contrib = Math.max(0, member.mmr - (member.joinMMR ?? member.mmr));
+clan.retainedMMR += contrib;
+// then strip them from members like today
+```
+
+Positive-only. If they dropped MMR while in the clan, `retainedMMR` is
+unchanged. Kicking a member who's slumping doesn't help or hurt the
+number, so nobody gets kicked just to game it.
+
+### Display
+
+Wherever `totalMMR` shows up in the HUD or on the companion site, show
+`totalMMR + retainedMMR` as one combined number. No new UI, no visual
+noise. Just a bigger, more honest total.
+
+### Rejoins
+
+Fresh start every time. Bob leaves at 1500 (banks 500), rejoins a month
+later at 1300 — we stamp him with `joinMMR = 1300` and go. The 500 he
+banked from his first stint stays banked forever. If he grinds up to
+1600 and leaves again, we bank another 300. Simple. Every stint is its
+own thing.
+
+### Backfill for members already in clans
+
+On the next `updateMyClanMMR` sync, if a member has no `joinMMR`, stamp
+it with their current MMR. They contribute zero retained if they leave
+right away, but every future gain counts. Nobody loses anything they've
+already earned; they just start being properly tracked from now on.
+
+### Cost
+
+Zero new reads or writes. Both fields piggyback on the existing per-match
+clan sync. Just extra bytes in a doc we're already writing.
+
+### Best done alongside Phase B of section 2
+
+Section 2's Phase B already reshapes `members` from an array to a map.
+Adding `joinMMR` at the same time means one migration pass over member
+entries, not two. Have the migration script stamp
+`joinMMR = mmr` on every existing member as it flips the shape. Clan doc
+gets `retainedMMR: 0` at the same time.
+
+### Check when it ships
+
+- [ ] Kick and leave both bank positive contribs into `retainedMMR`.
+- [ ] Members whose MMR dropped contribute zero on kick, never negative.
+- [ ] Rejoin resets `joinMMR` cleanly, doesn't touch what's already banked.
+- [ ] `totalMMR + retainedMMR` shows everywhere `totalMMR` used to.
+- [ ] Legacy members get backfilled on next sync without breaking anything.
+- [ ] Companion site's `js/scoring.js` adds `retainedMMR` to its sum too.
+
+---
+
+## 4. Donation unlocks
 
 ### Why bother
 
@@ -305,7 +381,7 @@ Node. Run by hand until it's worth automating.
 
 ---
 
-## 4. Earn tokens by playing
+## 5. Earn tokens by playing
 
 **Not until:**
 

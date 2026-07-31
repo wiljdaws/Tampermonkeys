@@ -3398,6 +3398,8 @@
     const RG_LB_CONFIG_KEY = "rgHudRemoteConfig_v1";
     const RG_LB_CONFIG_TTL_MS = 60 * 60 * 1000;
     const RG_LB_MODES = ["Competitive1v1", "Competitive2v2", "Competitive3v3"];
+    // leaderboard docs store playlist as "1v1"/"2v2"/"3v3", not the mode name
+    const RG_LB_MODE_TO_PLAYLIST = { Competitive1v1: "1v1", Competitive2v2: "2v2", Competitive3v3: "3v3" };
     const RG_LB_TOP_N = 100;
     const RG_LB_DEFAULT_CONFIG = {
         popupDurationMs: 6000,
@@ -3408,6 +3410,9 @@
 
     let _remoteConfigMemo = null;
     let _lbCacheMemo = null;
+    let _lbCacheInFlight = null;      // shared promise so concurrent callers don't re-fetch
+    let _lbCacheFailUntil = 0;        // cooldown after a failed fetch to avoid hammering
+    const RG_LB_FAIL_COOLDOWN_MS = 60 * 1000;
     let _matchFormat = null;
     let _matchPlayerCount = 0;
     let _selfTeam = null;
@@ -3456,7 +3461,7 @@
             for (const mode of RG_LB_MODES) {
                 const q = fb.query(
                     fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                    fb.where("playlist", "==", mode),
+                    fb.where("playlist", "==", RG_LB_MODE_TO_PLAYLIST[mode]),
                     fb.orderBy("mmr", "desc"),
                     fb.limit(RG_LB_TOP_N),
                 );
@@ -3489,13 +3494,26 @@
                 return cached;
             }
         } catch (e) {}
-        const fresh = await fetchLeaderboardCache();
-        if (fresh) {
-            _lbCacheMemo = fresh;
-            try { localStorage.setItem(RG_LB_CACHE_KEY, JSON.stringify(fresh)); } catch (e) {}
-            return fresh;
-        }
-        return null;
+        // back off if we just failed — usually a missing index or perms issue,
+        // no point hammering the same broken query for every roster entry.
+        if (Date.now() < _lbCacheFailUntil) return null;
+        // share one in-flight fetch so 4 roster entries don't spawn 4 requests
+        if (_lbCacheInFlight) return _lbCacheInFlight;
+        _lbCacheInFlight = (async () => {
+            try {
+                const fresh = await fetchLeaderboardCache();
+                if (fresh) {
+                    _lbCacheMemo = fresh;
+                    try { localStorage.setItem(RG_LB_CACHE_KEY, JSON.stringify(fresh)); } catch (e) {}
+                    return fresh;
+                }
+                _lbCacheFailUntil = Date.now() + RG_LB_FAIL_COOLDOWN_MS;
+                return null;
+            } finally {
+                _lbCacheInFlight = null;
+            }
+        })();
+        return _lbCacheInFlight;
     }
 
     function lookupInCache(cache, uid, mode) {
