@@ -3739,8 +3739,9 @@
             dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
             return;
         }
-        dbg(`popup fire: #${hit.rank} ${isTeammate ? "teammate" : "opponent"} "${entry.name}" in ${_matchFormat}`);
-        showLbOpponentPopup({ rank: hit.rank, name: entry.name, mode: _matchFormat, isTeammate });
+        const displayName = hit.name || entry.name;
+        dbg(`popup fire: #${hit.rank} ${isTeammate ? "teammate" : "opponent"} "${displayName}" in ${_matchFormat}`);
+        showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: _matchFormat, isTeammate });
     }
 
     // for 3/4-player matches we defer to match end when ratings deltas
@@ -3764,7 +3765,7 @@
                     const hit = lookupInCache(cache, p.uid, mode);
                     if (!hit) continue;
                     if (hit.rank > (cfg.minRankToShow || 100)) continue;
-                    showLbOpponentPopup({ rank: hit.rank, name: p.name, mode, isTeammate });
+                    showLbOpponentPopup({ rank: hit.rank, name: hit.name || p.name, mode, isTeammate });
                 }
             };
             fire(_deferredMatch.opponents, false);
