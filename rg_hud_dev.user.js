@@ -3641,7 +3641,7 @@
         document.head.appendChild(style);
     }
 
-    async function showLbOpponentPopup({ rank, name, mode, teammate }) {
+    async function showLbOpponentPopup({ rank, name, mode, isTeammate }) {
         try {
             ensureLbPopupStyles();
             const cfg = await getRemoteConfig();
@@ -3656,18 +3656,9 @@
             const el = document.createElement("div");
             el.className = "rg-lb-popup";
             el.style.setProperty("--tier-color", tierColorForRank(rank));
-            let teammateHtml = "";
-            if (teammate) {
-                const tColor = teammate.rank ? tierColorForRank(teammate.rank) : "#9aa5ad";
-                teammateHtml = `
-                    <div class="rg-lb-teammate">
-                        <span class="rg-lb-lbl">Teammate</span>
-                        <span class="rg-lb-tname">${escapeHtml(teammate.name)}</span>
-                        <span class="rg-lb-trank" style="color:${tColor};">${teammate.rank ? "#" + teammate.rank : "unranked"}</span>
-                    </div>`;
-            }
+            const headerLabel = isTeammate ? "LEADERBOARD TEAMMATE" : "LEADERBOARD OPPONENT";
             el.innerHTML = `
-                <div class="rg-lb-header"><span class="rg-lb-dot"></span>LEADERBOARD OPPONENT</div>
+                <div class="rg-lb-header"><span class="rg-lb-dot"></span>${headerLabel}</div>
                 <div class="rg-lb-body">
                     <div class="rg-lb-rank">
                         <div class="rg-lb-hash">RANK</div>
@@ -3678,7 +3669,6 @@
                         <div class="rg-lb-mode">${modeLabel(mode)}</div>
                     </div>
                 </div>
-                ${teammateHtml}
             `;
             stack.appendChild(el);
             requestAnimationFrame(() => el.classList.add("show"));
@@ -3726,15 +3716,12 @@
     }
 
     async function checkOneOpponent(entry) {
-        const isOpponent = entry.team && entry.team !== _selfTeam;
+        if (entry.uid === lastKnownPlayerData?.Id) return; // never popup ourselves
+        const isTeammate = entry.team && _selfTeam && entry.team === _selfTeam;
         if (!_matchFormat) {
             if (!_deferredMatch) _deferredMatch = { opponents: [], teammates: [] };
-            const bucket = isOpponent ? _deferredMatch.opponents : _deferredMatch.teammates;
+            const bucket = isTeammate ? _deferredMatch.teammates : _deferredMatch.opponents;
             if (!bucket.some(p => p.uid === entry.uid)) bucket.push(entry);
-            return;
-        }
-        if (!isOpponent) {
-            dbg(`popup skip: "${entry.name}" is a teammate (${entry.team})`);
             return;
         }
         if (_shownPopupsThisMatch.has(entry.uid)) return;
@@ -3743,7 +3730,8 @@
         if (!cache) { dbg(`popup skip: no leaderboard cache available`); return; }
         const hit = lookupInCache(cache, entry.uid, _matchFormat);
         if (!hit) {
-            dbg(`popup skip: opponent "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${_matchFormat} top ${RG_LB_TOP_N}`);
+            const role = isTeammate ? "teammate" : "opponent";
+            dbg(`popup skip: ${role} "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${_matchFormat} top ${RG_LB_TOP_N}`);
             return;
         }
         const cfg = await getRemoteConfig();
@@ -3751,17 +3739,8 @@
             dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
             return;
         }
-        dbg(`popup fire: #${hit.rank} "${entry.name}" in ${_matchFormat}`);
-        let teammate = null;
-        for (const p of _liveRoster) {
-            if (p.uid === lastKnownPlayerData?.Id) continue;
-            if (p.team && p.team === _selfTeam) {
-                const tHit = lookupInCache(cache, p.uid, _matchFormat);
-                teammate = { name: p.name, rank: tHit ? tHit.rank : null };
-                break;
-            }
-        }
-        showLbOpponentPopup({ rank: hit.rank, name: entry.name, mode: _matchFormat, teammate });
+        dbg(`popup fire: #${hit.rank} ${isTeammate ? "teammate" : "opponent"} "${entry.name}" in ${_matchFormat}`);
+        showLbOpponentPopup({ rank: hit.rank, name: entry.name, mode: _matchFormat, isTeammate });
     }
 
     // for 3/4-player matches we defer to match end when ratings deltas
@@ -3780,20 +3759,16 @@
             const cache = await getLeaderboardCache();
             if (!cache) return;
             const cfg = await getRemoteConfig();
-            const selfUid = lastKnownPlayerData?.Id;
-            let teammate = null;
-            for (const p of _deferredMatch.teammates) {
-                if (p.uid === selfUid) continue;
-                const tHit = lookupInCache(cache, p.uid, mode);
-                teammate = { name: p.name, rank: tHit ? tHit.rank : null };
-                break;
-            }
-            for (const opp of _deferredMatch.opponents) {
-                const hit = lookupInCache(cache, opp.uid, mode);
-                if (!hit) continue;
-                if (hit.rank > (cfg.minRankToShow || 100)) continue;
-                showLbOpponentPopup({ rank: hit.rank, name: opp.name, mode, teammate });
-            }
+            const fire = (list, isTeammate) => {
+                for (const p of list) {
+                    const hit = lookupInCache(cache, p.uid, mode);
+                    if (!hit) continue;
+                    if (hit.rank > (cfg.minRankToShow || 100)) continue;
+                    showLbOpponentPopup({ rank: hit.rank, name: p.name, mode, isTeammate });
+                }
+            };
+            fire(_deferredMatch.opponents, false);
+            fire(_deferredMatch.teammates, true);
         } catch (e) {
             dbg("firePostmortemPopupsIfDeferred threw: " + (e && e.message ? e.message : e));
         }
