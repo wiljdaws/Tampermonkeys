@@ -1811,7 +1811,7 @@
     const RG_LB_DEFAULT_CONFIG = {
         popupDurationMs: 6000,
         popupEnabled: true,
-        cacheRefreshHours: 24,
+        cacheRefreshHours: 3,
         minRankToShow: 100,
     };
 
@@ -3121,10 +3121,19 @@
                     if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
                 },
                 (err) => {
-                    // v13.6: without onError, revoked perms froze the UI silently
-                    console.warn("[RG HUD] Clan listener error:", err);
-                    showError("Clan updates disconnected — reopen the Clan tab to refresh");
+                    // v13.6: without onError, revoked perms froze the UI silently.
+                    // 14.5: auto-reconnect. background-tab throttling was killing
+                    // the listener with no way to know except a manual refresh, so
+                    // members and event score would sit stale for 50+ min at a time.
+                    dbg("clan listener error, scheduling reconnect: " + (err && err.message ? err.message : err));
+                    console.warn("[RG HUD] Clan listener error, will retry in 30s:", err);
                     detachClanListener();
+                    setTimeout(() => {
+                        if (myClan) {
+                            dbg("clan listener auto-reconnecting");
+                            attachClanListener();
+                        }
+                    }, 30 * 1000);
                 }
             );
         } catch (e) {
