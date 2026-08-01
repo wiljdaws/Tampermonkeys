@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.8-dev
+// @version      14.9-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -158,7 +158,13 @@
         catch (e) { pushError(e, "saveSettings"); }
     }
 
+    const PING_PROBE_INTERVAL_MS = 3000;
+    const PING_PROBE_TIMEOUT_MS = 2500;
     let pingTrackerIntervalId = null;
+    let pingTrackerProbeInFlight = false;
+    let pingTrackerProbeGeneration = 0;
+    let pingTrackerSamples = [];
+    let pingTrackerLastRtt = null;
     function browserConnection() {
         if (typeof navigator === "undefined") return null;
         return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
@@ -173,57 +179,115 @@
         tracker.style.cssText = [
             "display:none",
             "position:fixed",
-            "top:14px",
-            "left:50%",
-            "transform:translateX(-50%)",
+            "top:12px",
+            "left:12px",
             "z-index:999999997",
             "pointer-events:none",
             "user-select:none",
-            "padding:3px 8px",
-            "border:1px solid rgba(255,255,255,.10)",
-            "border-radius:999px",
-            "background:rgba(5,10,15,.28)",
-            "box-shadow:0 2px 10px rgba(0,0,0,.20)",
+            "align-items:center",
+            "gap:5px",
+            "padding:0",
+            "border:0",
+            "background:transparent",
             "color:#cbd5e1",
-            "font:600 12px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",
+            "font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",
             "font-variant-numeric:tabular-nums",
-            "letter-spacing:.02em",
-            "opacity:.82",
+            "letter-spacing:.04em",
+            "opacity:.78",
+            "text-shadow:0 1px 2px #000,0 0 5px rgba(0,0,0,.85)",
         ].join(";");
+        tracker.innerHTML = [
+            '<span data-rg-rtt-dot style="width:5px;height:5px;border-radius:50%;background:#94a3b8;box-shadow:0 0 4px currentColor;"></span>',
+            '<span data-rg-rtt-value>NET —</span>',
+        ].join("");
         document.body.appendChild(tracker);
         return tracker;
     }
 
-    function refreshPingTracker() {
+    function renderPingTracker(rtt = pingTrackerLastRtt, source = "active site probe") {
         const tracker = ensurePingTracker();
         if (!tracker) return;
         if (!settings.pingTrackerEnabled || !_inMatch) {
             tracker.style.display = "none";
             return;
         }
-        const connection = browserConnection();
-        const rtt = Number(connection?.rtt);
-        tracker.style.display = "block";
+        const dot = tracker.querySelector("[data-rg-rtt-dot]");
+        const value = tracker.querySelector("[data-rg-rtt-value]");
+        tracker.style.display = "flex";
         if (!Number.isFinite(rtt) || rtt <= 0) {
-            tracker.textContent = "RTT unavailable";
+            if (value) value.textContent = "NET —";
+            if (dot) dot.style.background = "#94a3b8";
             tracker.style.color = "#cbd5e1";
-            tracker.title = "Browser network RTT estimate is unavailable";
+            tracker.title = "Network RTT estimate is unavailable";
             return;
         }
         const rounded = Math.round(rtt);
-        tracker.textContent = `RTT ≈ ${rounded} ms`;
-        tracker.style.color = rounded <= 60 ? "#4ade80" : rounded <= 120 ? "#facc15" : "#fb7185";
-        tracker.title = `Browser network RTT estimate${connection?.effectiveType ? ` (${connection.effectiveType})` : ""}; not exact Photon server ping`;
+        const color = rounded <= 60 ? "#4ade80" : rounded <= 120 ? "#facc15" : "#fb7185";
+        if (value) value.textContent = `${rounded} ms`;
+        if (dot) dot.style.background = color;
+        tracker.style.color = color;
+        tracker.title = `${source}; not exact Photon server ping`;
+    }
+
+    function medianPingSample(samples) {
+        const sorted = samples.slice().sort((a, b) => a - b);
+        return sorted[Math.floor(sorted.length / 2)] ?? null;
+    }
+
+    async function probePingTracker(generation) {
+        if (pingTrackerProbeInFlight || generation !== pingTrackerProbeGeneration
+            || !settings.pingTrackerEnabled || !_inMatch) return;
+        pingTrackerProbeInFlight = true;
+        let timeoutId = null;
+        try {
+            const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+            if (controller) {
+                timeoutId = setTimeout(() => controller.abort(), PING_PROBE_TIMEOUT_MS);
+            }
+            const startedAt = performance.now();
+            const target = new URL("/favicon.ico", location.origin);
+            target.searchParams.set("atlas_rtt", Date.now().toString(36));
+            await fetch(target.href, {
+                method: "HEAD",
+                cache: "no-store",
+                credentials: "omit",
+                signal: controller?.signal,
+            });
+            if (generation !== pingTrackerProbeGeneration
+                || !settings.pingTrackerEnabled || !_inMatch) return;
+            const sample = Math.max(1, Math.round(performance.now() - startedAt));
+            pingTrackerSamples.push(sample);
+            if (pingTrackerSamples.length > 3) pingTrackerSamples.shift();
+            pingTrackerLastRtt = medianPingSample(pingTrackerSamples);
+            renderPingTracker(pingTrackerLastRtt, "Active RTT estimate to rocketgoal.io");
+        } catch (e) {
+            if (generation !== pingTrackerProbeGeneration
+                || !settings.pingTrackerEnabled || !_inMatch) return;
+            const fallback = Number(browserConnection()?.rtt);
+            pingTrackerLastRtt = Number.isFinite(fallback) && fallback > 0 ? fallback : null;
+            renderPingTracker(pingTrackerLastRtt, "Browser connection RTT fallback");
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+            pingTrackerProbeInFlight = false;
+        }
     }
 
     function syncPingTracker() {
-        refreshPingTracker();
+        pingTrackerProbeGeneration++;
+        pingTrackerSamples = [];
+        pingTrackerLastRtt = null;
+        renderPingTracker();
         if (pingTrackerIntervalId) {
             clearInterval(pingTrackerIntervalId);
             pingTrackerIntervalId = null;
         }
         if (settings.pingTrackerEnabled && _inMatch) {
-            pingTrackerIntervalId = setInterval(refreshPingTracker, 2000);
+            const generation = pingTrackerProbeGeneration;
+            probePingTracker(generation);
+            pingTrackerIntervalId = setInterval(
+                () => probePingTracker(generation),
+                PING_PROBE_INTERVAL_MS,
+            );
         }
     }
 
@@ -469,7 +533,7 @@
                     <div id="rgContent">Waiting for data...</div>
                     <div id="rgSettingsPanel" style="display:none;border-top:1px solid #00bfff44;margin-top:8px;padding-top:6px;">
                         <div class="rgSettingRow"><span title="Bring back the original 🚀 Rocket Goal HUD title">OG Title</span><input type="checkbox" id="rgSetOgTitle"></div>
-                        <div class="rgSettingRow"><span title="Chrome's rounded network RTT estimate; not exact Photon server ping">RTT estimate</span><input type="checkbox" id="rgSetPingTracker"></div>
+                        <div class="rgSettingRow"><span title="Active RTT estimate to rocketgoal.io every 3 seconds; not exact Photon server ping">Network RTT</span><input type="checkbox" id="rgSetPingTracker"></div>
                         <div class="rgSettingRow"><span>Glow</span><input type="checkbox" id="rgSetGlow"></div>
                         <div class="rgSettingRow"><span>Speed</span><input type="range" id="rgSetSpeed" min="1" max="10" step="0.5"></div>
                         <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
@@ -730,6 +794,7 @@
                         _lastInitLineAt,
                         _lastRecoverySignalAt,
                         _lastValidRatingsAt,
+                        networkRttEstimateMs: pingTrackerLastRtt,
                     },
                     ui,
                     clan: myClan ? {
