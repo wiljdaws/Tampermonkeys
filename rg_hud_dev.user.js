@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.7-dev
+// @version      14.8-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -142,6 +142,8 @@
         glowColor2: "#00d4ff",
         // brings back the old 🚀 Rocket Goal HUD title
         ogTitle: false,
+        // coarse browser estimate; never presented as exact Photon ping
+        pingTrackerEnabled: false,
     };
 
     let settings = { ...DEFAULT_SETTINGS };
@@ -154,6 +156,75 @@
     function saveSettings() {
         try { localStorage.setItem("rgHudSettings", JSON.stringify(settings)); }
         catch (e) { pushError(e, "saveSettings"); }
+    }
+
+    let pingTrackerIntervalId = null;
+    function browserConnection() {
+        if (typeof navigator === "undefined") return null;
+        return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+    }
+
+    function ensurePingTracker() {
+        let tracker = document.getElementById("rgPingTracker");
+        if (tracker || !document.body) return tracker;
+        tracker = document.createElement("div");
+        tracker.id = "rgPingTracker";
+        tracker.setAttribute("aria-live", "off");
+        tracker.style.cssText = [
+            "display:none",
+            "position:fixed",
+            "top:14px",
+            "left:50%",
+            "transform:translateX(-50%)",
+            "z-index:999999997",
+            "pointer-events:none",
+            "user-select:none",
+            "padding:3px 8px",
+            "border:1px solid rgba(255,255,255,.10)",
+            "border-radius:999px",
+            "background:rgba(5,10,15,.28)",
+            "box-shadow:0 2px 10px rgba(0,0,0,.20)",
+            "color:#cbd5e1",
+            "font:600 12px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",
+            "font-variant-numeric:tabular-nums",
+            "letter-spacing:.02em",
+            "opacity:.82",
+        ].join(";");
+        document.body.appendChild(tracker);
+        return tracker;
+    }
+
+    function refreshPingTracker() {
+        const tracker = ensurePingTracker();
+        if (!tracker) return;
+        if (!settings.pingTrackerEnabled || !_inMatch) {
+            tracker.style.display = "none";
+            return;
+        }
+        const connection = browserConnection();
+        const rtt = Number(connection?.rtt);
+        tracker.style.display = "block";
+        if (!Number.isFinite(rtt) || rtt <= 0) {
+            tracker.textContent = "RTT unavailable";
+            tracker.style.color = "#cbd5e1";
+            tracker.title = "Browser network RTT estimate is unavailable";
+            return;
+        }
+        const rounded = Math.round(rtt);
+        tracker.textContent = `RTT ≈ ${rounded} ms`;
+        tracker.style.color = rounded <= 60 ? "#4ade80" : rounded <= 120 ? "#facc15" : "#fb7185";
+        tracker.title = `Browser network RTT estimate${connection?.effectiveType ? ` (${connection.effectiveType})` : ""}; not exact Photon server ping`;
+    }
+
+    function syncPingTracker() {
+        refreshPingTracker();
+        if (pingTrackerIntervalId) {
+            clearInterval(pingTrackerIntervalId);
+            pingTrackerIntervalId = null;
+        }
+        if (settings.pingTrackerEnabled && _inMatch) {
+            pingTrackerIntervalId = setInterval(refreshPingTracker, 2000);
+        }
     }
 
     function hexToRgba(hex, alpha) {
@@ -398,6 +469,7 @@
                     <div id="rgContent">Waiting for data...</div>
                     <div id="rgSettingsPanel" style="display:none;border-top:1px solid #00bfff44;margin-top:8px;padding-top:6px;">
                         <div class="rgSettingRow"><span title="Bring back the original 🚀 Rocket Goal HUD title">OG Title</span><input type="checkbox" id="rgSetOgTitle"></div>
+                        <div class="rgSettingRow"><span title="Chrome's rounded network RTT estimate; not exact Photon server ping">RTT estimate</span><input type="checkbox" id="rgSetPingTracker"></div>
                         <div class="rgSettingRow"><span>Glow</span><input type="checkbox" id="rgSetGlow"></div>
                         <div class="rgSettingRow"><span>Speed</span><input type="range" id="rgSetSpeed" min="1" max="10" step="0.5"></div>
                         <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
@@ -568,8 +640,10 @@
         const setColor2 = document.getElementById("rgSetColor2");
 
         const setOgTitle = document.getElementById("rgSetOgTitle");
+        const setPingTracker = document.getElementById("rgSetPingTracker");
         function syncSettingInputs() {
             setOgTitle.checked = !!settings.ogTitle;
+            setPingTracker.checked = !!settings.pingTrackerEnabled;
             setGlow.checked = settings.glowEnabled;
             setSpeed.value = settings.glowSpeed;
             setOpacity.value = settings.glowOpacity;
@@ -583,6 +657,11 @@
             saveSettings();
             applyTitle();
         };
+        setPingTracker.onchange = () => {
+            settings.pingTrackerEnabled = setPingTracker.checked;
+            saveSettings();
+            syncPingTracker();
+        };
         setGlow.onchange = () => { settings.glowEnabled = setGlow.checked; saveSettings(); applyGlowSettings(); };
         setSpeed.oninput = () => { settings.glowSpeed = parseFloat(setSpeed.value); saveSettings(); applyGlowSettings(); };
         setOpacity.oninput = () => { settings.glowOpacity = parseFloat(setOpacity.value); saveSettings(); applyGlowSettings(); };
@@ -594,6 +673,7 @@
             saveSettings();
             syncSettingInputs();
             applyGlowSettings();
+            syncPingTracker();
         };
 
         // trim player data, don't dump the whole login blob
@@ -2628,6 +2708,7 @@
                 tryParseAndUpdate(text);
                 dbg(`matchEnd response — roster at ${_liveRoster.length}, restoring HUD`);
                 _inMatch = false;
+                syncPingTracker();
                 freezeRoster();
                 setAutoVisible(true);
                 // fire-and-forget audit write
@@ -2704,6 +2785,7 @@
                         if (!_inMatch) {
                             _liveRoster = [];
                             _inMatch = true;
+                            syncPingTracker();
                             dbg(`match forming — roster reset, first player "${nm}"`);
                         }
                         // Dedupe by uid, but accept a later corrected team/name
@@ -2764,6 +2846,7 @@
                         freezeRoster();
                     }
                     _inMatch = false;
+                    syncPingTracker();
                     // new match is being queued — clear popup state
                     resetMatchPopupState();
                 }
@@ -4720,6 +4803,7 @@
         if (initStale && recoveryRecent) {
             dbg(`_inMatch watchdog: stale for ${((now - _lastInitLineAt) / 60000).toFixed(1)}m + recent recovery signal -- clearing`);
             _inMatch = false;
+            syncPingTracker();
             setAutoVisible(true);
         }
     }, 60 * 1000);
