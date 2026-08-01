@@ -3121,10 +3121,10 @@
                     if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
                 },
                 (err) => {
-                    // v13.6: without onError, revoked perms froze the UI silently.
-                    // 14.5: auto-reconnect. background-tab throttling was killing
-                    // the listener with no way to know except a manual refresh, so
-                    // members and event score would sit stale for 50+ min at a time.
+                    // v13.6: without onError, revoked perms froze the UI silently
+                    // 14.5: also retry - background tabs get throttled and the
+                    //       listener dies quiet. without this, syncs sit stale
+                    //       for 50+ min until someone refreshes.
                     dbg("clan listener error, scheduling reconnect: " + (err && err.message ? err.message : err));
                     console.warn("[RG HUD] Clan listener error, will retry in 30s:", err);
                     detachClanListener();
