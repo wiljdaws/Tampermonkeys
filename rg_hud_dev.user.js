@@ -405,7 +405,6 @@
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
-                        <button id="rgSetRecap" class="rgBtn" style="width:100%;margin-top:4px;">📊 Session recap</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">📋 Copy debug bundle</button>
                     </div>
                 </div>
@@ -596,11 +595,6 @@
             saveSettings();
             syncSettingInputs();
             applyGlowSettings();
-        };
-
-        document.getElementById("rgSetRecap").onclick = () => {
-            dbg("Session recap opened");
-            showSessionRecap();
         };
 
         // trim player data, don't dump the whole login blob
@@ -4344,7 +4338,7 @@
             const cancelBtn = document.getElementById("rgDialogCancel");
 
             msgEl.textContent = message;
-            // v13.6: preserve line breaks for multi-line messages (session recap)
+            // preserve line breaks for multi-line dialog messages
             msgEl.style.whiteSpace = "pre-wrap";
             okBtn.textContent = okLabel;
             cancelBtn.textContent = cancelLabel;
@@ -4432,67 +4426,6 @@
     }
 
     // v13.6: on-demand session summary. plain text via showDialog.
-    function showSessionRecap() {
-        if (!sessionStart) {
-            showDialog({ message: "No session data yet. Log in or play a match, then check back.", okLabel: "OK", cancelLabel: "" });
-            return;
-        }
-        const lines = [];
-        const ms = Date.now() - sessionStart.startedAt;
-        const minutes = Math.floor(ms / 60000);
-        const hours = Math.floor(minutes / 60);
-        const minPart = minutes % 60;
-        lines.push(`Session length: ${hours > 0 ? hours + "h " : ""}${minPart}m`);
-
-        const data = lastKnownPlayerData;
-        if (data && data.ModesGlicko) {
-            lines.push("");
-            lines.push("MMR change this session:");
-            const modes = [
-                ["Competitive3v3", "3v3"],
-                ["Competitive2v2", "2v2"],
-                ["Competitive1v1", "1v1"],
-                ["Casual", "Casual"],
-            ];
-            let anyMovement = false;
-            for (const [key, label] of modes) {
-                const start = sessionStart[key];
-                const now = data.ModesGlicko[key]?.displayRating;
-                if (typeof start === "number" && typeof now === "number") {
-                    const d = now - start;
-                    if (d !== 0) anyMovement = true;
-                    const sign = d > 0 ? "+" : "";
-                    lines.push(`  ${label}: ${now} (${sign}${d})`);
-                }
-            }
-            if (!anyMovement) lines.push("  (no ranked matches counted yet)");
-        }
-
-        if (streakData && streakData.streak !== 0) {
-            const n = streakData.streak;
-            lines.push("");
-            lines.push(n > 0 ? `Current streak: 🔥 ${n} wins in a row` : `Current streak: ❄️ ${-n} losses in a row`);
-        }
-
-        if (eventPhase && eventPhase() === "active" && myClan) {
-            const uid = myUserId();
-            const contribution = myEventContribution(myClan, uid);
-            const clanScore = computeClanEventScore(myClan);
-            const standings = eventStandings();
-            const rank = standings.findIndex(c => c.id === myClan.id) + 1;
-            lines.push("");
-            lines.push(`Clan Clash: ${eventConfig?.name || "current event"}`);
-            if (typeof contribution === "number") {
-                const sign = contribution >= 0 ? "+" : "";
-                lines.push(`  Your contribution: ${sign}${contribution}`);
-            }
-            const clanSign = clanScore >= 0 ? "+" : "";
-            lines.push(`  Clan total: ${clanSign}${clanScore}${rank ? `  (#${rank}/${standings.length})` : ""}`);
-        }
-
-        showDialog({ message: lines.join("\n"), okLabel: "Close", cancelLabel: "" });
-    }
-
     // ---------- Boot ----------
 
     const wait = setInterval(() => {
