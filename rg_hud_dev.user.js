@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.3-dev
-// @description  Dev build of ATLAS. Testing the leaderboard-opponent popup. Install alongside the prod ATLAS to compare.
+// @version      14.4-dev
+// @description  Dev build of ATLAS. Testing Name Forge and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
@@ -1271,13 +1271,13 @@
 
         try {
             const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot } =
+            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot, runTransaction } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
 
-            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot };
+            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot, runTransaction };
             return firestoreReady;
         } catch (e) {
             dbg("initFirebase failed: " + (e && e.message ? e.message : e));
@@ -2277,13 +2277,31 @@
                     // syncedAt: client ms on my member entry so teammates get
                     // per-member freshness ("2m ago"). serverTimestamp() isn't
                     // allowed inside array elements anyway.
-                    const members = (myClan.members ?? []).map(m =>
-                        m.userId === uid ? { ...m, mmr: myMMR, syncedAt: Date.now() } : m
-                    );
-                    const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
-                    // stamp server time, we read it back to calibrate serverNow()
-                    const writeClanMMR = () => fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
-                        { members, totalMMR, lastSyncAt: fb.serverTimestamp() }, { merge: true });
+                    // Always rebuild from the transaction's fresh server copy.
+                    // A plain setDoc used our stale in-memory members array and
+                    // could erase somebody who had just been approved.
+                    const clanId = myClan.id;
+                    const clanRef = fb.doc(fb.db, "clans", clanId);
+                    const syncedAt = Date.now();
+                    let committedClan = null;
+                    const writeClanMMR = () => {
+                        committedClan = null;
+                        return fb.runTransaction(fb.db, async tx => {
+                            const liveSnap = await tx.get(clanRef);
+                            if (!liveSnap.exists()) return;
+                            const liveClan = liveSnap.data();
+                            const liveMembers = liveClan.members ?? [];
+                            if (!liveMembers.some(m => m.userId === uid)) return;
+                            const members = liveMembers.map(m =>
+                                m.userId === uid ? { ...m, mmr: myMMR, syncedAt } : m
+                            );
+                            const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
+                            tx.set(clanRef,
+                                { members, totalMMR, lastSyncAt: fb.serverTimestamp() },
+                                { merge: true });
+                            committedClan = { ...liveClan, id: clanId, members, totalMMR };
+                        });
+                    };
                     try {
                         await writeClanMMR();
                     } catch (firstErr) {
@@ -2293,8 +2311,14 @@
                         await new Promise(r => setTimeout(r, 5000));
                         await writeClanMMR();
                     }
-                    myClan.members = members;
-                    myClan.totalMMR = totalMMR;
+                    if (!committedClan) {
+                        dbg("Clan MMR transaction skipped: clan missing or player no longer on roster");
+                        detachClanListener();
+                        myClan = null;
+                        clanLoaded = false;
+                        return null;
+                    }
+                    myClan = sanitizeClanDoc(committedClan);
 
                     // one-time serverNow calibration per session
                     if (serverNowOffset === null) {
@@ -3643,20 +3667,50 @@
         }
 
         try {
-            const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", clanId));
-            if (!clanSnap.exists()) return;
-            const clan = clanSnap.data();
-
-            if ((clan.members ?? []).length >= clanMaxMembers()) {
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const requestName = myName();
+            let outcome = "sent";
+            await fb.runTransaction(fb.db, async tx => {
+                const clanSnap = await tx.get(clanRef);
+                if (!clanSnap.exists()) {
+                    outcome = "missing";
+                    return;
+                }
+                const clan = clanSnap.data();
+                if ((clan.members ?? []).some(m => m.userId === uid)) {
+                    outcome = "member";
+                    return;
+                }
+                if ((clan.members ?? []).length >= clanMaxMembers()) {
+                    outcome = "full";
+                    return;
+                }
+                if ((clan.joinRequests ?? []).some(r => r.userId === uid)) {
+                    outcome = "pending";
+                    return;
+                }
+                outcome = "sent";
+                const joinRequests = [...(clan.joinRequests ?? []), { userId: uid, name: requestName }];
+                tx.set(clanRef, { joinRequests }, { merge: true });
+            });
+            if (outcome === "missing") {
+                showToast("That clan no longer exists.");
+                return;
+            }
+            if (outcome === "member") {
+                await loadClanData(true);
+                showToast("You're already in this clan.");
+                renderClanView();
+                return;
+            }
+            if (outcome === "full") {
                 showToast("That clan is full.");
                 return;
             }
-            if ((clan.joinRequests ?? []).some(r => r.userId === uid)) {
+            if (outcome === "pending") {
                 showToast("You already requested to join.");
                 return;
             }
-            const joinRequests = [...(clan.joinRequests ?? []), { userId: uid, name: myName() }];
-            await fb.setDoc(fb.doc(fb.db, "clans", clanId), { joinRequests }, { merge: true });
             dbg(`Join request sent to clan ${clanId}`);
             showToast("Join request sent!");
             renderClanView();
@@ -3682,19 +3736,55 @@
         }
 
         try {
-            const req = (myClan.joinRequests ?? []).find(r => r.userId === userId);
-            const joinRequests = (myClan.joinRequests ?? []).filter(r => r.userId !== userId);
-            let members = myClan.members ?? [];
-
-            if (approve && req && members.length < clanMaxMembers()
-                && !members.some(m => m.userId === userId)) {
-                members = [...members, { userId: req.userId, name: req.name, role: "member" }];
+            const clanId = myClan.id;
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const actorUid = myUserId();
+            let committedClan = null;
+            let outcome = approve ? "approved" : "denied";
+            await fb.runTransaction(fb.db, async tx => {
+                committedClan = null;
+                const clanSnap = await tx.get(clanRef);
+                if (!clanSnap.exists()) {
+                    outcome = "missing";
+                    return;
+                }
+                const liveClan = clanSnap.data();
+                const liveMembers = liveClan.members ?? [];
+                const actor = liveMembers.find(m => m.userId === actorUid);
+                if (approve && (!actor || !rolePerm(actor.role, "approve"))) {
+                    outcome = "forbidden";
+                    return;
+                }
+                const req = (liveClan.joinRequests ?? []).find(r => r.userId === userId);
+                if (!req) {
+                    outcome = "handled";
+                    return;
+                }
+                if (approve && liveMembers.length >= clanMaxMembers()) {
+                    outcome = "full";
+                    return;
+                }
+                const joinRequests = (liveClan.joinRequests ?? []).filter(r => r.userId !== userId);
+                let members = liveMembers;
+                if (approve && !members.some(m => m.userId === userId)) {
+                    members = [...members, { userId: req.userId, name: req.name, role: "member" }];
+                }
+                tx.set(clanRef, { joinRequests, members }, { merge: true });
+                committedClan = { ...liveClan, id: clanId, joinRequests, members };
+                outcome = approve ? "approved" : "denied";
+            });
+            if (!committedClan) {
+                if (outcome === "missing") showToast("That clan no longer exists.");
+                else if (outcome === "forbidden") showToast("Your current role can't approve join requests.");
+                else if (outcome === "full") showToast("That clan is full.");
+                else showToast("That request was already handled.");
+                await loadClanData(true);
+                renderClanView();
+                return;
             }
 
-            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { joinRequests, members }, { merge: true });
             dbg(`Join request ${approve ? "approved" : "denied"} for ${userId}`);
-            myClan.joinRequests = joinRequests;
-            myClan.members = members;
+            myClan = sanitizeClanDoc(committedClan);
             await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
@@ -4640,6 +4730,28 @@
     try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ }
   }
 
+  // rawCode is the exact in-game TMP markup, while state.name is the fallback
+  // used as soon as somebody touches a structured control. Keep them in sync
+  // so exiting raw mode never resurrects an older name from the text box.
+  function editableNameFromRaw(raw) {
+    const nameLine = String(raw ?? "").split(/<br\s*\/?\s*>/i)[0];
+    return nameLine
+      .replace(/<(?!sprite=\d+\s*>)[^>]*>/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function setRawSnapshot(raw) {
+    state.rawCode = String(raw ?? "");
+    state.name = editableNameFromRaw(state.rawCode);
+  }
+
+  // Repair a persisted pre-fix state before the first render.
+  if (state.rawCode) {
+    state.name = editableNameFromRaw(state.rawCode);
+    saveJSON(stateKey(), state);
+  }
+
   function hexToRgb(hex) {
     const h = hex.replace('#', '');
     return {
@@ -5038,7 +5150,47 @@
     return { ok: res.ok && body.trim() === 'true', status: res.status, body };
   }
 
-  // once per page load: check the last steal survived the game's boot echo.
+  // The nickname endpoint can return true before the game finishes its own
+  // SetNickname boot echo. Keep one receipt for every Name Forge write and
+  // re-apply once after the echo window. A newer click cancels the old retry.
+  let _nicknameApplyRevision = 0;
+  const NICKNAME_SETTLE_RETRY_MS = 4000;
+  async function applyNicknameStable(code, body = code) {
+    const revision = ++_nicknameApplyRevision;
+    const receipt = { code, body, ts: Date.now(), revision };
+    _stealVerified = false;
+    saveJSON(pendingStealKey(), receipt);
+
+    let first;
+    try {
+      first = await applyNickname(code);
+    } catch (err) {
+      const current = loadJSON(pendingStealKey(), null);
+      if (current?.revision === revision) saveJSON(pendingStealKey(), null);
+      throw err;
+    }
+    if (!first.ok) {
+      const current = loadJSON(pendingStealKey(), null);
+      if (current?.revision === revision) saveJSON(pendingStealKey(), null);
+      return first;
+    }
+
+    setTimeout(async () => {
+      if (_nicknameApplyRevision !== revision) return;
+      const current = loadJSON(pendingStealKey(), null);
+      if (!current || current.revision !== revision || current.code !== code) return;
+      try {
+        const retry = await applyNickname(code);
+        dbg(`nickname settle retry -> ${retry.ok ? "OK" : "FAILED (" + retry.status + ")"}`);
+      } catch (err) {
+        dbg("nickname settle retry error: " + (err && err.message ? err.message : err));
+      }
+    }, NICKNAME_SETTLE_RETRY_MS);
+
+    return first;
+  }
+
+  // once per page load: check the last name apply survived the game's boot echo.
   // mismatch -> re-apply once after 4s so our write lands last. TTL-guarded.
   let _stealVerified = false;
   function verifyPendingSteal(rawNickname) {
@@ -5067,17 +5219,21 @@
         (nickStripped && (nickStripped === bodyStripped || nickStripped === codeStripped))
     )) {
       saveJSON(pendingStealKey(), null);
-      fdbg('pending steal verified — stolen name stuck server-side');
+      fdbg('pending name apply verified — nickname stuck server-side');
       return;
     }
-    fdbg('pending steal MISMATCH — boot echo overwrote the stolen name, re-applying in 4s');
+    if (pending.revision && pending.revision === _nicknameApplyRevision) {
+      fdbg('pending name apply is waiting for its scheduled settle retry');
+      return;
+    }
+    fdbg('pending name apply MISMATCH — boot echo overwrote it, re-applying in 4s');
     setTimeout(async () => {
       try {
         const r = await applyNickname(pending.code);
-        fdbg(`pending steal re-apply -> ${r.ok ? 'OK — refresh once more to see it in-game' : 'FAILED (' + r.status + ')'}`);
+        fdbg(`pending name re-apply -> ${r.ok ? 'OK — refresh once more to see it in-game' : 'FAILED (' + r.status + ')'}`);
         if (r.ok) saveJSON(pendingStealKey(), null);
       } catch (err) {
-        fdbg('pending steal re-apply error: ' + (err && err.message ? err.message : err));
+        fdbg('pending name re-apply error: ' + (err && err.message ? err.message : err));
       }
     }, 4000);
   }
@@ -5538,6 +5694,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
             || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-imposter-sec')
             || t.closest('.rgnf-head')) return;
+        state.name = editableNameFromRaw(state.rawCode);
         state.rawCode = null;
         saveJSON(stateKey(), state);
         const bar = panel.querySelector('.rgnf-modebar');
@@ -5566,7 +5723,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         hrow.appendChild(el('button', {
           class: 'rgnf-chip', text: '↺',
           title: 'Reset to my current in-game name',
-          onclick: () => { state.rawCode = _lastRawNickname; render(panel); },
+          onclick: () => { setRawSnapshot(_lastRawNickname); render(panel); },
         }));
       }
       secPreview.appendChild(hrow);
@@ -5583,7 +5740,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     rawEdit.addEventListener('input', () => {
       autosizeRawEdit();
       // capturing text as rawCode flips us into raw mode (refreshPreview keys off it)
-      state.rawCode = rawEdit.value;
+      setRawSnapshot(rawEdit.value);
       const rawPfx = _prefix();
       pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
       charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
@@ -5940,20 +6097,16 @@ _rgnfFab = fab; _rgnfPanel = panel;
             try {
               // one-click: apply first, reveal over a name that's already live
               const codeApplied = _prefix() + raw;
-              const r = await applyNickname(codeApplied);
+              const r = await applyNicknameStable(codeApplied, raw);
               if (r.ok) {
-                state.rawCode = raw;
+                setRawSnapshot(raw);
                 _lastRawNickname = raw;
                 const hist = loadJSON(HISTORY_KEY, []);
                 const plain = raw.replace(/<[^>]*>/g, '').trim().slice(0, 24) || '(markup only)';
                 hist.unshift({ code: codeApplied, plain, ts: Date.now() });
                 saveJSON(HISTORY_KEY, hist.slice(0, 5));
-                // both forms, login nicknames come back clan-tag-stripped
-                saveJSON(pendingStealKey(), { code: codeApplied, body: raw, ts: Date.now() });
                 render(panel);
                 showImposterReveal(raw);
-                // silent re-apply, a race sometimes needed a second push
-                setTimeout(() => { applyNickname(codeApplied).catch(() => {}); }, 1000);
                 return;
               }
               b.textContent = '✗';
@@ -6172,13 +6325,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
               const b = e.currentTarget;
               b.textContent = '…';
               try {
-                const r = await applyNickname(h.code);
+                const r = await applyNicknameStable(h.code, h.code);
                 if (r.ok) {
                   // load what was applied into preview so the screen matches live
                   let code = h.code;
                   const pfx = _prefix();
                   if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
-                  state.rawCode = code;
+                  setRawSnapshot(code);
                   _lastRawNickname = code;
                   render(panel);
                   return;
@@ -6212,7 +6365,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           const codeApplied = _prefix() + (state.rawCode ? state.rawCode : buildCode(state));
           // reset target is unprefixed, checkbox owns the tag (double-tag fix)
           _lastRawNickname = state.rawCode ? state.rawCode : buildCode(state);
-          const result = await applyNickname(codeApplied);
+          const result = await applyNicknameStable(codeApplied, _lastRawNickname);
           if (result.ok) {
             statusLine.className = 'rgnf-status ok';
             statusLine.textContent = '✓ Nickname updated';
@@ -6380,14 +6533,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
           const perUser = loadJSON(stateKey(), null);
           if (perUser) {
             state = Object.assign(defaultState(), perUser);
+            if (state.rawCode) state.name = editableNameFromRaw(state.rawCode);
           } else {
             // fresh seed: the whole current in-game name as a raw snapshot.
             // first styling edit clears it and rebuilds from state.name.
             state = defaultState();
             const raw = String(rawNickname || "").trim();
             if (raw) {
-              state.rawCode = raw;
-              state.name = raw.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+              setRawSnapshot(raw);
             } else {
               state.name = String(displayName || "").trim();
             }
