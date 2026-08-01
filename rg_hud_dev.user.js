@@ -77,6 +77,46 @@
     // Expose on the page window so DevTools "top" context can hit rgDump().
     (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).rgDump =
         () => oldLog.call(console, _rgLogBuf.join("\n"));
+
+    // captures raw console.log/warn from the game (not just script dbg) so we
+    // can hunt for team-assignment signals without pasting fragile snippets.
+    const _rawLogBuf = [];
+    function _rawPush(kind, args) {
+        try {
+            const parts = [];
+            for (let i = 0; i < args.length; i++) {
+                const a = args[i];
+                if (typeof a === "string") parts.push(a);
+                else { try { parts.push(JSON.stringify(a)); } catch (e) { parts.push(String(a)); } }
+            }
+            const line = "[" + (performance.now() / 1000).toFixed(2) + "s " + kind + "] " + parts.join(" ").slice(0, 1200);
+            _rawLogBuf.push(line);
+            if (_rawLogBuf.length > 800) _rawLogBuf.shift();
+        } catch (e) {}
+    }
+    const _rawOldWarn = console.warn;
+    console.warn = function () { _rawPush("warn", arguments); _rawOldWarn.apply(console, arguments); };
+    // console.log wrapper gets set later; we install a passthrough hook via oldLog above at line 21
+    // by wrapping _rawPush into the existing console.log override at the bottom of the script.
+
+    // dump the raw buffer into a fullscreen textarea so it can be select-copied
+    // without hitting clipboard permissions or console truncation
+    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).atlasCap = function () {
+        const out = _rawLogBuf.join("\n");
+        const t = document.createElement("textarea");
+        t.value = out;
+        t.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9999999999;background:#000;color:#0f0;font:12px monospace;padding:8px;";
+        const c = document.createElement("button");
+        c.textContent = "Close";
+        c.style.cssText = "position:fixed;top:8px;right:8px;z-index:9999999999;padding:6px 12px;font-size:14px;";
+        c.onclick = function () { t.remove(); c.remove(); };
+        document.body.appendChild(t);
+        document.body.appendChild(c);
+        t.focus();
+        t.select();
+        return "dumped " + _rawLogBuf.length + " lines";
+    };
+    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).atlasCapReset = function () { _rawLogBuf.length = 0; };
     // Catch anything a handler throws so it shows up in the debug bundle
     // instead of vanishing silently.
     if (typeof window !== "undefined") {
@@ -4098,6 +4138,8 @@
 
     console.log = function (...args) {
         oldLog.apply(console, args);
+        // feed the raw-capture buffer for atlasCap() debugging
+        _rawPush("log", args);
         // 13.5: a throw in any branch below unwound the for-loop and every
         // state transition after it was silently missed. wrap it.
         try {
