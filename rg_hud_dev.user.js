@@ -16,8 +16,7 @@
 (function () {
     'use strict';
 
-    // Debug logging lives up here so anything below can call dbg() safely,
-    // including the early localStorage try/catches.
+    // dbg() defined up top so early localStorage try/catches can call it
     const oldLog = console.log;
     const RG_DEBUG = true;
     const _rgLogBuf = [];
@@ -50,8 +49,7 @@
             try { oldLog.call(console, "[RG HUD] pushError failed:", loggingFailed); } catch (e) {}
         }
     }
-    // Wire a text input so a "can't type" bug leaves a trail in the log:
-    // did focus land, did a keystroke ever arrive, did focus get yanked away.
+    // trace focus + first keystroke on an input so "can't type" bugs leave a trail
     function probeInput(el, label) {
         if (!el) { dbg(`probeInput(${label}): element missing`); return; }
         setTimeout(() => {
@@ -74,12 +72,12 @@
         el.addEventListener("focusout", onFirstBlur);
     }
 
-    // Expose on the page window so DevTools "top" context can hit rgDump().
+    // expose on page window so DevTools "top" context can call rgDump()
     (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).rgDump =
         () => oldLog.call(console, _rgLogBuf.join("\n"));
 
-    // captures raw console.log/warn from the game (not just script dbg) so we
-    // can hunt for team-assignment signals without pasting fragile snippets.
+    // raw console.log/warn from the game, not just our own dbg. lets us hunt
+    // for signals (team assignment, room events) without fragile snippets.
     const _rawLogBuf = [];
     function _rawPush(kind, args) {
         try {
@@ -99,8 +97,8 @@
     // console.log wrapper gets set later; we install a passthrough hook via oldLog above at line 21
     // by wrapping _rawPush into the existing console.log override at the bottom of the script.
 
-    // dump the raw buffer into a fullscreen textarea so it can be select-copied
-    // without hitting clipboard permissions or console truncation
+    // fullscreen textarea dump so users can select-copy the raw buffer without
+    // clipboard perms or console truncation
     (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).atlasCap = function () {
         const out = _rawLogBuf.join("\n");
         const t = document.createElement("textarea");
@@ -117,8 +115,7 @@
         return "dumped " + _rawLogBuf.length + " lines";
     };
     (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).atlasCapReset = function () { _rawLogBuf.length = 0; };
-    // Catch anything a handler throws so it shows up in the debug bundle
-    // instead of vanishing silently.
+    // catch anything a handler throws so it lands in the debug bundle
     if (typeof window !== "undefined") {
         window.addEventListener("error", ev => {
             pushError(ev.error || ev.message || "unknown error", "window.error");
@@ -234,7 +231,9 @@
             if (saved && saved.top && saved.left) {
                 pos = { top: saved.top, left: saved.left, right: "auto" };
             }
-        } catch (e) {}
+        } catch (e) {
+            dbg("rgHudPos parse failed, falling back to default");
+        }
 
         hud.style.cssText = `
             position:fixed;
@@ -607,8 +606,8 @@
                     ModesGlicko: lastKnownPlayerData.ModesGlicko,
                     ModesData: lastKnownPlayerData.ModesData,
                 } : null;
-                // Snapshot of what the user is looking at right now — tells us
-                // whether a dialog was even visible when a click didn't work.
+                // snapshot of what the user is looking at, so "click didn't work"
+                // bugs show whether the dialog was even visible.
                 const ui = (() => {
                     const q = id => document.getElementById(id);
                     const visible = el => !!(el && el.style.display !== "none");
@@ -621,8 +620,8 @@
                         dialogOpen: dlg && dlg.style.display === "flex",
                     };
                 })();
-                // Basic device fingerprint — tells us if a report is from
-                // mobile Safari vs desktop Chrome, tiny viewport, etc.
+                // device fingerprint so bug reports show mobile vs desktop,
+                // viewport size, touch, etc.
                 const device = (() => {
                     const n = typeof navigator !== "undefined" ? navigator : {};
                     const s = typeof screen !== "undefined" ? screen : {};
@@ -686,8 +685,8 @@
 
     function clampHudOnScreen() {
         if (!hud) return;
-        // hidden HUD returns zeros from getBoundingClientRect and we'd persist
-        // top-left as the "corrected" pos. setAutoVisible re-clamps on show.
+        // hidden HUD returns zeros from getBoundingClientRect and we'd
+        // persist top-left as the "corrected" pos. re-clamps on show.
         if (hud.style.display === "none" || hud.offsetWidth === 0) return;
         const rect = hud.getBoundingClientRect();
         const vw = window.innerWidth;
@@ -732,7 +731,9 @@
                         top: el.style.top,
                         left: el.style.left,
                     }));
-                } catch (err) {}
+                } catch (err) {
+                    dbg("rgHudPos save on drag-end failed");
+                }
             };
         };
 
@@ -742,7 +743,7 @@
             const moveY = dy - e.clientY;
             dx = e.clientX;
             dy = e.clientY;
-            // title bar is the only drag handle, off-screen = stranded til reload
+            // clamp: title bar is the only drag handle, off-screen strands the HUD
             const MARGIN = 40;
             let newTop = el.offsetTop - moveY;
             let newLeft = el.offsetLeft - moveX;
@@ -766,11 +767,11 @@
         if (!hud) return;
         hud.style.display = visible ? "block" : "none";
         if (!visible) {
-            // tooltip lives on body, hide it or it strands over the game
+            // tooltip lives on body, kill it or it strands over the game
             const tip = document.getElementById("rgTooltip");
             if (tip) tip.style.opacity = "0";
         }
-        // window may have resized while hidden
+        // re-clamp on show, window may have resized while hidden
         if (visible) clampHudOnScreen();
     }
 
@@ -790,7 +791,7 @@
     }
 
     // ---------- Win/loss streak tracking ----------
-    // game only gives cumulative totals, diff between updates to get per-match.
+    // game only gives cumulative totals — diff between updates for per-match.
     // +ve = win streak, -ve = loss streak. resets on account change / session end.
 
     let streakData = null;
@@ -823,7 +824,8 @@
 
         if (matchDiff <= 0) return;
 
-        // can't know the interleaving. pure blocks stay as blocks, mixed collapses to net sign mag 1
+        // no way to know interleaving. pure win/loss block extends the streak,
+        // mixed collapses to net sign, magnitude 1
         const losses = matchDiff - winDiff;
         if (winDiff > 0 && losses === 0) {
             streakData.streak = streakData.streak > 0 ? streakData.streak + winDiff : winDiff;
@@ -855,8 +857,8 @@
 
     // ---------- Session deltas ----------
 
-    // one continuous play run. resets on account change or after SESSION_IDLE_MS
-    // localStorage + timestamp. refresh keeps it, overnight starts fresh.
+    // one continuous play run. resets on account change or SESSION_IDLE_MS.
+    // localStorage + timestamp: refresh keeps it, overnight starts fresh.
     const SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
 
     let sessionStart = null;
@@ -947,7 +949,7 @@
     const prevRanks = new Map(); // playlist -> last known rank
 
     // ---------- Momentum system ----------
-    // net MMR gained/lost this session. tweaks title + glow speed/intensity only,
+    // net MMR gained/lost this session. only tweaks title + glow speed/intensity,
     // never the user's chosen colors.
 
     const MOMENTUM_TIERS = {
@@ -1095,7 +1097,7 @@
         for (const [playlist, rank] of cachedRanks) {
             const prev = prevRanks.get(playlist);
 
-            // need a prior non-#1 or this fires on session start
+            // need a prior non-#1 baseline, else this fires on session start
             if (rank === 1 && typeof prev === "number" && prev !== 1) {
                 showBanner(`👑 NEW #1 IN ${playlist.toUpperCase()}!`, "#ffd700");
             }
@@ -1112,8 +1114,8 @@
 
     // ---------- HUD content ----------
 
-    // renders only when event active + in a clan with baseline. no extra reads.
-    // returns "" when nothing to show so callers can splice unconditionally.
+    // renders only when event is active + we're in a clan with a baseline.
+    // returns "" so callers can splice unconditionally.
     function clashMiniBarHtml() {
         try {
             if (typeof eventPhase !== "function" || eventPhase() !== "active") return "";
@@ -1209,7 +1211,7 @@
     let lastProcessedKey = null;
 
     function tryParseAndUpdate(text) {
-        // fast path, identical string
+        // fast path: identical string
         if (text === lastProcessedText) return;
 
         try {
@@ -1217,7 +1219,8 @@
             if (!(data && data.ModesGlicko)) return;
 
             // fetch + console hooks can emit byte-different strings for the same
-            // event. build a stable key. set BEFORE submit fires or the paths race.
+            // event. stable key on the ratings themselves. set BEFORE submit
+            // fires or the two paths race.
             const key = data.Id + "|"
                 + (data.ModesGlicko?.Competitive3v3?.displayRating ?? "") + "|"
                 + (data.ModesGlicko?.Competitive2v2?.displayRating ?? "") + "|"
@@ -1274,6 +1277,7 @@
             firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot };
             return firestoreReady;
         } catch (e) {
+            dbg("initFirebase failed: " + (e && e.message ? e.message : e));
             console.error("[RG HUD] Firebase init failed:", e);
             showError("Firebase failed to load");
             return null;
@@ -1281,8 +1285,8 @@
     }
 
     // ---------- Force-update gate ----------
-    // admin/blacklist has { minVersion }. rules reject writes below anyway.
-    // check once per session, skip submits if outdated. display stays on.
+    // admin/blacklist has { minVersion }. rules reject sub-min writes anyway.
+    // check once per session, skip submits if outdated. HUD display stays on.
 
     let updateRequiredChecked = false;
     let updateRequired = false;
@@ -1302,6 +1306,7 @@
             }
         } catch (e) {
             // don't lock out on transient read error
+            dbg("isUpdateRequired read failed (non-fatal): " + (e && e.message ? e.message : e));
         }
         updateRequiredChecked = true;
         return updateRequired;
@@ -1384,9 +1389,9 @@
         setTimeout(hideNameModal, 1600);
     }
 
-    // Unity swallows printable keys in capture phase. intercept earlier
-    // and stopImmediatePropagation while a HUD input is focused so the game
-    // never sees the event.
+    // Unity swallows printable keys in capture phase. we intercept earlier
+    // and stopImmediatePropagation while a HUD input is focused, so the
+    // game never sees the event.
     ["keydown", "keyup", "keypress"].forEach(type => {
         window.addEventListener(type, e => {
             const active = document.activeElement;
@@ -1422,8 +1427,8 @@
         }, true); // capture — must run before Unity's listener
     });
 
-    // best-effort collision check. two simultaneous picks could both pass but
-    // that's fine, catches every normal case.
+    // best-effort collision check. two simultaneous picks could both pass,
+    // but that's rare enough to live with.
     async function isNameTaken(fb, name, ownSourceUserId) {
         try {
             const q = fb.query(
@@ -1435,6 +1440,7 @@
             return snap.docs.some(d => d.data().sourceUserId !== ownSourceUserId);
         } catch (e) {
             // don't block on check failure, let it through
+            dbg("isNameTaken check failed (letting through): " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Name availability check failed:", e);
             return false;
         }
@@ -1452,40 +1458,47 @@
             const saveBtn = document.getElementById("rgNameSave");
 
             saveBtn.onclick = async () => {
-                const entered = input.value.trim();
-                if (entered.length === 0 || entered.length > 15) {
-                    errEl.textContent = "Name must be 1-15 characters.";
-                    return;
-                }
-                if (containsProfanity(entered)) {
-                    errEl.textContent = "That name isn't allowed. Pick something else.";
-                    return;
-                }
-                if (entered.toLowerCase() === "player") {
-                    errEl.textContent = "\"Player\" is reserved. Pick a real name.";
-                    return;
-                }
-                if (containsEmoji(entered)) {
-                    errEl.textContent = "Names can't contain emojis.";
-                    return;
-                }
+                try {
+                    const entered = input.value.trim();
+                    if (entered.length === 0 || entered.length > 15) {
+                        errEl.textContent = "Name must be 1-15 characters.";
+                        return;
+                    }
+                    if (containsProfanity(entered)) {
+                        errEl.textContent = "That name isn't allowed. Pick something else.";
+                        return;
+                    }
+                    if (entered.toLowerCase() === "player") {
+                        errEl.textContent = "\"Player\" is reserved. Pick a real name.";
+                        return;
+                    }
+                    if (containsEmoji(entered)) {
+                        errEl.textContent = "Names can't contain emojis.";
+                        return;
+                    }
 
-                // async availability check
-                errEl.style.color = "#7ec8ff";
-                errEl.textContent = "Checking availability...";
-                saveBtn.disabled = true;
-                const taken = fb ? await isNameTaken(fb, entered, ownSourceUserId) : false;
-                saveBtn.disabled = false;
-                errEl.style.color = "#ff6b6b";
+                    // async availability check
+                    errEl.style.color = "#7ec8ff";
+                    errEl.textContent = "Checking availability...";
+                    saveBtn.disabled = true;
+                    const taken = fb ? await isNameTaken(fb, entered, ownSourceUserId) : false;
+                    saveBtn.disabled = false;
+                    errEl.style.color = "#ff6b6b";
 
-                if (taken) {
-                    errEl.textContent = "That name is already taken. Pick another.";
-                    return;
+                    if (taken) {
+                        errEl.textContent = "That name is already taken. Pick another.";
+                        return;
+                    }
+
+                    errEl.textContent = "";
+                    hideNameModal();
+                    resolve(entered);
+                } catch (e) {
+                    dbg("askDisplayName save handler threw: " + (e && e.message ? e.message : e));
+                    saveBtn.disabled = false;
+                    errEl.style.color = "#ff6b6b";
+                    errEl.textContent = "Something went wrong. Try again.";
                 }
-
-                errEl.textContent = "";
-                hideNameModal();
-                resolve(entered);
             };
 
             document.getElementById("rgNameCancel").onclick = () => {
@@ -1498,7 +1511,7 @@
     }
 
     // ---------- Write-reduction caches ----------
-    // read nothing twice per session, write nothing that hasn't changed.
+    // read nothing twice per session, write nothing unchanged.
 
     let firestoreWriteCount = 0;
     function logWrite(label) {
@@ -1519,14 +1532,22 @@
     const submitLocks = new Map();
 
     async function submitToLeaderboard(data) {
-        const lockKey = data.Id;
-        const previous = submitLocks.get(lockKey) || Promise.resolve();
-        const current = previous.then(() => submitToLeaderboardInner(data));
-        submitLocks.set(lockKey, current);
-        await current;
+        try {
+            const lockKey = data.Id;
+            const previous = submitLocks.get(lockKey) || Promise.resolve();
+            // swallow inner rejects so the lock chain keeps working
+            const current = previous.then(() => submitToLeaderboardInner(data)).catch(e => {
+                dbg("submitToLeaderboardInner threw: " + (e && e.message ? e.message : e));
+            });
+            submitLocks.set(lockKey, current);
+            await current;
+        } catch (e) {
+            dbg("submitToLeaderboard threw: " + (e && e.message ? e.message : e));
+        }
     }
 
     async function submitToLeaderboardInner(data) {
+      try {
         if (!hasPlayedAnything(data)) return;
 
         const fb = await initFirebase();
@@ -1545,7 +1566,7 @@
                     existingDisplayName = existing.data().displayName;
                 }
             } catch (e) {
-                // fall through and ask
+                dbg("submitToLeaderboardInner: prior displayName read failed, will prompt");
             }
         }
 
@@ -1593,8 +1614,8 @@
             await loadClanData(true);
         }
 
-        // clan tag is part of the snapshot so a tag change alone forces a resync.
-        // Rename always bypasses the "unchanged" skip.
+        // clan tag lives in the snapshot key so a tag change alone forces
+        // a resync. Rename always bypasses the "unchanged" skip.
         const currentClanTag = (clanLoadedForAccount === data.Id && myClan) ? (myClan.tag ?? "") : "";
         const snapshotKey = JSON.stringify({
             displayName, ratings: payload.ratings, stats: payload.stats,
@@ -1632,6 +1653,9 @@
         refreshRanks(fb, data, true);
         refreshClanViewIfOpen();
         applyTitle(); // clan-lead may have flipped since updateMomentum
+      } catch (e) {
+        dbg("submitToLeaderboardInner threw: " + (e && e.message ? e.message : e));
+      }
     }
 
     const REAL_LEADERBOARD_COLLECTION = "leaderboard";
@@ -1641,6 +1665,7 @@
 
     // finds this player's entry for one playlist by sourceUserId. merge:true
     // preserves hand-set fields (flag, icons, glowColor). creates if missing.
+    // catch inside covers Firestore-side failures, no top-level wrap needed.
     async function upsertPlaylistEntry(fb, sourceUserId, playlist, fields) {
         const lockKey = `${sourceUserId}_${playlist}`;
         const previous = upsertLocks.get(lockKey) || Promise.resolve();
@@ -1709,7 +1734,10 @@
     const lastEntryState = new Map(
         (() => {
             try { return JSON.parse(sessionStorage.getItem("rgHudEntryState") ?? "[]"); }
-            catch (e) { return []; }
+            catch (e) {
+                dbg("lastEntryState load failed, starting empty");
+                return [];
+            }
         })()
     );
 
@@ -1721,7 +1749,7 @@
 
     // v13.6 -------- Match audit trail --------
     // append-only receipt in match_audits. every player in the match writes
-    // their own, a fabricated match has no corroborating audits.
+    // their own — a fabricated match has no corroborating audits.
     // fire-and-forget, non-fatal on failure (rules may not allow it yet).
     async function writeMatchAudit(prevRatings, opponents) {
         try {
@@ -2188,6 +2216,7 @@
     }
 
     async function syncToRealLeaderboard(fb, data, displayName) {
+      try {
         const sourceUserId = data.Id;
 
         // piggy-back: refresh this member's MMR in the clan doc, get tag back
@@ -2215,6 +2244,9 @@
             wins: totalWins,
             matches: totalMatches,
         });
+      } catch (e) {
+        dbg("syncToRealLeaderboard threw: " + (e && e.message ? e.message : e));
+      }
     }
 
     // refresh my ranked MMR in the clan doc + recompute totalMMR.
@@ -2267,7 +2299,9 @@
                             const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
                             const ts = back.exists() ? back.data().lastSyncAt : null;
                             if (ts?.toMillis) learnServerTime(ts.toMillis());
-                        } catch (e) {}
+                        } catch (e) {
+                            dbg("serverNow calibration read failed, will retry next session");
+                        }
                     }
 
                     // throttled directory rebuild, instant local, Firestore at most every 3m
@@ -2292,29 +2326,33 @@
     }
 
     async function upsertIfChanged(fb, sourceUserId, playlist, fields) {
-        const stateKey = `${sourceUserId}_${playlist}`;
-        const newState = JSON.stringify(fields);
+        try {
+            const stateKey = `${sourceUserId}_${playlist}`;
+            const newState = JSON.stringify(fields);
 
-        if (lastEntryState.get(stateKey) === newState) {
-            return; // unchanged — skip
-        }
+            if (lastEntryState.get(stateKey) === newState) {
+                return; // unchanged — skip
+            }
 
-        const ok = await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
-        // only cache on success, a failed write would poison the cache and
-        // prevent any future retry
-        if (ok) {
-            lastEntryState.set(stateKey, newState);
-            saveEntryState();
+            const ok = await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
+            // only cache on success, a failed write would poison the cache and
+            // prevent any future retry
+            if (ok) {
+                lastEntryState.set(stateKey, newState);
+                saveEntryState();
+            }
+        } catch (e) {
+            dbg("upsertIfChanged threw: " + (e && e.message ? e.message : e));
         }
     }
 
     // ---------- Rank lookup ----------
-    // count aggregation: "how many entries have higher mmr than mine" = 1 cheap
-    // server-side count, not a collection download. cached; force=true after
-    // our own writes, otherwise once per session.
+    // count aggregation: "how many entries have higher mmr than mine" is one
+    // cheap server-side count, not a collection download. cached; force=true
+    // after our own writes, otherwise once per session.
     //
-    // we only re-query modes whose MMR actually moved since last check. someone
-    // else climbing could shuffle you, but that drift isn't worth 4 reads/match.
+    // only re-queries modes whose MMR actually moved since last check. someone
+    // else climbing could shuffle you, but not worth 4 reads/match.
 
     let ranksFetchedThisSession = false;
     const lastRankedMMR = new Map(); // playlist -> mmr at last query
@@ -2366,6 +2404,7 @@
                         }
                     } catch (e) {
                         // gap is nice-to-have, ignore failures
+                        dbg(`refreshRanks: mmr-to-next lookup failed for ${playlist}`);
                     }
                 } else {
                     cachedMmrToNext.delete(playlist);
@@ -2380,6 +2419,7 @@
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
         } catch (e) {
             // rank display is nice-to-have, don't crash on failure
+            dbg("refreshRanks failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Rank lookup failed:", e);
         }
     }
@@ -2390,20 +2430,20 @@
     let lastKnownPlayerData = null;
 
     // ---------- Last-game lobby roster (feeds Forge's Imposter section) ----------
-    // game logs "Initialized stats for player X" for each player when a match
-    // forms. we collect names while the match runs, freeze on matchEnd /
-    // LeaveRoom. persisted so a page refresh (Tampermonkey update needs one)
-    // doesn't wipe the roster before the user opens Forge, 13.4 shipped that
-    // bug and Imposter always showed empty state.
+    // game logs "Initialized stats for player X" per player as a match forms.
+    // we collect names while the match runs, freeze on matchEnd / LeaveRoom.
+    // persisted so a page refresh (Tampermonkey update requires one) doesn't
+    // wipe the roster before the user opens Forge — 13.4 shipped that bug
+    // and Imposter always showed empty.
     let lastGamePlayers = [];   // frozen roster of the last match: [{name, uid}]
     try { lastGamePlayers = JSON.parse(localStorage.getItem("rgHudLastRoster") ?? "[]"); }
     catch (e) { pushError(e, "loadLastRoster"); }
     let _liveRoster = [];       // in-progress match: [{name, uid}]
 
-    // "are we actually in a real match right now". set on the first init line
-    // with a REAL UserId (warm-up self-inits log empty UserId), cleared on
-    // matchEnd/LeaveRoom/new queue. all HUD-restore signals gate on this so
-    // a reconnect storm can't resurrect the HUD mid-match.
+    // "are we in a real match right now". set on first init line with a real
+    // UserId (warm-up self-inits log empty UserId), cleared on matchEnd /
+    // LeaveRoom / new queue. all HUD-restore signals gate on this so a
+    // reconnect storm can't resurrect the HUD mid-match.
     // v13.4 bug: includes("OnDisconnected") substring-matched
     // "PhotonConnector:OurOnDisconnected" and restored the HUD on every
     // reconnect attempt.
@@ -2426,8 +2466,8 @@
             try { localStorage.setItem("rgHudLastRoster", JSON.stringify(lastGamePlayers)); }
             catch (e) { pushError(e, "saveLastRoster"); }
             dbg(`Imposter roster captured: ${lastGamePlayers.length} player(s): ${lastGamePlayers.map(p => p.name).join(", ")}`);
-            // repaint Forge live if it's open. can't focus-steal here, you
-            // can't be typing in Forge while in a match.
+            // repaint Forge if it's open. no focus-steal risk mid-match,
+            // the user can't be typing in Forge while playing.
             const fv = document.getElementById("rgForgeView");
             if (fv && fv.style.display !== "none" && typeof RGNF !== "undefined" && RGNF.refresh) {
                 RGNF.refresh();
@@ -2483,15 +2523,17 @@
                 firePostmortemPopupsIfDeferred(prevRatings);
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
-                // fire the pending-steal verifier here too, login carries
-                // the raw nickname before any local processing
+                // login carries the raw nickname before any local processing,
+                // ideal spot for the pending-steal verifier
                 try {
                     const loginData = JSON.parse(text);
                     const rawNick = loginData?.Nickname ?? "";
                     if (rawNick && typeof RGNF !== "undefined" && RGNF.verifyStolenName) {
                         RGNF.verifyStolenName(rawNick);
                     }
-                } catch (e) { /* already logged */ }
+                } catch (e) {
+                    dbg("login pending-steal check failed: " + (e && e.message ? e.message : e));
+                }
             } else if (url.includes("/v0304_player/equipSkin")) {
                 // response is a bare quoted skin id, e.g. "body.2"
                 try {
@@ -2499,7 +2541,9 @@
                     if (lastKnownPlayerData) {
                         lastKnownPlayerData.EquippedSkinId = skinId;
                     }
-                } catch (e) {}
+                } catch (e) {
+                    dbg("equipSkin parse failed: " + (e && e.message ? e.message : e));
+                }
             }
         } catch (e) {
             // 13.5 swallowed clone.text() throws silently. log them.
@@ -2510,7 +2554,7 @@
 
     console.log = function (...args) {
         oldLog.apply(console, args);
-        // feed the raw-capture buffer for atlasCap() debugging
+        // feed the raw buffer for atlasCap()
         _rawPush("log", args);
         // 13.5: a throw in any branch below unwound the for-loop and every
         // state transition after it was silently missed. wrap it.
@@ -2518,16 +2562,15 @@
             for (const arg of args) {
                 if (typeof arg !== "string") continue;
 
-                // ratings payload also arrives via logged web-request text
-                // (login, echoed matchEnd). tryParseAndUpdate dedupes.
+                // ratings can also come in via logged request text (login, echoed
+                // matchEnd). tryParseAndUpdate dedupes with the fetch hook.
                 if (arg.includes('"ModesGlicko"')) {
                     const json = arg.substring(arg.indexOf("{"));
                     tryParseAndUpdate(json);
                 }
 
-                // ---- Field entry: queue warm-up OR real match forming ----
-                // line shape:
-                //   ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
+                // ---- init line: queue warm-up OR real match forming ----
+                // shape: ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
                 // UserId is the discriminator. warm-up logs the local player
                 // with an EMPTY UserId (verified 5x in 7/27 log dump); real
                 // match inits always populate it.
@@ -2580,9 +2623,9 @@
                     }
                 }
 
-                // ---- Left match another way (rage-quit, back-out) ----
+                // ---- left match another way (rage-quit, back-out) ----
                 // LeaveRoom / fresh queue can't coexist with mid-match. freeze
-                // and clear so Imposter survives early exits.
+                // so Imposter survives early exits.
                 if (arg.includes("PhotonNetwork:LeaveRoom") ||
                     arg.includes("Set player matchmaking start time")) {
                     if (_inMatch) {
@@ -2594,10 +2637,10 @@
                     resetMatchPopupState();
                 }
 
-                // ---- Return-to-menu / recovery signals ----
+                // ---- return-to-menu / recovery signals ----
                 // v13.4 used "OnJoinedRoom"/"OnLeftRoom" (never appear) and
                 // "OnDisconnected" (only matched as substring of
-                // "OurOnDisconnected"). these are the actual log strings.
+                // "OurOnDisconnected"). these are the actual strings.
                 // gate restore on !_inMatch or a reconnect storm respawns the HUD.
                 // "Starting SetNickname" covers practice/private, which emit
                 // no room strings on exit.
@@ -2660,6 +2703,7 @@
             }
             eventConfigLoaded = true;
         } catch (e) {
+            dbg("loadEventConfig failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Event config load failed:", e);
         }
         return eventConfig;
@@ -2674,7 +2718,7 @@
 
     // ---------- Clan role permissions (server-driven) ----------
     // defaults match the old hardcoded behavior. admin/clanPerms can override
-    // any subset, e.g. { elder: { kick: true } }.
+    // any subset, e.g. { elder: { kick: true } }, no redeploy needed.
     const CLAN_ROLE_PERM_DEFAULTS = {
         leader:   { editClanInfo: true,  tagStyle: true,  kick: true,  approve: true,  roleChange: true,  transfer: true,  disband: true  },
         coleader: { editClanInfo: false, tagStyle: false, kick: true,  approve: true,  roleChange: true,  transfer: false, disband: false },
@@ -2691,11 +2735,12 @@
             clanRolePerms = snap.exists() ? snap.data() : null;
             clanRolePermsLoaded = true;
         } catch (e) {
+            dbg("loadClanRolePerms failed (falling back to defaults): " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Clan role perms load failed:", e);
         }
     }
 
-    // stored bool wins; missing = default. unknown role -> member (most restrictive).
+    // stored bool wins, missing = default. unknown role -> member (most restrictive).
     function rolePerm(role, key) {
         const r = (role && CLAN_ROLE_PERM_DEFAULTS[role]) ? role : "member";
         const stored = clanRolePerms?.[r]?.[key];
@@ -2708,7 +2753,8 @@
         return me?.role ?? "member";
     }
 
-    // offset learned from serverTimestamp round-trips. cosmetic only, never scoring.
+    // offset learned from serverTimestamp round-trips. cosmetic countdowns only,
+    // never scoring.
     function serverNow() {
         return Date.now() + (serverNowOffset ?? 0);
     }
@@ -3006,7 +3052,7 @@
     }
 
     // live clan-doc listener. attach while Clan tab is open, detach on close.
-    // callback must render from the snapshot, no refetching, or costs triple.
+    // callback renders straight from the snapshot — refetching triples reads.
     let _clanUnsub = null;
     let _clanListenerId = null;
     let _clanAttaching = false; // v13.6: guard against re-entry during init await
@@ -3079,6 +3125,7 @@
                 }
             );
         } catch (e) {
+            dbg("attachClanListener failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Clan listener attach failed:", e);
             _clanListenerId = null;
         } finally {
@@ -3122,13 +3169,14 @@
             clanLoaded = true;
             clanLoadedForAccount = uid;
         } catch (e) {
+            dbg("loadClanData failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Clan load failed:", e);
         }
     }
 
-    // COST: refreshDirectory reads EVERY clan doc + 1 write. fine for structural
-    // changes (create/join/kick/leave). routine per-match MMR ticks go through
-    // refreshDirectoryThrottled instead.
+    // refreshDirectory reads EVERY clan doc + 1 write. fine for structural
+    // changes (create/join/kick/leave). routine per-match MMR ticks go
+    // through refreshDirectoryThrottled.
 
     // zero-read patch of my own entry in the in-memory directory
     function patchMyClanInDirectory() {
@@ -3151,11 +3199,15 @@
     const DIR_REFRESH_THROTTLE_MS = 3 * 60 * 1000;
 
     async function refreshDirectoryThrottled(fb) {
-        patchMyClanInDirectory();
-        const now = Date.now();
-        if (now - lastDirRefreshAt < DIR_REFRESH_THROTTLE_MS) return;
-        lastDirRefreshAt = now;
-        await refreshDirectory(fb);
+        try {
+            patchMyClanInDirectory();
+            const now = Date.now();
+            if (now - lastDirRefreshAt < DIR_REFRESH_THROTTLE_MS) return;
+            lastDirRefreshAt = now;
+            await refreshDirectory(fb);
+        } catch (e) {
+            dbg("refreshDirectoryThrottled threw: " + (e && e.message ? e.message : e));
+        }
     }
 
 
@@ -3509,6 +3561,7 @@
             await fb.setDoc(fb.doc(fb.db, "clans_directory", "index"), { clans });
             clanDirectory = clans;
         } catch (e) {
+            dbg("refreshDirectory failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Directory refresh failed:", e);
         }
         // repaint title in case standings flipped clan-lead status
@@ -3698,13 +3751,14 @@
                 await fb.deleteDoc(ref);
             }
         } catch (e) {
-            // notices are best-effort
+            // notices are best-effort, don't spam the user
+            dbg("checkClanNotices failed (non-fatal): " + (e && e.message ? e.message : e));
         }
     }
 
     // ---------- Role management ----------
     // leader > coleader > elder > member. multiple coleaders/elders allowed.
-    // gating enforced client-side (honor system).
+    // gating is client-side (honor system) — server rules don't enforce it.
 
     const ROLE_RANK = { leader: 3, coleader: 2, elder: 1, member: 0 };
 
@@ -3857,7 +3911,7 @@
 
     // ---------- Clan tag styling ----------
     // leader owns clan.tagStyle. members opt in via localStorage so the clan
-    // doc doesn't balloon. getClanTagPrefix() returns TMP markup used at Apply.
+    // doc doesn't balloon. getClanTagPrefix() returns TMP markup for Apply.
 
     const CLAN_TAG_OPTIN_KEY = "rgHudUseClanTag";
 
@@ -3908,9 +3962,9 @@
         return null;
     }
 
-    // strip a leading styled [TAG] from a raw nickname when it matches our tag.
+    // strip a leading styled [TAG] from a raw nickname if it matches our tag.
     // without this, the opt-in prefix stacks a second copy ([KING] [KING] ...).
-    // tolerates any TMP markup interleaved between the letters.
+    // tolerates TMP markup interleaved between the letters.
     function stripLeadingClanTagMarkup(raw) {
         const tag = String(myClan?.tag ?? "").trim();
         if (!raw || !tag) return raw || "";
@@ -4028,26 +4082,30 @@
     // ---------- Clan view rendering ----------
 
     async function renderClanView() {
-        const view = document.getElementById("rgClanView");
-        if (!view) return;
+        try {
+            const view = document.getElementById("rgClanView");
+            if (!view) return;
 
-        if (!lastKnownPlayerData) {
-            view.innerHTML = `<div style="opacity:.8;">Log in or play a match first to use clans.</div>`;
-            return;
+            if (!lastKnownPlayerData) {
+                view.innerHTML = `<div style="opacity:.8;">Log in or play a match first to use clans.</div>`;
+                return;
+            }
+
+            view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
+            await loadClanData(true);
+            const fb = await initFirebase();
+            // v13.6: dropped force=true on the two admin config loaders. they
+            // change so rarely the first session read is fine to cache. saves ~2
+            // Firestore reads per tab open. loadClanData(true) stays because
+            // clanless users have no live listener and need a fresh directory.
+            if (fb) await loadEventConfig(fb);
+            if (fb) await loadClanRolePerms(fb);
+
+            renderClanViewFromMemory();
+            if (myClan) attachClanListener();
+        } catch (e) {
+            dbg("renderClanView threw: " + (e && e.message ? e.message : e));
         }
-
-        view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
-        await loadClanData(true);
-        const fb = await initFirebase();
-        // v13.6: dropped force=true on the two admin config loaders. they
-        // change so rarely the first session read is fine to cache. saves ~2
-        // Firestore reads per tab open. loadClanData(true) stays because
-        // clanless users have no live listener and need a fresh directory.
-        if (fb) await loadEventConfig(fb);
-        if (fb) await loadClanRolePerms(fb);
-
-        renderClanViewFromMemory();
-        if (myClan) attachClanListener();
     }
 
     // zero-read repaint from in-memory myClan
@@ -4369,6 +4427,7 @@
 
     // rendered temporarily into the clan view
     async function showManageMemberMenu(userId, name, targetRole, actorRole, actorIsLeader) {
+      try {
         const view = document.getElementById("rgClanView");
         if (!view) return;
 
@@ -4417,6 +4476,9 @@
             btn.onclick = () => actions[parseInt(btn.getAttribute("data-i"))].run();
         });
         document.getElementById("rgMgBack").onclick = renderClanView;
+      } catch (e) {
+        dbg("showManageMemberMenu threw: " + (e && e.message ? e.message : e));
+      }
     }
 
     function escapeHtml(s) {
@@ -4425,7 +4487,6 @@
         ));
     }
 
-    // v13.6: on-demand session summary. plain text via showDialog.
     // ---------- Boot ----------
 
     const wait = setInterval(() => {
@@ -4455,8 +4516,8 @@
 
 
     // ==================================================================
-    // 🎨 NAME FORGE. rich-text in-game nickname builder.
-    // wrapped so helper names (esc, el, ...) don't collide with the HUD.
+    // 🎨 NAME FORGE — rich-text in-game nickname builder.
+    // wrapped in an IIFE so helper names (esc, el, ...) don't collide with the HUD.
     // edits the IN-GAME nickname; ✏️ Rename edits the leaderboard name.
     // ==================================================================
     const RGNF = (function () {
@@ -4466,13 +4527,13 @@
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
   const STORE_KEY = 'rgNameForge.presets.v1';
   const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
-  // per-account state, legacy key read once as fallback on upgrade
+  // per-account state, legacy key read once as a fallback on upgrade
   let _currentUserId = null;
   let _lastRawNickname = '';
   const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
   const HISTORY_KEY = 'rgNameForge.history.v1';
-  // steal receipt. boot-time SetNickname echo can undo a fresh steal, so
-  // we re-apply once after boot if the login nickname doesn't match.
+  // steal receipt. boot-time SetNickname echo can undo a fresh steal, so we
+  // re-apply once after boot if the login nickname doesn't match.
   const pendingStealKey = () => 'rgNameForge.pendingSteal.v1.' + (_currentUserId || 'anon');
   const PENDING_STEAL_TTL_MS = 15 * 60 * 1000;
   const FABPOS_KEY = 'rgNameForge.fabPos.v1';
@@ -4936,7 +4997,7 @@
   async function applyNickname(code) {
     const token = await getIdToken();
     // guard: IndexedDB fallback can serve a stale token in multi-account
-    // browsers and apply to the WRONG account. fail loudly instead.
+    // browsers, which would apply to the WRONG account. fail loudly instead.
     let mismatch = null;
     try {
       const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -4962,7 +5023,7 @@
   }
 
   // once per page load: check the last steal survived the game's boot echo.
-  // mismatch -> re-apply once after 4s so our write lands last. TTL-bound.
+  // mismatch -> re-apply once after 4s so our write lands last. TTL-guarded.
   let _stealVerified = false;
   function verifyPendingSteal(rawNickname) {
     if (_stealVerified) return;
@@ -5368,7 +5429,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
 
-  // among-us role reveal on name steal. pointer-events:none + self-removal.
+  // among-us role reveal on name steal. pointer-events:none, self-removes.
   function showImposterReveal(raw) {
     if (!document.getElementById('rgnfImposterKf')) {
       const st = document.createElement('style');
@@ -5450,7 +5511,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     panel.appendChild(head);
 
     // touch-to-exit raw mode. wired once, fires only on real user input.
-    // touching a styling control clears the raw snapshot so its handler wins.
+    // touching a styling control clears the raw snapshot so that handler wins.
     if (!panel._rgnfRawExitWired) {
       panel._rgnfRawExitWired = true;
       const exitRawIfStylingTouch = (e) => {
@@ -6209,17 +6270,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   // ------------------------------------------------------------------
-  // Input capture guard, MUST register before the game's handlers.
+  // Input capture guard — MUST register before the game's handlers.
   // rocketgoal.io binds control keys at window capture and preventDefaults them.
-  // we run at document-start, register first, and stopImmediatePropagation for
-  // events aimed at our UI so the game never sees them.
+  // We run at document-start, register first, and stopImmediatePropagation
+  // for events aimed at our UI so the game never sees them.
   // ------------------------------------------------------------------
   function installInputGuard() {
     const inUI = (t) => t && t.closest && (t.closest('.rgnf-panel') || t.closest('.rgnf-fab'));
     const isTextField = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
 
-    // we take over editing for our own fields, mutate value ourselves and fire
-    // a synthetic input event. works no matter what the game does with the key.
+    // we take over editing for our own fields, mutate value ourselves and
+    // fire a synthetic input event. works no matter what the game does.
     window.addEventListener('keydown', (e) => {
       const t = e.target;
       if (!inUI(t)) return;
@@ -6290,14 +6351,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
         verifyStolenName(rawNickname) { verifyPendingSteal(rawNickname); },
         refresh() { if (_rgnfPanel) render(_rgnfPanel); },
         // called on Forge open and on account switch. per-account state wins;
-        // otherwise seed from the current account's live nickname (never leak).
+        // otherwise seed from the current account's live nickname (no cross-account leak).
         syncToCurrentPlayer(userId, displayName, rawNickname) {
           if (!userId) return;
           if (rawNickname) _lastRawNickname = String(rawNickname);
           const prevId = _currentUserId;
           _currentUserId = userId;
-          // must run before the same-account early return, verification fires
-          // on every boot, not just account switches (latch inside makes it free)
+          // must run BEFORE the same-account early return. verification fires
+          // on every boot, not just account switches (inner latch makes repeat calls cheap).
           verifyPendingSteal(rawNickname);
           if (prevId === userId) return;
           const perUser = loadJSON(stateKey(), null);
@@ -6317,9 +6378,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
             saveJSON(stateKey(), state);
           }
 
-          // must render unconditionally. panel DOM exists from page load,
-          // and sync runs before mountIn on first open, gating on _mountedIn
-          // meant the swapped state never reached the screen.
+          // render unconditionally. panel DOM exists from page load, and sync
+          // runs before mountIn on first open — gating on _mountedIn would
+          // strand the swapped state off-screen.
           if (_rgnfPanel) render(_rgnfPanel);
         },
         // re-parent the panel into the HUD tab; scroll lives on the container
