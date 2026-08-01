@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      14.3
-// @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, and anti-cheat that actually works.
+// @version      14.4
+// @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
@@ -13,11 +13,11 @@
 // @supportURL   https://github.com/wiljdaws/Tampermonkeys/issues
 // ==/UserScript==
 
+
 (function () {
     'use strict';
 
-    // Debug logging lives up here so anything below can call dbg() safely,
-    // including the early localStorage try/catches.
+    // dbg() defined up top so early localStorage try/catches can call it
     const oldLog = console.log;
     const RG_DEBUG = true;
     const _rgLogBuf = [];
@@ -50,8 +50,7 @@
             try { oldLog.call(console, "[RG HUD] pushError failed:", loggingFailed); } catch (e) {}
         }
     }
-    // Wire a text input so a "can't type" bug leaves a trail in the log:
-    // did focus land, did a keystroke ever arrive, did focus get yanked away.
+    // trace focus + first keystroke on an input so "can't type" bugs leave a trail
     function probeInput(el, label) {
         if (!el) { dbg(`probeInput(${label}): element missing`); return; }
         setTimeout(() => {
@@ -74,11 +73,50 @@
         el.addEventListener("focusout", onFirstBlur);
     }
 
-    // Expose on the page window so DevTools "top" context can hit rgDump().
+    // expose on page window so DevTools "top" context can call rgDump()
     (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).rgDump =
         () => oldLog.call(console, _rgLogBuf.join("\n"));
-    // Catch anything a handler throws so it shows up in the debug bundle
-    // instead of vanishing silently.
+
+    // raw console.log/warn from the game, not just our own dbg. lets us hunt
+    // for signals (team assignment, room events) without fragile snippets.
+    const _rawLogBuf = [];
+    function _rawPush(kind, args) {
+        try {
+            const parts = [];
+            for (let i = 0; i < args.length; i++) {
+                const a = args[i];
+                if (typeof a === "string") parts.push(a);
+                else { try { parts.push(JSON.stringify(a)); } catch (e) { parts.push(String(a)); } }
+            }
+            const line = "[" + (performance.now() / 1000).toFixed(2) + "s " + kind + "] " + parts.join(" ").slice(0, 1200);
+            _rawLogBuf.push(line);
+            if (_rawLogBuf.length > 800) _rawLogBuf.shift();
+        } catch (e) {}
+    }
+    const _rawOldWarn = console.warn;
+    console.warn = function () { _rawPush("warn", arguments); _rawOldWarn.apply(console, arguments); };
+    // console.log wrapper gets set later; we install a passthrough hook via oldLog above at line 21
+    // by wrapping _rawPush into the existing console.log override at the bottom of the script.
+
+    // fullscreen textarea dump so users can select-copy the raw buffer without
+    // clipboard perms or console truncation
+    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).atlasCap = function () {
+        const out = _rawLogBuf.join("\n");
+        const t = document.createElement("textarea");
+        t.value = out;
+        t.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9999999999;background:#000;color:#0f0;font:12px monospace;padding:8px;";
+        const c = document.createElement("button");
+        c.textContent = "Close";
+        c.style.cssText = "position:fixed;top:8px;right:8px;z-index:9999999999;padding:6px 12px;font-size:14px;";
+        c.onclick = function () { t.remove(); c.remove(); };
+        document.body.appendChild(t);
+        document.body.appendChild(c);
+        t.focus();
+        t.select();
+        return "dumped " + _rawLogBuf.length + " lines";
+    };
+    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).atlasCapReset = function () { _rawLogBuf.length = 0; };
+    // catch anything a handler throws so it lands in the debug bundle
     if (typeof window !== "undefined") {
         window.addEventListener("error", ev => {
             pushError(ev.error || ev.message || "unknown error", "window.error");
@@ -92,664 +130,8 @@
 
     // img not emoji, stays crisp cross-OS
     const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png';
-    const BUDDY_ATLAS_BASE = 'https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/';
-    // Classic stays commit-pinned so older installs keep a known-good sheet.
-    // Newer skins track main so art updates ship with the repo.
-    const BUDDY_SKINS = {
-        classic: {
-            id: "classic",
-            label: "Rocket Car",
-            sheetUrl: "https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/e29161741cedca30b6a72be401a4dc51b50470a9/atlas/rocket_buddy_sheet.png",
-            stages: [
-                { name: "Ignition", icon: "🛞" },
-                { name: "Rookie Booster", icon: "🏎️" },
-                { name: "Ace Racer", icon: "🚗" },
-                { name: "Champion Ride", icon: "🏁" },
-                { name: "Legendary Fleet", icon: "🚀" },
-            ],
-        },
-        goblin: {
-            id: "goblin",
-            label: "Garage Goblin",
-            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_garage_goblin_sheet.png",
-            stages: [
-                { name: "Oily Apprentice", icon: "🔧" },
-                { name: "Pit Crew Rookie", icon: "⛑️" },
-                { name: "Crew Chief", icon: "📋" },
-                { name: "Championship Engineer", icon: "🏆" },
-                { name: "Legendary Tuner", icon: "✨" },
-            ],
-        },
-        scrap: {
-            id: "scrap",
-            label: "Scrapyard Scrapling",
-            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_scrapyard_sheet.png",
-            stages: [
-                { name: "Tin Can Skater", icon: "🥫" },
-                { name: "Cart Chassis", icon: "🛒" },
-                { name: "Derby Crate", icon: "📦" },
-                { name: "Scrap Tank", icon: "🛡️" },
-                { name: "Junkyard King", icon: "👑" },
-            ],
-        },
-        critter: {
-            id: "critter",
-            label: "Arena Critters",
-            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_arena_critters_sheet.png",
-            stages: [
-                { name: "Bumper Hamster", icon: "🐹" },
-                { name: "Turbo Raccoon", icon: "🦝" },
-                { name: "Octane Fox", icon: "🦊" },
-                { name: "Rocket Panther", icon: "🐆" },
-                { name: "Stadium Griffin", icon: "🦅" },
-            ],
-        },
-        peasant: {
-            id: "peasant",
-            label: "Peasant → King",
-            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_peasant_king_sheet.png",
-            stages: [
-                { name: "Mudfoot Peasant", icon: "🌾" },
-                { name: "Village Squire", icon: "🗡️" },
-                { name: "Knight Errant", icon: "🛡️" },
-                { name: "Royal Champion", icon: "🏅" },
-                { name: "Legendary King", icon: "👑" },
-            ],
-        },
-        feline: {
-            id: "feline",
-            label: "Cat → Lion",
-            sheetUrl: BUDDY_ATLAS_BASE + "rocket_buddy_cat_lion_sheet.png",
-            stages: [
-                { name: "Kitten Spark", icon: "🐱" },
-                { name: "Alley Racer", icon: "😺" },
-                { name: "Track Lynx", icon: "🐈" },
-                { name: "Arena Panther", icon: "🐆" },
-                { name: "Legendary Lion", icon: "🦁" },
-            ],
-        },
-    };
-    const BUDDY_SKIN_ORDER = ["classic", "goblin", "scrap", "critter", "peasant", "feline"];
-
-    // Per-skin status voice. Classic keeps the original car garage lines below;
-    // other skins swap in themed copy for the same event keys.
-    const BUDDY_SKIN_VOICE = {
-        goblin: {
-            skinSelect: ({ name, label }) => [
-                `${name} clocked in as ${label}. Oil under the nails already.`,
-                `${name} grabbed a wrench bigger than their ego. Garage Goblin mode.`,
-                `${name} joined the pit crew. Someone hide the good sockets.`,
-            ],
-            sleepy: ({ name }) => [
-                `${name} is napping on a stack of tire catalogs. Do not start the impact gun.`,
-                `${name} entered sleep mode next to the oil drum. Snoring sounds like a loose belt.`,
-                `${name} is dreaming of perfectly torqued lug nuts and unlimited shop towels.`,
-            ],
-            neglected: ({ name }) => [
-                `${name} has started alphabetizing the rusted bolts. A pet might help.`,
-                `${name} wrote "WHERE HUMAN" in grease on the bay floor.`,
-                `${name} checked the toolbox again. Still no snacks. Only sockets.`,
-            ],
-            pet: ({ name }) => [
-                `${name} got a head pat and immediately tried to tune something that did not need tuning.`,
-                `${name} received affection. Horsepower of the heart: +12. Actual horsepower: classified.`,
-                `${name} was petted and left a tiny oily handprint of gratitude.`,
-                `${name} says "again." The cooldown and the shop manager both say no.`,
-            ],
-            evolve: ({ name, stageName }) => [
-                `${name} got promoted to ${stageName}. The pit wall just stood a little taller.`,
-                `${name} unlocked ${stageName}! Please admire the new grease stains responsibly.`,
-                `${name} evolved into ${stageName}. Somewhere, a tiny ratchet cried happy tears.`,
-            ],
-            matchBigWin: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} deep. The other cars asked for a different mechanic.`,
-                `${name} has entered championship-engineer rage. Telemetry is applauding.`,
-                `${name} is wrenching wins out of thin air. OSHA is concerned, impressed, then concerned.`,
-                `${name} tuned the lobby until it broke. In a good way.`,
-                `${name} is so hot the coolant is filing a complaint.`,
-            ],
-            matchHotWin: ({ name, streak }) => [
-                `${name} is ON FIRE in the bay. Keep flammable rags at a safe distance.`,
-                `${name} is ${Math.abs(streak)} wins deep and still asking for a smaller socket.`,
-                `${name} is cooking. Recipe: boost, spite, and a suspiciously clean air filter.`,
-                `${name} has entered main-character pit-crew mode.`,
-                `${name} smells victory. Also 5W-30.`,
-            ],
-            matchMultiWin: ({ name, wins }) => [
-                `${name} banked ${wins} wins and would like them hung above the tool chest.`,
-                `${name} chained ${wins} wins. Chain looks like a drive belt under tension.`,
-                `${name} racked up ${wins}. Loading additional swagger... and more rags.`,
-                `${name} secured ${wins} in a row. The clipboard is impressed.`,
-            ],
-            matchWin: ({ name }) => [
-                `${name} found the boost button and a torque wrench. Dangerous combo.`,
-                `${name} snagged a W. Momentum: initialized. Oil: everywhere.`,
-                `${name} says that was calculated. The dyno printout disagrees.`,
-                `${name} added one win and approximately twelve horsepower of attitude.`,
-            ],
-            matchBigLoss: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a shop towel.`,
-                `${name} requested a tactical blanket and no follow-up questions about alignment.`,
-                `${name} insists this is an extremely long training montage in the garage.`,
-                `${name} is building character. And a very sad parts list.`,
-            ],
-            matchColdLoss: ({ name, streak }) => [
-                `${name} is Frosty. Warm-up laps, snacks, and maybe a heated bay prescribed.`,
-                `${name} filed a formal complaint against matchmaking. In triplicate. Greasy.`,
-                `${name} needs encouragement, premium fuel, and a tiny scarf over the goggles.`,
-                `${name} is ${Math.abs(streak)} cold. Consider hot cocoa. Do not drink the coolant.`,
-            ],
-            matchMultiLoss: ({ name, losses }) => [
-                `${name} survived ${losses} learning opportunities at shop-floor speed.`,
-                `${name} calls those ${losses} losses "extensive field research."`,
-                `${name} logged ${losses} Ls into the shame ledger next to the invoices.`,
-                `${name} took ${losses} on the chin. Chin still has grease on it.`,
-            ],
-            matchLoss: ({ name }) => [
-                `${name} hit a learning opportunity at supersonic speed. Air filter unimpressed.`,
-                `${name} says the controller was slippery. Also everything else was oily.`,
-                `${name} lost. Blames physics. And that one mystery rattle.`,
-                `${name} took an L. Happens to the best of sockets.`,
-            ],
-            matchMixed: ({ name, wins, losses }) => [
-                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of torque specs.`,
-                `${name} had a complicated session. Telemetry just sighed in the bay.`,
-                `${name} went ${wins}-${losses}. Vibes: mixed oil grades.`,
-                `${name} banked wins AND losses. Equal-opportunity garage.`,
-            ],
-        },
-        scrap: {
-            skinSelect: ({ name, label }) => [
-                `${name} rolled out of the pile as ${label}. Rust is a lifestyle.`,
-                `${name} chose the scrapyard life. Magnet crane approved.`,
-                `${name} is now certified junkyard royalty. Tin crown pending.`,
-            ],
-            sleepy: ({ name }) => [
-                `${name} is sleeping inside a discarded fridge. Do not close the door.`,
-                `${name} parked for a power nap on a stack of license plates.`,
-                `${name} is dreaming of unlimited scrap and suspiciously shiny hubcaps.`,
-            ],
-            neglected: ({ name }) => [
-                `${name} has started collecting dust as a rare metal. A pet might help.`,
-                `${name} is composing a ballad titled "Where Did My Human Go (feat. Magnet)."`,
-                `${name} checked the scrap pile again. Still no snacks. Only bolts.`,
-            ],
-            pet: ({ name }) => [
-                `${name} was just petted. Structural integrity increased by emotionally significant amounts.`,
-                `${name} received head pats and is now legally unstoppable. Also slightly more rustproof.`,
-                `${name} has been petted and is pretending the tin exterior doesn't love it.`,
-                `${name} says "again." The cooldown says "absolutely not, scrapling."`,
-            ],
-            evolve: ({ name, stageName }) => [
-                `${name} welded up into ${stageName}. Insurance refused the call.`,
-                `${name} unlocked ${stageName}! Please admire the new dents responsibly.`,
-                `${name} evolved into ${stageName}. Somewhere, a dumpster is crying happy tears.`,
-            ],
-            matchBigWin: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} deep. The junkyard filed a restraining order on the lobby.`,
-                `${name} has weaponized scrap. Matchmaking is scared of magnets now.`,
-                `${name} is dominating so hard the leaderboard just typed "gg" in rust.`,
-                `${name} ascended to Junkyard King energy. Bow before the tin.`,
-            ],
-            matchHotWin: ({ name, streak }) => [
-                `${name} is ON FIRE! Keep flammable scrap at a safe distance.`,
-                `${name} is ${Math.abs(streak)} wins deep and unbearable already.`,
-                `${name} smells victory. Also acetylene.`,
-                `${name} is stacking Ws like crushed cars.`,
-            ],
-            matchMultiWin: ({ name, wins }) => [
-                `${name} bagged ${wins} wins. The bag is a shopping cart and it's bulging.`,
-                `${name} bulk-bought ${wins} wins. Costco of the scrapyard.`,
-                `${name} chained ${wins} wins together with actual chain. Artistic.`,
-                `${name} racked up ${wins}. Loading additional scrap swagger...`,
-            ],
-            matchWin: ({ name }) => [
-                `${name} snagged a W. Filed under "valuable scrap."`,
-                `${name} found the boost button in a glovebox they didn't own.`,
-                `${name} won. The magnet crane salutes.`,
-                `${name} added one win and approximately twelve rattles.`,
-            ],
-            matchBigLoss: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a tarp.`,
-                `${name} has entered rock bottom's scrap basement.`,
-                `${name} is speed-running character development in the junkyard.`,
-                `${name} volunteered as the control group. Again.`,
-            ],
-            matchColdLoss: ({ name }) => [
-                `${name} is Frosty. Warm-up laps and a heated seat from a donor car prescribed.`,
-                `${name} filed a formal complaint against matchmaking. Written on a license plate.`,
-                `${name} needs encouragement, premium fuel, and perhaps a tiny tarp-scarf.`,
-                `${name} is chilly. Emotionally. Structurally still holding.`,
-            ],
-            matchMultiLoss: ({ name, losses }) => [
-                `${name} survived ${losses} learning opportunities at dumpster speed.`,
-                `${name} lost ${losses}, but the wheels are still emotionally attached. Barely.`,
-                `${name} calls those ${losses} losses "extensive field research."`,
-                `${name} logged ${losses} Ls into the shame ledger. Ledger is a napkin.`,
-            ],
-            matchLoss: ({ name }) => [
-                `${name} hit a learning opportunity at supersonic scrap speed.`,
-                `${name} lost. Blames physics. And that one mystery rattle. All of them, actually.`,
-                `${name} took an L. Happens to the best of tin cans.`,
-                `${name} dropped a match. Match landed softly on a stack of hubcaps.`,
-            ],
-            matchMixed: ({ name, wins, losses }) => [
-                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of scrap grades.`,
-                `${name} went ${wins}-${losses}. Vibes: mixed metals.`,
-                `${name} had a bipartisan session in the junkyard.`,
-                `${name} banked wins AND losses. Equal-opportunity scrap pile.`,
-            ],
-        },
-        critter: {
-            skinSelect: ({ name, label }) => [
-                `${name} scampered into ${label} form. Stadium security unprepared.`,
-                `${name} chose Arena Critters. Tiny paws, catastrophic speed.`,
-                `${name} is now a mascot with teeth. Cheer carefully.`,
-            ],
-            sleepy: ({ name }) => [
-                `${name} is curled up in a goal hoop for a power nap.`,
-                `${name} entered sleep mode. Snoring is now available in surround squeak.`,
-                `${name} is dreaming of unlimited boost and suspiciously large sunflower seeds.`,
-            ],
-            neglected: ({ name }) => [
-                `${name} has started collecting dust bunnies as pets. A real pet might help.`,
-                `${name} is composing a dramatic ballad titled "Where Did My Human Go (feat. Hamster)."`,
-                `${name} checked the tunnel again. Still no snacks. Only echo.`,
-            ],
-            pet: ({ name }) => [
-                `${name} was just petted. Fluff-to-power ratio increased dramatically.`,
-                `${name} received head pats and is now legally unstoppable. Whiskers approved.`,
-                `${name} has been petted and is pretending not to purr-adjacent.`,
-                `${name} says "again." The cooldown says "absolutely not, critter."`,
-            ],
-            evolve: ({ name, stageName }) => [
-                `${name} evolved into ${stageName}. The stadium just got cuter and meaner.`,
-                `${name} unlocked ${stageName}! Please admire the new claws responsibly.`,
-                `${name} became ${stageName}. Somewhere, a tiny cheer squad lost its mind.`,
-            ],
-            matchBigWin: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} deep. The other cars filed a restraining order against the mascot.`,
-                `${name} has achieved dangerous levels of zoom. And squeak.`,
-                `${name} is dominating so hard the leaderboard just typed "gg" in pawprints.`,
-                `${name} has ascended. Matchmaking cannot follow the scent trail.`,
-            ],
-            matchHotWin: ({ name, streak }) => [
-                `${name} is ON FIRE! Keep flammable snacks at a safe distance.`,
-                `${name} is ${Math.abs(streak)} wins deep and unbearable already.`,
-                `${name} is cooking. Recipe: boost, spite, and sunflower seeds.`,
-                `${name} has that gleam in the whiskers. Bad news for everyone.`,
-            ],
-            matchMultiWin: ({ name, wins }) => [
-                `${name} bagged ${wins} wins. The bag is a cheek pouch and it's full.`,
-                `${name} chained ${wins} wins. Chain looks like a happy little stampede.`,
-                `${name} racked up ${wins}. Loading additional critter swagger...`,
-                `${name} secured ${wins} in a row. Ownership papers pending. Soft ones.`,
-            ],
-            matchWin: ({ name }) => [
-                `${name} snagged a W. Momentum: initialized. Tail: up.`,
-                `${name} found the boost button. This is getting dangerous. And adorable.`,
-                `${name} won. The universe permits this. The stadium cheers.`,
-                `${name} added one win and approximately twelve zoomies.`,
-            ],
-            matchBigLoss: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a tiny blanket.`,
-                `${name} requested a tactical burrow and no follow-up questions.`,
-                `${name} insists this is an extremely long training montage in the tunnels.`,
-                `${name} is building character. So much character. Very small body.`,
-            ],
-            matchColdLoss: ({ name }) => [
-                `${name} is Frosty. Warm-up laps and snacks prescribed. Prefer seeds.`,
-                `${name} filed a formal complaint against matchmaking. In squeaks.`,
-                `${name} needs encouragement, premium fuel, and perhaps a tiny scarf.`,
-                `${name} is chilly. Emotionally. Fur helps. Barely.`,
-            ],
-            matchMultiLoss: ({ name, losses }) => [
-                `${name} survived ${losses} learning opportunities at critter speed.`,
-                `${name} lost ${losses}, but the whiskers are still emotionally attached.`,
-                `${name} calls those ${losses} losses "extensive field research."`,
-                `${name} logged ${losses} Ls into the shame ledger. Ledger is a leaf.`,
-            ],
-            matchLoss: ({ name }) => [
-                `${name} hit a learning opportunity at supersonic squeak.`,
-                `${name} lost. Blames physics. And that one scary loud noise.`,
-                `${name} took an L. Happens to the best of paws.`,
-                `${name} dropped a match. Match landed softly in the burrow.`,
-            ],
-            matchMixed: ({ name, wins, losses }) => [
-                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of snacks.`,
-                `${name} went ${wins}-${losses}. Vibes: mixed nuts.`,
-                `${name} had a bipartisan session. Party animals only.`,
-                `${name} banked wins AND losses. Equal-opportunity stadium.`,
-            ],
-        },
-        peasant: {
-            skinSelect: ({ name, label }) => [
-                `${name} took up the ${label} path. Pitchfork optional. Attitude required.`,
-                `${name} chose Peasant → King. The mud remembers this decision.`,
-                `${name} is now on a royal arc. Try not to lose the crown in a ditch.`,
-            ],
-            sleepy: ({ name }) => [
-                `${name} is napping against a hay bale. Do not start the joust.`,
-                `${name} entered sleep mode. Snoring is now available in surround kingdom.`,
-                `${name} is dreaming of unlimited boost and suspiciously large feasts.`,
-            ],
-            neglected: ({ name }) => [
-                `${name} has started collecting dust as a noble hobby. A pet might help.`,
-                `${name} is composing a dramatic ballad titled "Where Did My Liege Go?"`,
-                `${name} checked the castle gate again. Still no snacks. Only mud.`,
-            ],
-            pet: ({ name }) => [
-                `${name} was just petted. Morale increased by emotionally significant amounts.`,
-                `${name} received head pats and is now legally unstoppable. Crown slightly crooked.`,
-                `${name} has been petted and is pretending knights don't love that.`,
-                `${name} says "again." The cooldown says "absolutely not, your muddiness."`,
-            ],
-            evolve: ({ name, stageName }) => [
-                `${name} ascended to ${stageName}. The village insurance premium just moved.`,
-                `${name} unlocked ${stageName}! Please admire the new armor responsibly.`,
-                `${name} evolved into ${stageName}. Somewhere, a tiny squire is crying happy tears.`,
-            ],
-            matchBigWin: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} deep. The other knights filed a restraining order.`,
-                `${name} has forgotten how losing works. Please do not remind the throne.`,
-                `${name} is on the podium so often it has a favorite step. And a crown polish.`,
-                `${name} has ascended to a plane matchmaking cannot follow. Royal decree.`,
-            ],
-            matchHotWin: ({ name, streak }) => [
-                `${name} is ON FIRE! Keep flammable banners at a safe distance.`,
-                `${name} is ${Math.abs(streak)} wins deep and unbearable already. Court agrees.`,
-                `${name} has entered main-character mode. Narrator sweating.`,
-                `${name} smells victory. Also mud. Mostly victory.`,
-            ],
-            matchMultiWin: ({ name, wins }) => [
-                `${name} banked ${wins} wins. Turbo confidence engaged. Feudal style.`,
-                `${name} claimed ${wins} in a row. Ownership papers pending. Very fancy.`,
-                `${name} stacked ${wins} wins. Stack structurally alarming. Also regal.`,
-                `${name} secured ${wins}. The clipboard (and the court) are impressed.`,
-            ],
-            matchWin: ({ name }) => [
-                `${name} snagged a W. Momentum: initialized. Pitchfork: raised.`,
-                `${name} won. The universe permits this. The village cheers.`,
-                `${name} says that was calculated. It was not. Still counts.`,
-                `${name} added one win and approximately twelve horsepower of destiny.`,
-            ],
-            matchBigLoss: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a warm hearth.`,
-                `${name} requested a tactical blanket and no follow-up questions about the joust.`,
-                `${name} insists this is an extremely long training montage in the mud.`,
-                `${name} is building character. So much character. Very royal suffering.`,
-            ],
-            matchColdLoss: ({ name }) => [
-                `${name} is Frosty. Warm-up laps, snacks, and a tiny scarf prescribed.`,
-                `${name} filed a formal complaint against matchmaking. Sealed with a sad crest.`,
-                `${name} needs encouragement, premium fuel, and perhaps a tiny cape.`,
-                `${name} is chilly. Emotionally. Crown frost forming.`,
-            ],
-            matchMultiLoss: ({ name, losses }) => [
-                `${name} survived ${losses} learning opportunities at quest speed.`,
-                `${name} lost ${losses}, but the honor is still emotionally attached.`,
-                `${name} calls those ${losses} losses "extensive field research."`,
-                `${name} logged ${losses} Ls into the shame ledger. Ledger is a scroll.`,
-            ],
-            matchLoss: ({ name }) => [
-                `${name} hit a learning opportunity at supersonic chivalry.`,
-                `${name} lost. Blames physics. And that one muddy pothole.`,
-                `${name} took an L. Happens to the best of knights.`,
-                `${name} dropped a match. Match landed softly on the village green.`,
-            ],
-            matchMixed: ({ name, wins, losses }) => [
-                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of quests.`,
-                `${name} went ${wins}-${losses}. Vibes: mixed feudalism.`,
-                `${name} had a bipartisan session. Court divided.`,
-                `${name} banked wins AND losses. Equal-opportunity kingdom.`,
-            ],
-        },
-        feline: {
-            skinSelect: ({ name, label }) => [
-                `${name} stretched into ${label}. The pride accepts this appointment.`,
-                `${name} chose Cat → Lion. Expect napping and sudden violence.`,
-                `${name} is now feline-coded. Pet at your own risk. Also please pet.`,
-            ],
-            sleepy: ({ name }) => [
-                `${name} is loafing in a sunbeam. Do not disturb the loaf.`,
-                `${name} entered sleep mode. Snoring is now available in surround purr.`,
-                `${name} is dreaming of unlimited boost and suspiciously large cardboard boxes.`,
-            ],
-            neglected: ({ name }) => [
-                `${name} has started collecting dust as a hobby. A pet might help. Immediately.`,
-                `${name} is composing a dramatic ballad titled "Where Did My Human Go (3am remix)."`,
-                `${name} knocked something off the counter for attention. Still no snacks.`,
-            ],
-            pet: ({ name }) => [
-                `${name} was just petted. Purr-to-power ratio increased dramatically.`,
-                `${name} received head pats and is now legally unstoppable. Chin scratches pending.`,
-                `${name} has been petted and is pretending not to love it. Tail says otherwise.`,
-                `${name} says "again." The cooldown says "absolutely not, legend."`,
-            ],
-            evolve: ({ name, stageName }) => [
-                `${name} evolved into ${stageName}. The pride just got louder.`,
-                `${name} unlocked ${stageName}! Please admire the new mane responsibly.`,
-                `${name} became ${stageName}. Somewhere, a tiny laser pointer is crying happy tears.`,
-            ],
-            matchBigWin: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} deep. The other cars filed a restraining order against the cat.`,
-                `${name} has forgotten how losing works. Cats invented that attitude.`,
-                `${name} is dominating so hard the leaderboard just typed "gg" in pawprints.`,
-                `${name} has ascended. Matchmaking cannot follow. Neither can gravity, apparently.`,
-            ],
-            matchHotWin: ({ name, streak }) => [
-                `${name} is ON FIRE! Keep flammable yarn at a safe distance.`,
-                `${name} is ${Math.abs(streak)} wins deep and unbearable already.`,
-                `${name} has entered main-character mode. Side characters fleeing.`,
-                `${name} smells victory. Also tuna. Mostly victory.`,
-            ],
-            matchMultiWin: ({ name, wins }) => [
-                `${name} bagged ${wins} wins. The bag is a paper bag. They sit in it now.`,
-                `${name} chained ${wins} wins. Chain looks like a happy little pounce streak.`,
-                `${name} racked up ${wins}. Loading additional feline swagger...`,
-                `${name} secured ${wins} in a row. Ownership papers pending. Of everything.`,
-            ],
-            matchWin: ({ name }) => [
-                `${name} snagged a W. Momentum: initialized. Tail: question mark → exclamation.`,
-                `${name} found the boost button. Knocked it off the table first, then used it.`,
-                `${name} won. The universe permits this. The cat permitted it first.`,
-                `${name} added one win and approximately twelve zoomies.`,
-            ],
-            matchBigLoss: ({ name, streak }) => [
-                `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule and a warm lap.`,
-                `${name} requested a tactical box and no follow-up questions.`,
-                `${name} insists this is an extremely long training montage in the sunbeam.`,
-                `${name} is building character. So much character. Very judgmental eyes.`,
-            ],
-            matchColdLoss: ({ name }) => [
-                `${name} is Frosty. Warm-up laps, snacks, and a tiny scarf prescribed.`,
-                `${name} filed a formal complaint against matchmaking. In meows. Loud ones.`,
-                `${name} needs encouragement, premium fuel, and perhaps a tiny sweater.`,
-                `${name} is chilly. Emotionally. Fur helps. Attitude does not.`,
-            ],
-            matchMultiLoss: ({ name, losses }) => [
-                `${name} survived ${losses} learning opportunities at cat speed.`,
-                `${name} lost ${losses}, but the pride is still emotionally attached.`,
-                `${name} calls those ${losses} losses "extensive field research."`,
-                `${name} logged ${losses} Ls into the shame ledger. Ledger was knocked off the table.`,
-            ],
-            matchLoss: ({ name }) => [
-                `${name} hit a learning opportunity at supersonic meow.`,
-                `${name} lost. Blames physics. And that one laser pointer distraction.`,
-                `${name} took an L. Happens to the best of legends.`,
-                `${name} dropped a match. Match landed softly. Then got batted under the couch.`,
-            ],
-            matchMixed: ({ name, wins, losses }) => [
-                `${name} processed ${wins}W/${losses}L and now requires a tiny spreadsheet of naps.`,
-                `${name} went ${wins}-${losses}. Vibes: mixed treats.`,
-                `${name} had a bipartisan session. Party animals / house cats only.`,
-                `${name} banked wins AND losses. Equal-opportunity pride.`,
-            ],
-        },
-    };
-
-    function buddyStatusLines(kind, ctx = {}) {
-        const skin = currentBuddySkin();
-        const pack = BUDDY_SKIN_VOICE[skin.id];
-        const make = pack && pack[kind];
-        if (!make) return null;
-        const name = ctx.name || buddyDisplayName();
-        return make({
-            name,
-            label: skin.label,
-            streak: ctx.streak ?? 0,
-            wins: ctx.wins ?? 0,
-            losses: ctx.losses ?? 0,
-            stageName: ctx.stageName || "",
-            skin,
-        });
-    }
-
     const atlasIconHtml = () => `<img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">`;
 
-    // buddyMood() keys -> sheet mood block names
-    const BUDDY_MOOD_SPRITE = {
-        focused: "idle",
-        onFire: "onFire",
-        frosty: "frosty",
-        sleepy: "sleepy",
-        neglected: "neglected",
-    };
-
-    const buddySheetLoadStateBySkin = Object.create(null); // skinId -> idle|loading|ready|failed
-    function getBuddySkin(skinId) {
-        const id = skinId && BUDDY_SKINS[skinId] ? skinId : "classic";
-        return BUDDY_SKINS[id];
-    }
-    function currentBuddySkin() {
-        ensureBuddy();
-        const skin = getBuddySkin(buddyState.skinId);
-        if (buddyState.skinId !== skin.id) {
-            buddyState.skinId = skin.id;
-            saveBuddyState();
-        }
-        return skin;
-    }
-    function buddySheetLoadStateFor(skinId) {
-        return buddySheetLoadStateBySkin[skinId] || "idle";
-    }
-    function buddySheetCssUrl(sheetUrl) {
-        // Single quotes inside url() so this is safe in HTML style="..." attributes.
-        return `url('${sheetUrl}')`;
-    }
-    function applyBuddySpriteSheet(el, sheetUrl) {
-        if (!el) return;
-        el.classList.remove("is-fallback");
-        el.style.setProperty("--rb-sheet-url", buddySheetCssUrl(sheetUrl));
-        el.textContent = "";
-    }
-    function ensureBuddySheetLoaded(skinId) {
-        const skin = getBuddySkin(skinId || buddyState?.skinId);
-        const current = buddySheetLoadStateFor(skin.id);
-        if (current === "loading" || current === "ready") return;
-        buddySheetLoadStateBySkin[skin.id] = "loading";
-        const img = new Image();
-        const finish = state => {
-            buddySheetLoadStateBySkin[skin.id] = state;
-            const activeId = buddyState?.skinId || "classic";
-            if (skin.id !== activeId) return;
-            const view = document.getElementById("rgBuddyView");
-            const buddyHasFocus = !!(view && view.contains(document.activeElement));
-            if (state === "ready") {
-                // Swap emoji → sprite in place so a focused control doesn't leave the fallback stuck.
-                applyBuddySpriteSheet(document.getElementById("rgBuddySprite"), skin.sheetUrl);
-            }
-            if (view && view.style.display !== "none" && !buddyHasFocus) renderBuddyView();
-            if (state === "ready" && buddyState?.equipped && lastKnownPlayerData) {
-                if (buddyHasFocus) {
-                    const flair = document.getElementById("rgBuddyEquippedFlair");
-                    if (flair) flair.innerHTML = buddyMiniVisualHtml(buddyStage());
-                } else {
-                    updateHUD(lastKnownPlayerData);
-                }
-            }
-        };
-        img.onload = () => finish("ready");
-        img.onerror = () => finish("failed");
-        img.referrerPolicy = "no-referrer";
-        img.src = skin.sheetUrl;
-    }
-
-    function ensureBuddySpriteStyles() {
-        if (document.getElementById("rgBuddySpriteStyle")) return;
-        const style = document.createElement("style");
-        style.id = "rgBuddySpriteStyle";
-        style.textContent = `
-.rg-buddy-sprite {
-  --rb-tile: 112px;
-  --rb-sheet-w: 2240px; /* 2560 * (112/128) */
-  --rb-sheet-h: 560px;  /* 640 * (112/128) */
-  --rb-mood: 0;
-  --rb-stage: 0;
-  --rb-sheet-url: none;
-  width: var(--rb-tile);
-  height: var(--rb-tile);
-  display: inline-block;
-  flex-shrink: 0;
-  background-image: var(--rb-sheet-url);
-  background-repeat: no-repeat;
-  background-size: var(--rb-sheet-w) var(--rb-sheet-h);
-  background-position-x: calc(var(--rb-mood) * -4 * var(--rb-tile));
-  background-position-y: calc(var(--rb-stage) * -1 * var(--rb-tile));
-  animation: rg-buddy-steps 600ms steps(4) infinite;
-  transform: translateZ(0);
-}
-@keyframes rg-buddy-steps {
-  from { background-position-x: calc(var(--rb-mood) * -4 * var(--rb-tile)); }
-  to   { background-position-x: calc(var(--rb-mood) * -4 * var(--rb-tile) - 4 * var(--rb-tile)); }
-}
-.rg-buddy-sprite.stage-1 { --rb-stage: 0; }
-.rg-buddy-sprite.stage-2 { --rb-stage: 1; }
-.rg-buddy-sprite.stage-3 { --rb-stage: 2; }
-.rg-buddy-sprite.stage-4 { --rb-stage: 3; }
-.rg-buddy-sprite.stage-5 { --rb-stage: 4; }
-.rg-buddy-sprite.mood-idle { --rb-mood: 0; }
-.rg-buddy-sprite.mood-onFire { --rb-mood: 1; }
-.rg-buddy-sprite.mood-frosty { --rb-mood: 2; }
-.rg-buddy-sprite.mood-sleepy { --rb-mood: 3; }
-.rg-buddy-sprite.mood-neglected { --rb-mood: 4; }
-.rg-buddy-sprite.is-fallback {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background-image: none;
-  animation: none;
-  font-size: 56px;
-  line-height: 1;
-}
-.rg-buddy-mini {
-  --rb-mini-stage: 0;
-  --rb-sheet-url: none;
-  width: 20px;
-  height: 20px;
-  display: inline-block;
-  vertical-align: middle;
-  background-image: var(--rb-sheet-url);
-  background-repeat: no-repeat;
-  background-size: 400px 100px;
-  background-position: 0 calc(var(--rb-mini-stage) * -20px);
-}
-.rg-buddy-skin-select {
-  width: 100%;
-  margin-top: 4px;
-  background: #0c1218;
-  color: #e8f2f8;
-  border: 1px solid #00bfff55;
-  border-radius: 6px;
-  padding: 5px 6px;
-  font-size: 11px;
-}
-@media (prefers-reduced-motion: reduce) {
-  .rg-buddy-sprite { animation: none; }
-}
-`;
-        document.head.appendChild(style);
-    }
 
     // ---------- Settings (persisted in localStorage) ----------
 
@@ -850,7 +232,9 @@
             if (saved && saved.top && saved.left) {
                 pos = { top: saved.top, left: saved.left, right: "auto" };
             }
-        } catch (e) {}
+        } catch (e) {
+            dbg("rgHudPos parse failed, falling back to default");
+        }
 
         hud.style.cssText = `
             position:fixed;
@@ -1005,7 +389,6 @@
                     <span id="rgWarnDot" title="" style="display:none;color:#ffbb33;font-weight:bold;font-size:14px;cursor:help;" data-tip="ATLAS saw something unexpected (hover for details, or run rgDump() for full log)">⚑</span>
                     <button id="rgClanBtn" class="rgIconBtn" title="Clans">🛡️</button>
                     <button id="rgForgeBtn" class="rgIconBtn" title="Name Forge">🎨</button>
-                    <button id="rgBuddyBtn" class="rgIconBtn" title="Rocket Buddy" aria-label="Rocket Buddy" aria-controls="rgBuddyView" aria-expanded="false">🚗</button>
                     <button id="rgSettingsBtn" class="rgIconBtn" title="Settings">⚙</button>
                     <button id="rgMinimize" class="rgIconBtn" title="Minimize">–</button>
                 </div>
@@ -1022,13 +405,11 @@
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
-                        <button id="rgSetRecap" class="rgBtn" style="width:100%;margin-top:4px;">📊 Session recap</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">📋 Copy debug bundle</button>
                     </div>
                 </div>
                 <div id="rgClanView" style="display:none;">Loading clans...</div>
                 <div id="rgForgeView" style="display:none;max-height:520px;overflow-y:auto;overflow-x:hidden;"></div>
-                <div id="rgBuddyView" style="display:none;"></div>
                 <div id="rgActionRow" style="margin-top:6px;display:flex;gap:4px;">
                     <button id="rgRename" class="rgBtn" style="flex:1;">✏️ Rename</button>
                     <button id="rgSub" class="rgBtn" style="flex:1;">📺 Sub</button>
@@ -1127,20 +508,15 @@
         const clanView = document.getElementById("rgClanView");
         const panel = document.getElementById("rgSettingsPanel");
         const forgeView = document.getElementById("rgForgeView");
-        const buddyView = document.getElementById("rgBuddyView");
-        const buddyBtn = document.getElementById("rgBuddyBtn");
         const body = document.getElementById("rgBody");
         const actionRow = document.getElementById("rgActionRow");
         function showStatsOnly() {
             clanView.style.display = "none";
             forgeView.style.display = "none";
-            buddyView.style.display = "none";
-            buddyBtn.setAttribute("aria-expanded", "false");
             panel.style.display = "none";
             statsView.style.display = "block";
             actionRow.style.display = "flex";
             body.scrollTop = 0;
-            stopBuddyRefreshTimer();
             // drop clan listener when nobody's looking
             detachClanListener();
         }
@@ -1176,20 +552,6 @@
             RGNF.mountIn(forgeView);
             // syncToCurrentPlayer only renders on account change
             if (RGNF.refresh) RGNF.refresh();
-        };
-
-        // Buddy tab, same pattern as Clan/Forge
-        document.getElementById("rgBuddyBtn").onclick = () => {
-            const showingBuddy = buddyView.style.display !== "none";
-            dbg(`Buddy panel ${showingBuddy ? "closed" : "opened"}`);
-            if (showingBuddy) { showStatsOnly(); return; }
-            showStatsOnly();
-            statsView.style.display = "none";
-            buddyView.style.display = "block";
-            buddyBtn.setAttribute("aria-expanded", "true");
-            actionRow.style.display = "none";
-            renderBuddyView();
-            startBuddyRefreshTimer();
         };
 
         // route through showStatsOnly so opening from Forge doesn't stack views
@@ -1235,11 +597,6 @@
             applyGlowSettings();
         };
 
-        document.getElementById("rgSetRecap").onclick = () => {
-            dbg("Session recap opened");
-            showSessionRecap();
-        };
-
         // trim player data, don't dump the whole login blob
         document.getElementById("rgSetCopyDebug").onclick = async () => {
             dbg("Copy debug bundle clicked");
@@ -1250,45 +607,22 @@
                     ModesGlicko: lastKnownPlayerData.ModesGlicko,
                     ModesData: lastKnownPlayerData.ModesData,
                 } : null;
-                // Trimmed so we see the important bits without dumping every
-                // per-account match-total we've ever tracked.
-                const trimmedBuddy = buddyState ? {
-                    schemaVersion: buddyState.schemaVersion,
-                    name: buddyState.name,
-                    skinId: buddyState.skinId,
-                    equipped: buddyState.equipped,
-                    matchesDriven: buddyState.matchesDriven,
-                    birthAt: buddyState.birthAt,
-                    lastPetAt: buddyState.lastPetAt,
-                    lastMatchAt: buddyState.lastMatchAt,
-                    lastMoodKey: buddyState.lastMoodKey,
-                    lastSeenStage: buddyState.lastSeenStage,
-                    lastStatus: buddyState.lastStatus,
-                    lastStatusAt: buddyState.lastStatusAt,
-                    bestRankByMode: buddyState.bestRankByMode,
-                    accountKeys: Object.keys(buddyState.accountMatchTotals || {}).length,
-                } : null;
-                // Snapshot of what the user is looking at right now — tells us
-                // whether the buddy view / a dialog was even visible when a
-                // click didn't work.
+                // snapshot of what the user is looking at, so "click didn't work"
+                // bugs show whether the dialog was even visible.
                 const ui = (() => {
                     const q = id => document.getElementById(id);
                     const visible = el => !!(el && el.style.display !== "none");
                     const dlg = q("rgDialog");
                     return {
                         hudExists: !!q("rgHud"),
-                        buddyBtnExists: !!q("rgBuddyBtn"),
-                        buddyViewOpen: visible(q("rgBuddyView")),
                         clanViewOpen: visible(q("rgClanView")),
                         forgeViewOpen: visible(q("rgForgeView")),
                         settingsOpen: visible(q("rgSettingsPanel")),
                         dialogOpen: dlg && dlg.style.display === "flex",
-                        buddyRenameBtn: !!q("rgBuddyRename"),
-                        buddySkinSelect: !!q("rgBuddySkin"),
                     };
                 })();
-                // Basic device fingerprint — tells us if a report is from
-                // mobile Safari vs desktop Chrome, tiny viewport, etc.
+                // device fingerprint so bug reports show mobile vs desktop,
+                // viewport size, touch, etc.
                 const device = (() => {
                     const n = typeof navigator !== "undefined" ? navigator : {};
                     const s = typeof screen !== "undefined" ? screen : {};
@@ -1318,7 +652,6 @@
                         _lastRecoverySignalAt,
                         _lastValidRatingsAt,
                     },
-                    buddy: trimmedBuddy,
                     ui,
                     clan: myClan ? {
                         id: myClan.id,
@@ -1353,8 +686,8 @@
 
     function clampHudOnScreen() {
         if (!hud) return;
-        // hidden HUD returns zeros from getBoundingClientRect and we'd persist
-        // top-left as the "corrected" pos. setAutoVisible re-clamps on show.
+        // hidden HUD returns zeros from getBoundingClientRect and we'd
+        // persist top-left as the "corrected" pos. re-clamps on show.
         if (hud.style.display === "none" || hud.offsetWidth === 0) return;
         const rect = hud.getBoundingClientRect();
         const vw = window.innerWidth;
@@ -1385,22 +718,27 @@
     function dragElement(el, handle) {
         let dx = 0, dy = 0;
 
+        // addEventListener instead of document.onmousemove= so we don't
+        // clobber any other drag handler the page or game already set.
         handle.onmousedown = e => {
             if (e.target.closest(".rgIconBtn")) return;
             e.preventDefault();
             dx = e.clientX;
             dy = e.clientY;
-            document.onmousemove = drag;
-            document.onmouseup = () => {
-                document.onmousemove = null;
-                document.onmouseup = null;
+            const onUp = () => {
+                document.removeEventListener("mousemove", drag);
+                document.removeEventListener("mouseup", onUp);
                 try {
                     localStorage.setItem("rgHudPos", JSON.stringify({
                         top: el.style.top,
                         left: el.style.left,
                     }));
-                } catch (err) {}
+                } catch (err) {
+                    dbg("rgHudPos save on drag-end failed");
+                }
             };
+            document.addEventListener("mousemove", drag);
+            document.addEventListener("mouseup", onUp);
         };
 
         function drag(e) {
@@ -1409,7 +747,7 @@
             const moveY = dy - e.clientY;
             dx = e.clientX;
             dy = e.clientY;
-            // title bar is the only drag handle, off-screen = stranded til reload
+            // clamp: title bar is the only drag handle, off-screen strands the HUD
             const MARGIN = 40;
             let newTop = el.offsetTop - moveY;
             let newLeft = el.offsetLeft - moveX;
@@ -1433,11 +771,11 @@
         if (!hud) return;
         hud.style.display = visible ? "block" : "none";
         if (!visible) {
-            // tooltip lives on body, hide it or it strands over the game
+            // tooltip lives on body, kill it or it strands over the game
             const tip = document.getElementById("rgTooltip");
             if (tip) tip.style.opacity = "0";
         }
-        // window may have resized while hidden
+        // re-clamp on show, window may have resized while hidden
         if (visible) clampHudOnScreen();
     }
 
@@ -1457,7 +795,7 @@
     }
 
     // ---------- Win/loss streak tracking ----------
-    // game only gives cumulative totals, diff between updates to get per-match.
+    // game only gives cumulative totals — diff between updates for per-match.
     // +ve = win streak, -ve = loss streak. resets on account change / session end.
 
     let streakData = null;
@@ -1490,7 +828,8 @@
 
         if (matchDiff <= 0) return;
 
-        // can't know the interleaving. pure blocks stay as blocks, mixed collapses to net sign mag 1
+        // no way to know interleaving. pure win/loss block extends the streak,
+        // mixed collapses to net sign, magnitude 1
         const losses = matchDiff - winDiff;
         if (winDiff > 0 && losses === 0) {
             streakData.streak = streakData.streak > 0 ? streakData.streak + winDiff : winDiff;
@@ -1522,8 +861,8 @@
 
     // ---------- Session deltas ----------
 
-    // one continuous play run. resets on account change or after SESSION_IDLE_MS
-    // localStorage + timestamp. refresh keeps it, overnight starts fresh.
+    // one continuous play run. resets on account change or SESSION_IDLE_MS.
+    // localStorage + timestamp: refresh keeps it, overnight starts fresh.
     const SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
 
     let sessionStart = null;
@@ -1582,886 +921,6 @@
         return ` <span style="color:${color};font-size:10px;">(${sign}${diff})</span>`;
     }
 
-    // ---------- Rocket Buddy (v13.6) ----------
-    // local-only tamagotchi. per-device not per-account. no Firestore.
-    // stage gates: matches since install + rank floor at 3+. nothing retroactive.
-    // Shared progression gates. Display names/icons come from the selected skin.
-    const BUDDY_STAGE_GATES = [
-        { id: 1, matches: 0,   rankTop: null },
-        { id: 2, matches: 50,  rankTop: null },
-        { id: 3, matches: 150, rankTop: 500 },
-        { id: 4, matches: 400, rankTop: 100 },
-        { id: 5, matches: 800, rankTop: 20  },
-    ];
-    // Back-compat alias — some helpers still read .length / index by id.
-    const BUDDY_STAGES = BUDDY_STAGE_GATES;
-    const BUDDY_PET_COOLDOWN_MS = 60 * 60 * 1000; // 1h between pets
-    const BUDDY_STORAGE_KEY = "rgHudBuddy";
-    const BUDDY_SCHEMA_VERSION = 4;
-
-    let buddyState = null;
-    let buddyRefreshTimer = null;
-    try { buddyState = JSON.parse(localStorage.getItem(BUDDY_STORAGE_KEY) ?? "null"); }
-    catch (e) { pushError(e, "loadBuddyState"); }
-
-    function saveBuddyState() {
-        try { localStorage.setItem(BUDDY_STORAGE_KEY, JSON.stringify(buddyState)); }
-        catch (e) { pushError(e, "saveBuddyState"); }
-    }
-
-    function newBuddyState() {
-        return {
-            schemaVersion: BUDDY_SCHEMA_VERSION,
-            name: "",
-            birthAt: Date.now(),
-            matchesDriven: 0,
-            // back-compat with v1 saves. v2+ uses accountMatchTotals to avoid
-            // account-switch inflation
-            lifetimeMatchesAtBirth: null,
-            accountMatchTotals: {},
-            lastPetAt: 0,
-            lastMatchAt: 0,
-            equipped: false,
-            bestRankByMode: {},
-            lastSeenStage: null,
-            lastStatus: "",
-            lastStatusAt: 0,
-            lastMoodKey: "focused",
-            skinId: "classic",
-        };
-    }
-
-    function ensureBuddy() {
-        const defaults = newBuddyState();
-        let changed = false;
-        if (!buddyState || typeof buddyState !== "object" || Array.isArray(buddyState)) {
-            buddyState = defaults;
-            changed = true;
-        } else {
-            for (const [key, value] of Object.entries(defaults)) {
-                if (buddyState[key] === undefined) {
-                    buddyState[key] = value;
-                    changed = true;
-                }
-            }
-            if (!buddyState.accountMatchTotals || typeof buddyState.accountMatchTotals !== "object" || Array.isArray(buddyState.accountMatchTotals)) {
-                buddyState.accountMatchTotals = {};
-                changed = true;
-            }
-            if (!buddyState.bestRankByMode || typeof buddyState.bestRankByMode !== "object" || Array.isArray(buddyState.bestRankByMode)) {
-                buddyState.bestRankByMode = {};
-                changed = true;
-            }
-            if (buddyState.schemaVersion !== BUDDY_SCHEMA_VERSION) {
-                buddyState.schemaVersion = BUDDY_SCHEMA_VERSION;
-                changed = true;
-            }
-        }
-        if (changed) {
-            saveBuddyState();
-        }
-    }
-
-    // called on every ratings sync
-    function tickBuddyFromData(data) {
-        ensureBuddy();
-        if (!data || !data.ModesData) return;
-        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
-        const total = modes.reduce((s, m) => s + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
-        const accountId = data.Id == null ? "" : String(data.Id);
-        if (accountId) {
-            const seen = buddyState.accountMatchTotals;
-            if (!Object.prototype.hasOwnProperty.call(seen, accountId)) {
-                // first sighting, baseline only, no retro credit
-                seen[accountId] = total;
-                if (buddyState.lifetimeMatchesAtBirth == null) buddyState.lifetimeMatchesAtBirth = total;
-                saveBuddyState();
-            } else {
-                const previous = Number(seen[accountId]);
-                if (Number.isFinite(previous) && total > previous) {
-                    buddyState.matchesDriven += total - previous;
-                    seen[accountId] = total;
-                    buddyState.lastMatchAt = Date.now();
-                    saveBuddyState();
-                }
-                // lower total = partial response. don't re-baseline or we double-count.
-            }
-        }
-        // best-rank floor per mode
-        const rankPlaylists = { "3v3": null, "2v2": null, "1v1": null };
-        for (const p of Object.keys(rankPlaylists)) {
-            const r = cachedRanks.get(p);
-            if (typeof r === "number") {
-                const prev = buddyState.bestRankByMode[p];
-                if (prev == null || r < prev) {
-                    buddyState.bestRankByMode[p] = r;
-                    saveBuddyState();
-                }
-            }
-        }
-        const currentStage = buddyStage();
-        if (buddyState.lastSeenStage == null) {
-            buddyState.lastSeenStage = currentStage.level;
-            saveBuddyState();
-        } else if (currentStage.level > buddyState.lastSeenStage) {
-            buddyState.lastSeenStage = currentStage.level;
-            saveBuddyState();
-            setBuddyStatus(pickBuddyLine(
-                buddyStatusLines("evolve", { stageName: currentStage.name }) || [
-                    `${buddyDisplayName()} evolved into ${currentStage.name}. The garage insurance premium just moved.`,
-                    `${buddyDisplayName()} unlocked ${currentStage.name}! Please admire the new hardware responsibly.`,
-                    `${buddyDisplayName()} evolved! Somewhere, a tiny mechanic is crying happy tears.`,
-                ],
-                currentStage.level
-            ));
-            showBanner(`🚀 ${currentStage.name.toUpperCase()} UNLOCKED!`, currentStage.level >= 4 ? "#ffd700" : "#00bfff");
-        }
-    }
-
-    function buddyStage() {
-        ensureBuddy();
-        const skin = currentBuddySkin();
-        const matches = buddyState.matchesDriven;
-        const bestRank = Object.values(buddyState.bestRankByMode)
-            .filter(r => typeof r === "number")
-            .reduce((m, r) => Math.min(m, r), Infinity);
-        // Walk from highest to lowest; return the first stage whose gates
-        // this buddy has cleared. matches AND rank-floor (if any) both
-        // must pass -- stages 3+ need both.
-        for (let i = BUDDY_STAGE_GATES.length - 1; i >= 0; i--) {
-            const gate = BUDDY_STAGE_GATES[i];
-            const flavor = skin.stages[i] || skin.stages[0];
-            const matchOk = matches >= gate.matches;
-            const rankOk = gate.rankTop == null || bestRank <= gate.rankTop;
-            if (matchOk && rankOk) {
-                return {
-                    id: gate.id,
-                    level: gate.id,
-                    matches: gate.matches,
-                    rankTop: gate.rankTop,
-                    name: flavor.name,
-                    icon: flavor.icon,
-                    bestRank,
-                    skinId: skin.id,
-                };
-            }
-        }
-        const flavor = skin.stages[0];
-        return {
-            id: 1,
-            level: 1,
-            matches: 0,
-            rankTop: null,
-            name: flavor.name,
-            icon: flavor.icon,
-            bestRank,
-            skinId: skin.id,
-        };
-    }
-
-    // null when maxed
-    function buddyNextStageRequirement() {
-        const cur = buddyStage();
-        if (cur.level >= BUDDY_STAGE_GATES.length) return null;
-        const nextGate = BUDDY_STAGE_GATES[cur.level];
-        const skin = currentBuddySkin();
-        const nextFlavor = skin.stages[cur.level] || skin.stages[skin.stages.length - 1];
-        const matchGap = Math.max(0, nextGate.matches - buddyState.matchesDriven);
-        const rankGap = nextGate.rankTop == null || (cur.bestRank <= nextGate.rankTop)
-            ? null
-            : nextGate.rankTop;
-        return { matches: matchGap, rankTop: rankGap, stageName: nextFlavor.name };
-    }
-
-    // streak + idle time. independent of stage.
-    function buddyMood() {
-        ensureBuddy();
-        const now = Date.now();
-        const idleMs = now - (buddyState.lastMatchAt || buddyState.birthAt);
-        const streak = streakData?.streak ?? 0;
-        if (streak >= 3)  return { key: "onFire",     label: "🔥 On fire",       color: "#ff7a00" };
-        if (streak <= -3) return { key: "frosty",     label: "❄ Frosty",         color: "#7ec8ff" };
-        if (idleMs > 3 * 24 * 3600 * 1000) return { key: "neglected", label: "😢 Neglected",  color: "#9aa5ad" };
-        if (idleMs > 24 * 3600 * 1000)     return { key: "sleepy",    label: "💤 Sleepy",     color: "#6b8fb4" };
-        return { key: "focused", label: "🎯 Focused", color: "#00bfff" };
-    }
-
-    // display only. 100 after match/pet, 0 after 24h idle.
-    function buddyEnergy() {
-        ensureBuddy();
-        const now = Date.now();
-        const anchor = Math.max(buddyState.lastPetAt || 0, buddyState.lastMatchAt || 0, buddyState.birthAt);
-        const hoursIdle = (now - anchor) / (3600 * 1000);
-        return Math.max(0, Math.min(100, Math.round(100 - hoursIdle * 4.17))); // 100 -> 0 over 24h
-    }
-
-    function buddyDisplayName() {
-        return (buddyState?.name || "").trim() || "Unnamed";
-    }
-
-    function pickBuddyLine(lines, seed = 0) {
-        const index = Math.abs(Number(seed) || 0) % lines.length;
-        return lines[index];
-    }
-
-    function setBuddyStatus(message, notify = true) {
-        ensureBuddy();
-        buddyState.lastStatus = String(message);
-        buddyState.lastStatusAt = Date.now();
-        saveBuddyState();
-        if (notify) showToast(buddyState.lastStatus);
-    }
-
-    function reportBuddyMoodTransition(mood) {
-        ensureBuddy();
-        if (!mood?.key || buddyState.lastMoodKey === mood.key) return;
-        buddyState.lastMoodKey = mood.key;
-
-        const name = buddyDisplayName();
-        let lines = null;
-        if (mood.key === "sleepy") {
-            lines = buddyStatusLines("sleepy", { name }) || [
-                `${name} entered sleep mode. Snoring is now available in surround sound.`,
-                `${name} parked for a power nap and left the hazards on.`,
-                `${name} is dreaming of unlimited boost and suspiciously large snacks.`,
-            ];
-        } else if (mood.key === "neglected") {
-            lines = buddyStatusLines("neglected", { name }) || [
-                `${name} has started collecting dust as a hobby. A pet might help.`,
-                `${name} is composing a dramatic ballad titled "Where Did My Human Go?"`,
-                `${name} checked the garage door again. Still no snacks.`,
-            ];
-        }
-
-        if (lines) {
-            setBuddyStatus(pickBuddyLine(lines, Math.floor(Date.now() / (24 * 3600 * 1000))));
-        } else {
-            saveBuddyState();
-        }
-    }
-
-    function reportBuddyMatchStatus(result) {
-        if (!result?.matches) return;
-        ensureBuddy();
-        const name = buddyDisplayName();
-        const streak = result.streak ?? 0;
-        let kind = "matchMixed";
-        if (result.wins > 0 && result.losses === 0) {
-            if (streak >= 8) kind = "matchBigWin";
-            else if (streak >= 3) kind = "matchHotWin";
-            else if (result.wins > 1) kind = "matchMultiWin";
-            else kind = "matchWin";
-        } else if (result.losses > 0 && result.wins === 0) {
-            if (streak <= -8) kind = "matchBigLoss";
-            else if (streak <= -3) kind = "matchColdLoss";
-            else if (result.losses > 1) kind = "matchMultiLoss";
-            else kind = "matchLoss";
-        }
-
-        let lines = buddyStatusLines(kind, {
-            name,
-            streak,
-            wins: result.wins,
-            losses: result.losses,
-        });
-
-        // Classic (and any skin without a voice pack) keeps the original garage lines.
-        if (!lines) {
-        if (result.wins > 0 && result.losses === 0) {
-            if (streak >= 8) {
-                lines = [
-                    `${name} has forgotten how losing works. Please do not remind them.`,
-                    `${name} is requesting a trophy-shaped parking spot.`,
-                    `${name} has achieved dangerous levels of zoom.`,
-                    `${name} is 8 wins deep. The other cars filed a restraining order.`,
-                    `${name} is un-lose-able. This is a legal problem now.`,
-                    `${name} has stopped acknowledging opponents as opponents.`,
-                    `${name} is on the podium so often it has a favorite step.`,
-                    `${name} has been offered an endorsement deal by boost.`,
-                    `${name} is currently in the leaderboard hall of fame's group chat.`,
-                    `${name} has weaponized momentum.`,
-                    `${name} is now legally distinct from "the winner." They are winning itself.`,
-                    `${name} has broken the sound barrier and possibly the ELO system.`,
-                    `${name} has been asked to slow down. Politely declined.`,
-                    `${name} skips warm-up because they were never cold to begin with.`,
-                    `${name} is on a first-name basis with the trophy.`,
-                    `${name} has entered a state scientists are calling "unhinged winning".`,
-                    `${name} has stopped needing wheels. They just win.`,
-                    `${name} has been added to the game's danger tips.`,
-                    `${name} is currently rewriting the meta.`,
-                    `${name} is speed. ${name} is destiny.`,
-                    `${name} stopped tracking wins and started counting hostages.`,
-                    `${name} was quietly banned from the practice server for scaring bots.`,
-                    `${name} is 8-0 and asking if anyone brought snacks.`,
-                    `${name} is playing a different game than everyone else.`,
-                    `${name} has entered god mode. Disabling requires a support ticket.`,
-                    `${name} is dominating so hard the leaderboard just typed "gg".`,
-                    `${name} has been offered a sponsorship by pure oxygen.`,
-                    `${name} has stopped losing. It's unclear what happens next.`,
-                    `${name} is the reason "unfair" was invented.`,
-                    `${name} has ascended to a plane matchmaking cannot follow.`,
-                    `${name} is playing chess. Everyone else is losing checkers.`,
-                    `${name} just hit ${Math.abs(streak)} wins straight. The referee is taking a lie-down.`,
-                ];
-            } else if (streak >= 3) {
-                lines = [
-                    `${name} is ON FIRE! Keep flammable decals at a safe distance.`,
-                    `${name} is cooking. The recipe appears to be pure boost.`,
-                    `${name} has entered main-character mode.`,
-                    `${name} is heating up. Please open a window.`,
-                    `${name} is on a roll. A very expensive one.`,
-                    `${name} has achieved "runs stapled to backboard" confidence.`,
-                    `${name} is winning at a rate that concerns the insurance company.`,
-                    `${name} smells victory. Also gasoline.`,
-                    `${name} is stacking Ws like it's a hobby.`,
-                    `${name} is doing that thing. The winning thing.`,
-                    `${name} is basically the villain in someone else's highlight reel.`,
-                    `${name} is on a heater. Literally. Please check the engine.`,
-                    `${name} is streaking, but in the wholesome car way.`,
-                    `${name} is drafting the trophy speech mid-match.`,
-                    `${name} is ${Math.abs(streak)} wins deep and unbearable already.`,
-                    `${name} is having a moment. A loud, obnoxious moment.`,
-                    `${name} has decided losing is not on today's schedule.`,
-                    `${name} has entered the "delete lobby" phase of the day.`,
-                    `${name} is smashing so hard opponents are quitting to Fortnite.`,
-                    `${name} is playing like the win button is broken. Broken their way.`,
-                    `${name} is on a mission. Mission unclear, but WINNING.`,
-                    `${name} just clicked their heels three times. Home is a trophy.`,
-                    `${name} is officially in the zone. Do not disturb the zone.`,
-                    `${name} is gaslighting matchmaking in real time.`,
-                    `${name} has that gleam in the headlights. Bad news for everyone.`,
-                    `${name} is dishing out Ws like a school cafeteria.`,
-                    `${name} is on fire and refuses to be extinguished.`,
-                    `${name} is now a firework. Please stand back.`,
-                    `${name} is playing on god-tier settings. Everyone else is on tutorial.`,
-                    `${name} is running hot. Cooling system is failing gracefully.`,
-                    `${name} is picking up steam. And wins.`,
-                    `${name} is the reason opponents believe in conspiracy theories.`,
-                ];
-            } else if (result.wins > 1) {
-                lines = [
-                    `${name} banked ${result.wins} wins. Turbo confidence engaged.`,
-                    `${name} collected ${result.wins} wins and would like them framed.`,
-                    `${name} just speed-ran ${result.wins} victories. Very normal behavior.`,
-                    `${name} bagged ${result.wins} in a row. The bag is starting to bulge.`,
-                    `${name} racked up ${result.wins} wins. Loading additional swagger...`,
-                    `${name} tossed ${result.wins} wins in the trunk. Room for more.`,
-                    `${name} secured ${result.wins} wins and is now unbearable at dinner.`,
-                    `${name} claimed ${result.wins} in a row. Ownership papers pending.`,
-                    `${name} bulk-bought ${result.wins} wins. Costco energy.`,
-                    `${name} chained ${result.wins} wins together. Chain restaurant of dominance.`,
-                    `${name} pocketed ${result.wins} wins. They clink when walking.`,
-                    `${name} stacked ${result.wins} wins. Stack structurally alarming.`,
-                    `${name} won ${result.wins} in a row. Keyboard filed for hazard pay.`,
-                    `${name} ran up ${result.wins} wins. Scoreboard is out of breath.`,
-                    `${name} clocked ${result.wins} back-to-back wins. Timepiece unimpressed.`,
-                    `${name} has ${result.wins} wins and zero regrets.`,
-                    `${name} bagged ${result.wins}. Feel free to be impressed.`,
-                    `${name} just did ${result.wins} in a row. Anyone need a witness?`,
-                    `${name} logged ${result.wins} wins into the permanent record.`,
-                    `${name} is up ${result.wins} matches. "Up" as in ascending.`,
-                    `${name} handed out ${result.wins} losses. Return to sender.`,
-                    `${name} rolled ${result.wins} wins. Vegas is watching.`,
-                    `${name} popped ${result.wins} wins like it was a hobby.`,
-                    `${name} bagged ${result.wins} wins with minimal drama.`,
-                    `${name} strung ${result.wins} wins together. Whole vibe.`,
-                    `${name} is ${result.wins}-0 and starting to feel it.`,
-                    `${name} put ${result.wins} wins in the win jar. Jar overflowing.`,
-                    `${name} did ${result.wins} wins. ${result.wins} more than the opponents.`,
-                    `${name} tacked on ${result.wins} wins. Bulletin board is filling.`,
-                    `${name} added ${result.wins} more Ws. Alphabet is out of Ls.`,
-                    `${name} landed ${result.wins} wins in a row. Plane says "same."`,
-                    `${name} closed out ${result.wins} matches. Books look good.`,
-                ];
-            } else {
-                lines = [
-                    `${name} is getting stronger! The garage is concerned.`,
-                    `${name} added one win and approximately twelve horsepower.`,
-                    `${name} found the boost button. This is getting dangerous.`,
-                    `${name} says that was calculated. It was not.`,
-                    `${name} snagged a W. Momentum: initialized.`,
-                    `${name} pulled off a win. Nobody call it a fluke.`,
-                    `${name} won. The universe permits this.`,
-                    `${name} banked a win. Interest is compounding.`,
-                    `${name} clipped a W. Filing it under "important."`,
-                    `${name} did the thing. The thing is winning.`,
-                    `${name} took the W. Pretending it was easy.`,
-                    `${name} won and now walks a little taller.`,
-                    `${name} scored a win. Ticker tape parade cancelled for budget reasons.`,
-                    `${name} came, saw, and won ONE. Progress!`,
-                    `${name} punched a W ticket. Destination: leaderboard.`,
-                    `${name} secured a win. The clipboard is impressed.`,
-                    `${name} is 1 for 1. Statistically perfect.`,
-                    `${name} won. Solid start. Continue.`,
-                    `${name} bagged a W. Feel free to celebrate quietly.`,
-                    `${name} added one to the win column. Column growing.`,
-                    `${name} tapped in a win. Precision play.`,
-                    `${name} snagged a W. Warm-up complete.`,
-                    `${name} squeezed out a win. Toothpaste-tube style.`,
-                    `${name} clinched it. It: the match.`,
-                    `${name} pulled through. Rewarded with dopamine.`,
-                    `${name} rolled the ball and got a W. Physics approves.`,
-                    `${name} outlasted, outplayed, out-won.`,
-                    `${name} took the W and is being modest about it. So modest.`,
-                    `${name} unlocked achievement: "did not lose this one."`,
-                    `${name} got the dub. That's the technical term.`,
-                    `${name} logged one W. Log looking prettier.`,
-                    `${name} won the match. Confetti generator idling.`,
-                ];
-            }
-        } else if (result.losses > 0 && result.wins === 0) {
-            if (streak <= -8) {
-                lines = [
-                    `${name} is building character. So much character.`,
-                    `${name} has requested a tactical blanket and no follow-up questions.`,
-                    `${name} insists this is an extremely long training montage.`,
-                    `${name} is ${Math.abs(streak)} losses deep. Suggestion: mercy rule.`,
-                    `${name} is on a losing streak so long it qualifies for benefits.`,
-                    `${name} has reached the "learning experience" boss level.`,
-                    `${name} has entered rock bottom's basement.`,
-                    `${name} is speed-running character development.`,
-                    `${name} is not losing, they are gathering data. Lots of data.`,
-                    `${name} has volunteered as the control group.`,
-                    `${name} is currently the "before" photo in the tutorial.`,
-                    `${name} is negative-vibing with impressive consistency.`,
-                    `${name} is 0 for ${Math.abs(streak)}. Perfectly imperfect.`,
-                    `${name} has ordered a helmet with extra character-building padding.`,
-                    `${name} is starring in "How Not To." Rave reviews from opponents.`,
-                    `${name} has entered the trenches. Snacks and morale welcome.`,
-                    `${name} is banking losses like they'll pay dividends. They won't.`,
-                    `${name} is spelunking the L-caves. Deep.`,
-                    `${name} is currently a cautionary tale. A verbose one.`,
-                    `${name} has become one with the L. The L accepts them.`,
-                    `${name} is on the wrong side of the highlight reel. Repeatedly.`,
-                    `${name} is stubbornly loyal to losing.`,
-                    `${name} is ${Math.abs(streak)} losses in and philosophically at peace with it.`,
-                    `${name} is starring in an art film called "The Fall."`,
-                    `${name} is not tilting. They fell over hours ago.`,
-                    `${name} has embraced the void. The void has embraced back.`,
-                    `${name} is undefeated at losing.`,
-                    `${name} has qualified for a losing-streak achievement. Congrats?`,
-                    `${name} is ${Math.abs(streak)} games into what appears to be a series.`,
-                    `${name} is being sponsored by regret.`,
-                    `${name} has become one with the concept of "trying again."`,
-                    `${name} is composing an autobiography titled "The L-Files."`,
-                ];
-            } else if (streak <= -3) {
-                lines = [
-                    `${name} is Frosty. Warm-up laps and snacks prescribed.`,
-                    `${name} filed a formal complaint against matchmaking.`,
-                    `${name} needs encouragement, premium fuel, and perhaps a tiny scarf.`,
-                    `${name} is chilly. Emotionally.`,
-                    `${name} is going through it. "It" being three straight losses.`,
-                    `${name} is cold. Consider hot cocoa.`,
-                    `${name} has entered a Frosty Winter arc.`,
-                    `${name} is workshopping their comeback speech.`,
-                    `${name} needs a hug and possibly a new server region.`,
-                    `${name} is frosted. Not iced. Frosted.`,
-                    `${name} is on a slippery streak. Send salt.`,
-                    `${name} has been demanding a manager. Wal-Mart tone.`,
-                    `${name} is in a slump. A cozy, sad little slump.`,
-                    `${name} has requested a snow day.`,
-                    `${name} is cold-brewing revenge.`,
-                    `${name} is doing the "one more game to break the streak" thing. That's ${Math.abs(streak)} now.`,
-                    `${name} is officially in "put down the controller" territory.`,
-                    `${name} is negative-streaking. Send therapy dogs.`,
-                    `${name} is trying to remember what a W feels like.`,
-                    `${name} has entered thawing mode. Return in 20 minutes.`,
-                    `${name} is doing the freeze dance. Involuntarily.`,
-                    `${name} is the villain in their own hero's journey.`,
-                    `${name} is stuck in the ice storm arc.`,
-                    `${name} has ${Math.abs(streak)} losses and a bad attitude.`,
-                    `${name} needs a heater and possibly a new mouse.`,
-                    `${name} is frost-forming on the leaderboard.`,
-                    `${name} is being iced out by fortune.`,
-                    `${name} is cold-plunging into the L pool.`,
-                    `${name} is starring in "Frozen 3: Rocket Boogaloo."`,
-                    `${name} is chilly-billy. Snack up.`,
-                    `${name} is muttering "one more" but it means one more L.`,
-                    `${name} is going through a frosty patch. Ice cream may or may not help.`,
-                ];
-            } else if (result.losses > 1) {
-                lines = [
-                    `${name} survived ${result.losses} learning opportunities at supersonic speed.`,
-                    `${name} lost ${result.losses}, but the wheels are still emotionally attached.`,
-                    `${name} calls those ${result.losses} losses "extensive field research."`,
-                    `${name} chalked up ${result.losses} Ls. Chalk supply low.`,
-                    `${name} took ${result.losses} losses in stride. Stride is limping.`,
-                    `${name} dropped ${result.losses} in a row. Pick-up truck idling.`,
-                    `${name} logged ${result.losses} Ls into the shame ledger.`,
-                    `${name} caught ${result.losses} losses. Return receipt requested.`,
-                    `${name} took ${result.losses} on the chin. Chin holding up okay.`,
-                    `${name} tacked on ${result.losses} Ls. Filed under "growth."`,
-                    `${name} lost ${result.losses} matches. Number of feelings: too many.`,
-                    `${name} dropped ${result.losses}. Pick 'em back up soon.`,
-                    `${name} took ${result.losses} Ls to the face and kept going.`,
-                    `${name} banked ${result.losses} losses. Bank disapproves.`,
-                    `${name} incurred ${result.losses} L's. IRS unmoved.`,
-                    `${name} has ${result.losses} fresh losses. Piping hot.`,
-                    `${name} accepted ${result.losses} losses graciously. In private, less so.`,
-                    `${name} experienced ${result.losses} setbacks. Big comeback probably loading.`,
-                    `${name} collected ${result.losses} Ls. Displayed on the mantle. Reluctantly.`,
-                    `${name} said "next one for sure" ${result.losses} times.`,
-                    `${name} took ${result.losses} on the road. Road tired now.`,
-                    `${name} put ${result.losses} losses in the character-building pile.`,
-                    `${name} logged ${result.losses} lessons. Class dismissed.`,
-                    `${name} filed ${result.losses} losses under "not today."`,
-                    `${name} committed ${result.losses} losses to memory. Involuntarily.`,
-                    `${name} donated ${result.losses} MMR to charity. Charity refuses to accept.`,
-                    `${name} did ${result.losses} losses in one go. Efficient.`,
-                    `${name} lost ${result.losses} matches and gained ${result.losses} grievances.`,
-                    `${name} took ${result.losses} on the chin, ribs, and knees.`,
-                    `${name} racked up ${result.losses} Ls. Rack tipping.`,
-                    `${name} added ${result.losses} losses to the résumé. Under "experience."`,
-                    `${name} sold their soul for MMR and lost ${result.losses} anyway.`,
-                ];
-            } else {
-                lines = [
-                    `${name} hit a learning opportunity at supersonic speed.`,
-                    `${name} lost the match, not the plot. Probably.`,
-                    `${name} says the controller was slippery.`,
-                    `${name} is shaken, not stalled. Tiny comeback loading.`,
-                    `${name} lost. Blames physics.`,
-                    `${name} took a loss. Filed under "input lag." (It wasn't.)`,
-                    `${name} lost one. Officially a rounding error.`,
-                    `${name} dropped a match. Match landed softly on ego.`,
-                    `${name} took an L. L takes ${name}.`,
-                    `${name} lost. Cosmic balance restored.`,
-                    `${name} took a loss. Sportsmanship: acceptable.`,
-                    `${name} lost a close one. "Close" in a philosophical sense.`,
-                    `${name} L-boarded a match. Skate away with pride.`,
-                    `${name} has one L. One is a small number.`,
-                    `${name} says "warm-up match." It wasn't.`,
-                    `${name} took an L. Happens to the best of tires.`,
-                    `${name} lost. Rest of the world unaffected.`,
-                    `${name} dropped a match. Bendable, not broken.`,
-                    `${name} took a loss. Insists it's teaching them.`,
-                    `${name} L'd out. Bouncing back in T-minus one match.`,
-                    `${name} lost. Feels like flat-tire weather.`,
-                    `${name} is 0-1 and grumpy.`,
-                    `${name} tanked a match. Tank functional. Ego bruised.`,
-                    `${name} took an L. Please clap gently anyway.`,
-                    `${name} skidded off a match. Traction control disagrees.`,
-                    `${name} lost one. It's just recon for the next one.`,
-                    `${name} took the L on principle.`,
-                    `${name} dropped a match. Momentum: paused.`,
-                    `${name} L'd. The scoreboard sighs.`,
-                    `${name} lost the match. Blames alignment.`,
-                    `${name} caught a loss. Please throw it back.`,
-                    `${name} took an L. Will pretend to learn from it.`,
-                ];
-            }
-        } else {
-            lines = [
-                `${name} processed ${result.wins}W/${result.losses}L and now requires a tiny spreadsheet.`,
-                `${name} had a complicated session. Telemetry just sighed.`,
-                `${name} experienced both victory and character development.`,
-                `${name} went ${result.wins}-${result.losses}. Numerically confused.`,
-                `${name} split the difference: ${result.wins}W / ${result.losses}L.`,
-                `${name} had a bipartisan session.`,
-                `${name} banked wins AND losses. Equal opportunity garage.`,
-                `${name} went ${result.wins}-${result.losses}. Vibes: mixed salad.`,
-                `${name} had a "some you win, some you lose, mostly gray" session.`,
-                `${name} logged ${result.wins}W/${result.losses}L. Break-even energy.`,
-                `${name} had a moderate day. Moderate is a word we chose.`,
-                `${name} had a session with variety. Variety pack.`,
-                `${name} ran a ${result.wins}-${result.losses} session. Statistically valid, emotionally not.`,
-                `${name} had every kind of match today.`,
-                `${name} went ${result.wins}W ${result.losses}L. Officially "trying."`,
-                `${name} had wins. Also losses. It's a whole thing.`,
-                `${name} had a mixed bag session. Bag contents varied.`,
-                `${name} took ${result.wins} wins and gave back ${result.losses}. Balanced diet.`,
-                `${name} experienced a session. That's all we can say.`,
-                `${name} finished ${result.wins}-${result.losses}. Filed under "gray area."`,
-                `${name} had a whiplash session. Sports psychologist on standby.`,
-                `${name} was giving them AND taking them. Democracy in action.`,
-                `${name} had a "some wins, some losses" arc. Peak sitcom.`,
-                `${name} rolled ${result.wins}W ${result.losses}L. Dice uncooperative.`,
-                `${name} went ${result.wins}-${result.losses}. Emotionally uncommitted.`,
-                `${name} had a good-cop bad-cop session with themselves.`,
-                `${name} logged ${result.wins} wins, ${result.losses} losses, and one existential crisis.`,
-                `${name} had a session with dynamic range.`,
-                `${name} tried both directions today.`,
-                `${name} clocked ${result.wins} up, ${result.losses} down. Elevator vibes.`,
-                `${name} finished with ${result.wins}W and ${result.losses}L. Committee split.`,
-                `${name} had a "yes, and also no" kind of session.`,
-            ];
-        }
-        }
-
-        setBuddyStatus(pickBuddyLine(lines, buddyState.matchesDriven + Math.abs(streak) + result.matches));
-    }
-
-    function petBuddy() {
-        ensureBuddy();
-        const now = Date.now();
-        if (now - (buddyState.lastPetAt || 0) < BUDDY_PET_COOLDOWN_MS) {
-            const mins = Math.ceil((BUDDY_PET_COOLDOWN_MS - (now - buddyState.lastPetAt)) / 60000);
-            showToast(`${buddyDisplayName()} was just petted — try again in ${mins}m`);
-            return false;
-        }
-        buddyState.lastPetAt = now;
-        const name = buddyDisplayName();
-        setBuddyStatus(pickBuddyLine(
-            buddyStatusLines("pet", { name }) || [
-                `${name} was just petted. Horsepower increased by emotionally significant amounts.`,
-                `${name} received head pats and is now legally unstoppable.`,
-                `${name} says "again." The cooldown says "absolutely not."`,
-                `${name} has been petted and is pretending not to love it.`,
-            ],
-            buddyState.matchesDriven + Math.floor(now / BUDDY_PET_COOLDOWN_MS)
-        ));
-        return true;
-    }
-
-    function stopBuddyRefreshTimer() {
-        if (!buddyRefreshTimer) return;
-        clearInterval(buddyRefreshTimer);
-        buddyRefreshTimer = null;
-    }
-
-    function startBuddyRefreshTimer() {
-        if (buddyRefreshTimer) return;
-        buddyRefreshTimer = setInterval(() => {
-            const view = document.getElementById("rgBuddyView");
-            if (!view || view.style.display === "none") {
-                stopBuddyRefreshTimer();
-                return;
-            }
-            // minimized HUD keeps buddy view display=block. offsetParent catches that.
-            if (!view.offsetParent) return;
-            // don't yank a focused control, next tick catches up
-            if (!view.contains(document.activeElement)) renderBuddyView();
-        }, 60 * 1000);
-    }
-
-    function renderBuddyViewAndRestoreFocus(focusId) {
-        renderBuddyView();
-        if (!focusId) return;
-        requestAnimationFrame(() => {
-            const next = document.getElementById(focusId);
-            if (next) next.focus({ preventScroll: true });
-        });
-    }
-
-    // ---- Buddy view render ----
-    // full innerHTML rebuild. escape anything user-controlled (name).
-    function renderBuddyView() {
-        const view = document.getElementById("rgBuddyView");
-        if (!view) return;
-        ensureBuddy();
-        const stage = buddyStage();
-        const mood = buddyMood();
-        reportBuddyMoodTransition(mood);
-        const energy = buddyEnergy();
-        const req = buddyNextStageRequirement();
-
-        // day-one edge case
-        const ageDays = Math.floor((Date.now() - buddyState.birthAt) / (24 * 3600 * 1000));
-        const ageStr = ageDays === 0 ? "born today" : `${ageDays} day${ageDays === 1 ? "" : "s"}`;
-
-        const stars = Array.from({ length: BUDDY_STAGES.length }, (_, i) =>
-            i < stage.level ? "★" : "☆").join(" ");
-
-        const bestRankStr = stage.bestRank === Infinity
-            ? "—"
-            : `#${stage.bestRank}`;
-
-        let nextLine;
-        if (!req) {
-            nextLine = `<span style="color:#ffd700;">Max stage reached 🏆</span>`;
-        } else if (req.matches > 0 && req.rankTop != null) {
-            nextLine = `${req.matches} more matches <b>AND</b> top ${req.rankTop} in any mode`;
-        } else if (req.matches > 0) {
-            nextLine = `${req.matches} more matches`;
-        } else if (req.rankTop != null) {
-            nextLine = `Reach top ${req.rankTop} in any mode`;
-        } else {
-            nextLine = `Ready to evolve!`;
-        }
-
-        // 10-slot energy bar. red/amber/green
-        const filled = Math.round(energy / 10);
-        const barColor = energy < 20 ? "#ff6b6b" : (energy < 50 ? "#ffbb33" : "#00ff66");
-        const bar = `<span style="color:${barColor};font-family:monospace;letter-spacing:-1px;">${"█".repeat(filled)}${"░".repeat(10 - filled)}</span>`;
-
-        // stage 4/5 get a radial ring behind
-        const skin = currentBuddySkin();
-        ensureBuddySpriteStyles();
-        ensureBuddySheetLoaded(skin.id);
-        const moodSprite = BUDDY_MOOD_SPRITE[mood.key] || "idle";
-        const useSpriteFallback = buddySheetLoadStateFor(skin.id) !== "ready";
-        const sheetCssUrl = buddySheetCssUrl(skin.sheetUrl);
-        let spriteWrap = "";
-        if (stage.level >= 5) {
-            spriteWrap = "background:radial-gradient(circle, #ffd70044 0%, transparent 70%);padding:8px;border-radius:50%;";
-        } else if (stage.level >= 4) {
-            spriteWrap = "background:radial-gradient(circle, #00bfff33 0%, transparent 70%);padding:6px;border-radius:50%;";
-        }
-
-        const isNewbie = buddyState.matchesDriven === 0;
-        const displayName = buddyDisplayName();
-        const skinOptions = BUDDY_SKIN_ORDER.map(id => {
-            const s = BUDDY_SKINS[id];
-            const sel = s.id === skin.id ? " selected" : "";
-            return `<option value="${s.id}"${sel}>${escapeHtml(s.label)}</option>`;
-        }).join("");
-
-        view.innerHTML = `
-            <div style="text-align:center;padding:8px 4px 12px;">
-                <div style="display:inline-block;${spriteWrap}"><div id="rgBuddySprite" class="rg-buddy-sprite stage-${stage.level} mood-${moodSprite}${useSpriteFallback ? " is-fallback" : ""}" style="--rb-sheet-url:${sheetCssUrl};" role="img" aria-label="${escapeHtml(stage.name)}">${useSpriteFallback ? stage.icon : ""}</div></div>
-                <div style="margin-top:6px;font-size:14px;font-weight:bold;color:#00bfff;">${escapeHtml(displayName)}</div>
-                <div style="font-size:11px;opacity:0.85;">${escapeHtml(stage.name)} · Lv ${stage.level}</div>
-                <div style="margin-top:2px;font-size:13px;color:#ffd700;letter-spacing:2px;">${stars}</div>
-            </div>
-
-            <div style="font-size:11px;background:#00bfff11;border-radius:6px;padding:6px 8px;margin-bottom:8px;">
-                <label for="rgBuddySkin" style="opacity:0.7;">Buddy style</label>
-                <select id="rgBuddySkin" class="rg-buddy-skin-select" aria-label="Buddy style">${skinOptions}</select>
-            </div>
-
-            <div style="font-size:11px;background:#00bfff11;border-radius:6px;padding:6px 8px;margin-bottom:8px;">
-                <div style="display:flex;justify-content:space-between;">
-                    <span style="color:${mood.color};font-weight:bold;">${mood.label}</span>
-                    <span style="opacity:0.7;">${streakData?.streak ? Math.abs(streakData.streak) + (streakData.streak > 0 ? "W" : "L") + " streak" : ""}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
-                    <span style="opacity:0.7;">Energy</span>
-                    <span>${bar} ${energy}%</span>
-                </div>
-            </div>
-
-            ${buddyState.lastStatus ? `
-                <div style="font-size:11px;line-height:1.4;background:#ffd7000d;border-left:2px solid #ffd70088;border-radius:4px;padding:6px 8px;margin-bottom:8px;">
-                    <span aria-hidden="true">💬</span> ${escapeHtml(buddyState.lastStatus)}
-                </div>
-            ` : ""}
-
-            ${isNewbie ? `
-                <div style="font-size:11px;opacity:0.85;background:#00bfff11;border-radius:6px;padding:8px;margin-bottom:8px;">
-                    Just hatched. Play a match to give ${escapeHtml(displayName)} their first
-                    laps.
-                </div>
-            ` : `
-                <div style="font-size:11px;line-height:1.6;">
-                    <div style="display:flex;justify-content:space-between;"><span style="opacity:0.7;">Age</span><span>${ageStr}</span></div>
-                    <div style="display:flex;justify-content:space-between;"><span style="opacity:0.7;">Matches driven</span><span>${buddyState.matchesDriven}</span></div>
-                    <div style="display:flex;justify-content:space-between;"><span style="opacity:0.7;">Best rank</span><span>${bestRankStr}</span></div>
-                    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;"><span style="opacity:0.7;">Next stage</span><span style="text-align:right;">${nextLine}</span></div>
-                </div>
-            `}
-
-            <div style="display:flex;gap:4px;margin-top:10px;">
-                <button id="rgBuddyPet" class="rgBtn" style="flex:1;">🫳 Pet</button>
-                <button id="rgBuddyRename" class="rgBtn" style="flex:1;">✏️ Name</button>
-                <button id="rgBuddyEquip" class="rgBtn" style="flex:1;">${buddyState.equipped ? "◉ Equipped" : "◯ Equip"}</button>
-            </div>
-        `;
-
-        // bounce anim, cooldown-gated
-        document.getElementById("rgBuddyPet").onclick = e => {
-            const restoreFocus = e.detail === 0 ? "rgBuddyPet" : null;
-            dbg("Buddy pet clicked");
-            if (!petBuddy()) { dbg("Buddy pet skipped (cooldown)"); return; }
-            const sprite = document.getElementById("rgBuddySprite");
-            const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-            if (sprite && !reduceMotion) {
-                sprite.style.transition = "transform 0.15s ease";
-                sprite.style.transform = "scale(1.25)";
-                setTimeout(() => { sprite.style.transform = ""; }, 150);
-            }
-            // repaint, energy just jumped
-            setTimeout(() => renderBuddyViewAndRestoreFocus(restoreFocus), reduceMotion ? 0 : 320);
-        };
-
-        // empty name -> "Unnamed"
-        document.getElementById("rgBuddyRename").onclick = async e => {
-            const restoreFocus = e.detail === 0 ? "rgBuddyRename" : null;
-            dbg("Buddy rename opened");
-            let newName;
-            try {
-                newName = await showDialog({
-                    message: "Name your Buddy",
-                    withInput: true,
-                    inputPlaceholder: buddyDisplayName(),
-                    okLabel: "Save",
-                    cancelLabel: "Cancel",
-                });
-            } catch (err) {
-                pushError(err, "buddyRenameDialog");
-                return;
-            }
-            if (newName === null) {
-                dbg("Buddy rename cancelled");
-                if (restoreFocus) requestAnimationFrame(() => {
-                    document.getElementById(restoreFocus)?.focus({ preventScroll: true });
-                });
-                return;
-            }
-            const clean = String(newName).slice(0, 20).trim();
-            dbg(`Buddy rename saved: rawLen=${String(newName).length} cleanLen=${clean.length}`);
-            buddyState.name = clean;
-            saveBuddyState();
-            renderBuddyViewAndRestoreFocus(restoreFocus);
-        };
-
-        // toggles the mini flair on the stats view
-        document.getElementById("rgBuddyEquip").onclick = e => {
-            const restoreFocus = e.detail === 0 ? "rgBuddyEquip" : null;
-            buddyState.equipped = !buddyState.equipped;
-            dbg(`Buddy equip toggled -> ${buddyState.equipped}`);
-            saveBuddyState();
-            // repaint so the flair reflects the toggle
-            if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
-            else renderBuddyView();
-            if (restoreFocus) requestAnimationFrame(() => {
-                document.getElementById(restoreFocus)?.focus({ preventScroll: true });
-            });
-        };
-
-        document.getElementById("rgBuddySkin").onchange = e => {
-            const next = getBuddySkin(e.target.value);
-            if (next.id === buddyState.skinId) return;
-            dbg(`Buddy skin changed: ${buddyState.skinId} -> ${next.id}`);
-            buddyState.skinId = next.id;
-            saveBuddyState();
-            ensureBuddySheetLoaded(next.id);
-            const switchLines = buddyStatusLines("skinSelect", {
-                name: buddyDisplayName(),
-                label: next.label,
-            }) || [
-                `${buddyDisplayName()} switched to ${next.label}. Looking sharp.`,
-                `${buddyDisplayName()} tried on ${next.label}. The vibe shifted.`,
-                `${buddyDisplayName()} is now rocking ${next.label}.`,
-            ];
-            setBuddyStatus(pickBuddyLine(switchLines, Date.now()), false);
-            if (lastKnownPlayerData && buddyState.equipped) updateHUD(lastKnownPlayerData);
-            renderBuddyViewAndRestoreFocus("rgBuddySkin");
-        };
-    }
-
-    // mini buddy icon next to streak badge. local only.
-    function buddyMiniVisualHtml(stage) {
-        const skin = currentBuddySkin();
-        return buddySheetLoadStateFor(skin.id) === "ready"
-            ? `<span class="rg-buddy-mini" style="--rb-mini-stage:${stage.level - 1};--rb-sheet-url:${buddySheetCssUrl(skin.sheetUrl)};" aria-hidden="true"></span>`
-            : stage.icon;
-    }
-
-    function buddyEquippedFlairHtml() {
-        try {
-            ensureBuddy();
-            if (!buddyState.equipped) return "";
-            const stage = buddyStage();
-            const skin = currentBuddySkin();
-            ensureBuddySpriteStyles();
-            ensureBuddySheetLoaded(skin.id);
-            return ` <span id="rgBuddyEquippedFlair" class="rgHasTip rgNoUnderline" data-tip="${escapeHtml(buddyDisplayName())} · ${escapeHtml(stage.name)}" aria-label="${escapeHtml(buddyDisplayName())} · ${escapeHtml(stage.name)}" style="font-size:14px;vertical-align:middle;">${buddyMiniVisualHtml(stage)}</span>`;
-        } catch (e) {
-            dbg("buddyEquippedFlairHtml threw: " + (e && e.message ? e.message : e));
-            return "";
-        }
-    }
 
     // ---------- Ranks ----------
 
@@ -2494,7 +953,7 @@
     const prevRanks = new Map(); // playlist -> last known rank
 
     // ---------- Momentum system ----------
-    // net MMR gained/lost this session. tweaks title + glow speed/intensity only,
+    // net MMR gained/lost this session. only tweaks title + glow speed/intensity,
     // never the user's chosen colors.
 
     const MOMENTUM_TIERS = {
@@ -2642,7 +1101,7 @@
         for (const [playlist, rank] of cachedRanks) {
             const prev = prevRanks.get(playlist);
 
-            // need a prior non-#1 or this fires on session start
+            // need a prior non-#1 baseline, else this fires on session start
             if (rank === 1 && typeof prev === "number" && prev !== 1) {
                 showBanner(`👑 NEW #1 IN ${playlist.toUpperCase()}!`, "#ffd700");
             }
@@ -2659,8 +1118,8 @@
 
     // ---------- HUD content ----------
 
-    // renders only when event active + in a clan with baseline. no extra reads.
-    // returns "" when nothing to show so callers can splice unconditionally.
+    // renders only when event is active + we're in a clan with a baseline.
+    // returns "" so callers can splice unconditionally.
     function clashMiniBarHtml() {
         try {
             if (typeof eventPhase !== "function" || eventPhase() !== "active") return "";
@@ -2701,16 +1160,8 @@
         createHUD();
         lastKnownPlayerData = data;
         captureSessionStart(data);
-        const buddyMatchResult = updateStreak(data);
+        updateStreak(data);
         updateMomentum();
-        if (buddyMatchResult) {
-            try { reportBuddyMatchStatus(buddyMatchResult); } catch (e) { dbg("reportBuddyMatchStatus threw: " + (e && e.message ? e.message : e)); }
-        }
-        // buddyMood reads streakData, tick buddy after streak update
-        try { tickBuddyFromData(data); } catch (e) { dbg("tickBuddyFromData threw: " + (e && e.message ? e.message : e)); }
-        // sync buddy tab if open
-        const bv = document.getElementById("rgBuddyView");
-        if (bv && bv.style.display !== "none") renderBuddyView();
 
         const ratingVal = mode => data.ModesGlicko?.[mode]?.displayRating;
         const rating = mode => {
@@ -2754,7 +1205,7 @@
                     Wins: <span style="color:#00ff66">${totalWins}</span><br>
                     Matches Played: <span style="color:#00ff66">${totalMatches}</span>
                 </div>
-                <div style="font-size:15px;">${streakBadge()}${buddyEquippedFlairHtml()}</div>
+                <div style="font-size:15px;">${streakBadge()}</div>
             </div>
             ${clashMiniBarHtml()}
         `;
@@ -2764,7 +1215,7 @@
     let lastProcessedKey = null;
 
     function tryParseAndUpdate(text) {
-        // fast path, identical string
+        // fast path: identical string
         if (text === lastProcessedText) return;
 
         try {
@@ -2772,7 +1223,8 @@
             if (!(data && data.ModesGlicko)) return;
 
             // fetch + console hooks can emit byte-different strings for the same
-            // event. build a stable key. set BEFORE submit fires or the paths race.
+            // event. stable key on the ratings themselves. set BEFORE submit
+            // fires or the two paths race.
             const key = data.Id + "|"
                 + (data.ModesGlicko?.Competitive3v3?.displayRating ?? "") + "|"
                 + (data.ModesGlicko?.Competitive2v2?.displayRating ?? "") + "|"
@@ -2829,6 +1281,7 @@
             firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot };
             return firestoreReady;
         } catch (e) {
+            dbg("initFirebase failed: " + (e && e.message ? e.message : e));
             console.error("[RG HUD] Firebase init failed:", e);
             showError("Firebase failed to load");
             return null;
@@ -2836,8 +1289,8 @@
     }
 
     // ---------- Force-update gate ----------
-    // admin/blacklist has { minVersion }. rules reject writes below anyway.
-    // check once per session, skip submits if outdated. display stays on.
+    // admin/blacklist has { minVersion }. rules reject sub-min writes anyway.
+    // check once per session, skip submits if outdated. HUD display stays on.
 
     let updateRequiredChecked = false;
     let updateRequired = false;
@@ -2857,6 +1310,7 @@
             }
         } catch (e) {
             // don't lock out on transient read error
+            dbg("isUpdateRequired read failed (non-fatal): " + (e && e.message ? e.message : e));
         }
         updateRequiredChecked = true;
         return updateRequired;
@@ -2939,9 +1393,9 @@
         setTimeout(hideNameModal, 1600);
     }
 
-    // Unity swallows printable keys in capture phase. intercept earlier
-    // and stopImmediatePropagation while a HUD input is focused so the game
-    // never sees the event.
+    // Unity swallows printable keys in capture phase. we intercept earlier
+    // and stopImmediatePropagation while a HUD input is focused, so the
+    // game never sees the event.
     ["keydown", "keyup", "keypress"].forEach(type => {
         window.addEventListener(type, e => {
             const active = document.activeElement;
@@ -2977,8 +1431,8 @@
         }, true); // capture — must run before Unity's listener
     });
 
-    // best-effort collision check. two simultaneous picks could both pass but
-    // that's fine, catches every normal case.
+    // best-effort collision check. two simultaneous picks could both pass,
+    // but that's rare enough to live with.
     async function isNameTaken(fb, name, ownSourceUserId) {
         try {
             const q = fb.query(
@@ -2990,6 +1444,7 @@
             return snap.docs.some(d => d.data().sourceUserId !== ownSourceUserId);
         } catch (e) {
             // don't block on check failure, let it through
+            dbg("isNameTaken check failed (letting through): " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Name availability check failed:", e);
             return false;
         }
@@ -3007,40 +1462,47 @@
             const saveBtn = document.getElementById("rgNameSave");
 
             saveBtn.onclick = async () => {
-                const entered = input.value.trim();
-                if (entered.length === 0 || entered.length > 15) {
-                    errEl.textContent = "Name must be 1-15 characters.";
-                    return;
-                }
-                if (containsProfanity(entered)) {
-                    errEl.textContent = "That name isn't allowed. Pick something else.";
-                    return;
-                }
-                if (entered.toLowerCase() === "player") {
-                    errEl.textContent = "\"Player\" is reserved. Pick a real name.";
-                    return;
-                }
-                if (containsEmoji(entered)) {
-                    errEl.textContent = "Names can't contain emojis.";
-                    return;
-                }
+                try {
+                    const entered = input.value.trim();
+                    if (entered.length === 0 || entered.length > 15) {
+                        errEl.textContent = "Name must be 1-15 characters.";
+                        return;
+                    }
+                    if (containsProfanity(entered)) {
+                        errEl.textContent = "That name isn't allowed. Pick something else.";
+                        return;
+                    }
+                    if (entered.toLowerCase() === "player") {
+                        errEl.textContent = "\"Player\" is reserved. Pick a real name.";
+                        return;
+                    }
+                    if (containsEmoji(entered)) {
+                        errEl.textContent = "Names can't contain emojis.";
+                        return;
+                    }
 
-                // async availability check
-                errEl.style.color = "#7ec8ff";
-                errEl.textContent = "Checking availability...";
-                saveBtn.disabled = true;
-                const taken = fb ? await isNameTaken(fb, entered, ownSourceUserId) : false;
-                saveBtn.disabled = false;
-                errEl.style.color = "#ff6b6b";
+                    // async availability check
+                    errEl.style.color = "#7ec8ff";
+                    errEl.textContent = "Checking availability...";
+                    saveBtn.disabled = true;
+                    const taken = fb ? await isNameTaken(fb, entered, ownSourceUserId) : false;
+                    saveBtn.disabled = false;
+                    errEl.style.color = "#ff6b6b";
 
-                if (taken) {
-                    errEl.textContent = "That name is already taken. Pick another.";
-                    return;
+                    if (taken) {
+                        errEl.textContent = "That name is already taken. Pick another.";
+                        return;
+                    }
+
+                    errEl.textContent = "";
+                    hideNameModal();
+                    resolve(entered);
+                } catch (e) {
+                    dbg("askDisplayName save handler threw: " + (e && e.message ? e.message : e));
+                    saveBtn.disabled = false;
+                    errEl.style.color = "#ff6b6b";
+                    errEl.textContent = "Something went wrong. Try again.";
                 }
-
-                errEl.textContent = "";
-                hideNameModal();
-                resolve(entered);
             };
 
             document.getElementById("rgNameCancel").onclick = () => {
@@ -3053,7 +1515,7 @@
     }
 
     // ---------- Write-reduction caches ----------
-    // read nothing twice per session, write nothing that hasn't changed.
+    // read nothing twice per session, write nothing unchanged.
 
     let firestoreWriteCount = 0;
     function logWrite(label) {
@@ -3074,14 +1536,22 @@
     const submitLocks = new Map();
 
     async function submitToLeaderboard(data) {
-        const lockKey = data.Id;
-        const previous = submitLocks.get(lockKey) || Promise.resolve();
-        const current = previous.then(() => submitToLeaderboardInner(data));
-        submitLocks.set(lockKey, current);
-        await current;
+        try {
+            const lockKey = data.Id;
+            const previous = submitLocks.get(lockKey) || Promise.resolve();
+            // swallow inner rejects so the lock chain keeps working
+            const current = previous.then(() => submitToLeaderboardInner(data)).catch(e => {
+                dbg("submitToLeaderboardInner threw: " + (e && e.message ? e.message : e));
+            });
+            submitLocks.set(lockKey, current);
+            await current;
+        } catch (e) {
+            dbg("submitToLeaderboard threw: " + (e && e.message ? e.message : e));
+        }
     }
 
     async function submitToLeaderboardInner(data) {
+      try {
         if (!hasPlayedAnything(data)) return;
 
         const fb = await initFirebase();
@@ -3100,7 +1570,7 @@
                     existingDisplayName = existing.data().displayName;
                 }
             } catch (e) {
-                // fall through and ask
+                dbg("submitToLeaderboardInner: prior displayName read failed, will prompt");
             }
         }
 
@@ -3148,8 +1618,8 @@
             await loadClanData(true);
         }
 
-        // clan tag is part of the snapshot so a tag change alone forces a resync.
-        // Rename always bypasses the "unchanged" skip.
+        // clan tag lives in the snapshot key so a tag change alone forces
+        // a resync. Rename always bypasses the "unchanged" skip.
         const currentClanTag = (clanLoadedForAccount === data.Id && myClan) ? (myClan.tag ?? "") : "";
         const snapshotKey = JSON.stringify({
             displayName, ratings: payload.ratings, stats: payload.stats,
@@ -3187,6 +1657,9 @@
         refreshRanks(fb, data, true);
         refreshClanViewIfOpen();
         applyTitle(); // clan-lead may have flipped since updateMomentum
+      } catch (e) {
+        dbg("submitToLeaderboardInner threw: " + (e && e.message ? e.message : e));
+      }
     }
 
     const REAL_LEADERBOARD_COLLECTION = "leaderboard";
@@ -3196,6 +1669,7 @@
 
     // finds this player's entry for one playlist by sourceUserId. merge:true
     // preserves hand-set fields (flag, icons, glowColor). creates if missing.
+    // catch inside covers Firestore-side failures, no top-level wrap needed.
     async function upsertPlaylistEntry(fb, sourceUserId, playlist, fields) {
         const lockKey = `${sourceUserId}_${playlist}`;
         const previous = upsertLocks.get(lockKey) || Promise.resolve();
@@ -3264,7 +1738,10 @@
     const lastEntryState = new Map(
         (() => {
             try { return JSON.parse(sessionStorage.getItem("rgHudEntryState") ?? "[]"); }
-            catch (e) { return []; }
+            catch (e) {
+                dbg("lastEntryState load failed, starting empty");
+                return [];
+            }
         })()
     );
 
@@ -3276,7 +1753,7 @@
 
     // v13.6 -------- Match audit trail --------
     // append-only receipt in match_audits. every player in the match writes
-    // their own, a fabricated match has no corroborating audits.
+    // their own — a fabricated match has no corroborating audits.
     // fire-and-forget, non-fatal on failure (rules may not allow it yet).
     async function writeMatchAudit(prevRatings, opponents) {
         try {
@@ -3320,7 +1797,430 @@
         }
     }
 
+    // ---------- Leaderboard opponent popup ----------
+    // slides in when a match starts against someone in the leaderboard cache.
+    // cache + config live in their own localStorage keys so the existing
+    // near-real-time rank stuff is untouched.
+
+    const RG_LB_CACHE_KEY = "rgHudLbCache_v1";
+    const RG_LB_CONFIG_KEY = "rgHudRemoteConfig_v1";
+    const RG_LB_CONFIG_TTL_MS = 60 * 60 * 1000;
+    const RG_LB_MODES = ["Competitive1v1", "Competitive2v2", "Competitive3v3"];
+    // leaderboard docs store playlist as "1v1"/"2v2"/"3v3", not the mode name
+    const RG_LB_MODE_TO_PLAYLIST = { Competitive1v1: "1v1", Competitive2v2: "2v2", Competitive3v3: "3v3" };
+    const RG_LB_TOP_N = 100;
+    const RG_LB_DEFAULT_CONFIG = {
+        popupDurationMs: 6000,
+        popupEnabled: true,
+        cacheRefreshHours: 24,
+        minRankToShow: 100,
+    };
+
+    let _remoteConfigMemo = null;
+    let _lbCacheMemo = null;
+    let _lbCacheInFlight = null;      // shared promise so concurrent callers don't re-fetch
+    let _lbCacheFailUntil = 0;        // cooldown after a failed fetch to avoid hammering
+    const RG_LB_FAIL_COOLDOWN_MS = 60 * 1000;
+    let _matchFormat = null;
+    let _matchPlayerCount = 0;
+    let _selfTeam = null;
+    let _shownPopupsThisMatch = new Set();
+    let _deferredMatch = null;
+    let _rosterFired = false;
+    let _rosterFireTimer = null;
+
+    async function fetchRemoteConfig() {
+        try {
+            const fb = await initFirebase();
+            if (!fb) return null;
+            const snap = await fb.getDoc(fb.doc(fb.db, "atlas_config", "hud"));
+            if (!snap.exists()) return null;
+            const raw = snap.data() || {};
+            return { ...RG_LB_DEFAULT_CONFIG, ...raw, fetchedAt: Date.now() };
+        } catch (e) {
+            dbg("remote config fetch failed: " + (e && e.message ? e.message : e));
+            return null;
+        }
+    }
+
+    async function getRemoteConfig() {
+        if (_remoteConfigMemo && Date.now() - _remoteConfigMemo.fetchedAt < RG_LB_CONFIG_TTL_MS) {
+            return _remoteConfigMemo;
+        }
+        try {
+            const cached = JSON.parse(localStorage.getItem(RG_LB_CONFIG_KEY) || "null");
+            if (cached && Date.now() - cached.fetchedAt < RG_LB_CONFIG_TTL_MS) {
+                _remoteConfigMemo = cached;
+                return cached;
+            }
+        } catch (e) {}
+        const fresh = await fetchRemoteConfig();
+        if (fresh) {
+            _remoteConfigMemo = fresh;
+            try { localStorage.setItem(RG_LB_CONFIG_KEY, JSON.stringify(fresh)); } catch (e) {}
+            return fresh;
+        }
+        return { ...RG_LB_DEFAULT_CONFIG, fetchedAt: 0 };
+    }
+
+    async function fetchLeaderboardCache() {
+        try {
+            const fb = await initFirebase();
+            if (!fb) return null;
+            const cache = { modes: {}, fetchedAt: Date.now() };
+            for (const mode of RG_LB_MODES) {
+                const q = fb.query(
+                    fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                    fb.where("playlist", "==", RG_LB_MODE_TO_PLAYLIST[mode]),
+                    fb.orderBy("mmr", "desc"),
+                    fb.limit(RG_LB_TOP_N),
+                );
+                const snap = await fb.getDocs(q);
+                const entries = [];
+                let rank = 0;
+                snap.forEach(doc => {
+                    rank++;
+                    const d = doc.data();
+                    entries.push({ uid: d.sourceUserId, name: d.name, mmr: d.mmr, rank });
+                });
+                cache.modes[mode] = entries;
+            }
+            dbg(`leaderboard cache refreshed (${RG_LB_MODES.map(m => `${m.replace("Competitive","")}:${cache.modes[m].length}`).join(", ")})`);
+            return cache;
+        } catch (e) {
+            dbg("leaderboard cache fetch failed: " + (e && e.message ? e.message : e));
+            return null;
+        }
+    }
+
+    async function getLeaderboardCache() {
+        const cfg = await getRemoteConfig();
+        const ttl = (cfg.cacheRefreshHours || 24) * 60 * 60 * 1000;
+        if (_lbCacheMemo && Date.now() - _lbCacheMemo.fetchedAt < ttl) return _lbCacheMemo;
+        try {
+            const cached = JSON.parse(localStorage.getItem(RG_LB_CACHE_KEY) || "null");
+            if (cached && Date.now() - cached.fetchedAt < ttl) {
+                _lbCacheMemo = cached;
+                return cached;
+            }
+        } catch (e) {}
+        // back off if we just failed — usually a missing index or perms issue,
+        // no point hammering the same broken query for every roster entry.
+        if (Date.now() < _lbCacheFailUntil) return null;
+        // share one in-flight fetch so 4 roster entries don't spawn 4 requests
+        if (_lbCacheInFlight) return _lbCacheInFlight;
+        _lbCacheInFlight = (async () => {
+            try {
+                const fresh = await fetchLeaderboardCache();
+                if (fresh) {
+                    _lbCacheMemo = fresh;
+                    try { localStorage.setItem(RG_LB_CACHE_KEY, JSON.stringify(fresh)); } catch (e) {}
+                    return fresh;
+                }
+                _lbCacheFailUntil = Date.now() + RG_LB_FAIL_COOLDOWN_MS;
+                return null;
+            } finally {
+                _lbCacheInFlight = null;
+            }
+        })();
+        return _lbCacheInFlight;
+    }
+
+    function lookupInCache(cache, uid, mode) {
+        if (!cache || !cache.modes || !uid) return null;
+        const entries = cache.modes[mode];
+        if (!entries) return null;
+        return entries.find(e => e.uid === uid) || null;
+    }
+
+    function tierColorForRank(rank) {
+        if (rank <= 3) return "#ffd700";
+        if (rank <= 10) return "#c77dff";
+        if (rank <= 25) return "#00d4ff";
+        return "#9aa5ad";
+    }
+
+    function modeLabel(mode) {
+        if (mode === "Competitive1v1") return "Competitive 1v1";
+        if (mode === "Competitive2v2") return "Competitive 2v2";
+        if (mode === "Competitive3v3") return "Competitive 3v3";
+        return mode;
+    }
+
+    function ensureLbPopupStyles() {
+        if (document.getElementById("rgLbPopupStyle")) return;
+        const style = document.createElement("style");
+        style.id = "rgLbPopupStyle";
+        style.textContent = `
+#rgLbPopupStack {
+  position: fixed; top: 20px; right: 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  z-index: 999999998; pointer-events: none;
+}
+.rg-lb-popup {
+  width: 300px;
+  background: linear-gradient(180deg, rgba(28,43,58,0.96), rgba(13,20,27,0.96));
+  border: 1px solid #00bfff;
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: #d7f3ff;
+  font-family: Arial, sans-serif;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,191,255,0.15), 0 0 24px rgba(0,191,255,0.25);
+  position: relative;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(24px) translateY(-4px);
+  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(.16,.9,.28,1.15);
+  pointer-events: auto;
+}
+.rg-lb-popup.show { opacity: 1; transform: translateX(0) translateY(0); }
+.rg-lb-popup::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
+  background: var(--tier-color, #00bfff);
+  box-shadow: 0 0 12px var(--tier-color, #00bfff);
+}
+.rg-lb-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: bold;
+  color: var(--tier-color, #00bfff);
+  letter-spacing: 1.4px; text-transform: uppercase;
+  margin-bottom: 8px;
+  text-shadow: 0 0 8px var(--tier-color, #00bfff);
+}
+.rg-lb-header .rg-lb-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--tier-color, #00bfff);
+  box-shadow: 0 0 8px var(--tier-color, #00bfff);
+  animation: rg-lb-pulse 1.6s ease-in-out infinite;
+}
+@keyframes rg-lb-pulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .5; transform: scale(.85); }
+}
+.rg-lb-body { display: flex; align-items: center; gap: 12px; }
+.rg-lb-rank {
+  flex: 0 0 auto; min-width: 58px; height: 58px; padding: 0 8px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15));
+  border: 2px solid var(--tier-color, #00bfff);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  box-shadow: inset 0 0 12px rgba(0,0,0,0.4);
+}
+.rg-lb-rank .rg-lb-hash {
+  font-size: 10px; color: var(--tier-color, #00bfff);
+  line-height: 1; opacity: .8; margin-bottom: 2px; font-weight: bold;
+}
+.rg-lb-rank .rg-lb-num {
+  font-size: 22px; font-weight: 900;
+  color: var(--tier-color, #00bfff);
+  line-height: 1;
+  font-family: "SF Mono", Consolas, monospace;
+  letter-spacing: -1px;
+}
+.rg-lb-info { flex: 1 1 auto; min-width: 0; }
+.rg-lb-name {
+  font-size: 15px; font-weight: bold; color: #ffffff;
+  line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 180px;
+}
+.rg-lb-mode {
+  display: inline-block; margin-top: 4px; padding: 2px 8px;
+  font-size: 10px; font-weight: bold; letter-spacing: .5px;
+  background: rgba(0,191,255,0.12);
+  border: 1px solid #00bfff88;
+  color: #00bfff;
+  border-radius: 999px;
+}
+.rg-lb-teammate {
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid rgba(0,191,255,0.15);
+  font-size: 11px; color: #a8c3d3;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.rg-lb-teammate .rg-lb-lbl { opacity: .7; text-transform: uppercase; letter-spacing: 1px; font-size: 9px; }
+.rg-lb-teammate .rg-lb-tname {
+  color: #fff; font-weight: bold; max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rg-lb-teammate .rg-lb-trank {
+  padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 10px;
+  background: rgba(0,0,0,0.35);
+}
+`;
+        document.head.appendChild(style);
+    }
+
+    async function showLbOpponentPopup({ rank, name, mode, isTeammate }) {
+        try {
+            ensureLbPopupStyles();
+            const cfg = await getRemoteConfig();
+            if (cfg.popupEnabled === false) return;
+            const dur = cfg.popupDurationMs || 6000;
+            let stack = document.getElementById("rgLbPopupStack");
+            if (!stack) {
+                stack = document.createElement("div");
+                stack.id = "rgLbPopupStack";
+                document.body.appendChild(stack);
+            }
+            const el = document.createElement("div");
+            el.className = "rg-lb-popup";
+            el.style.setProperty("--tier-color", tierColorForRank(rank));
+            const headerLabel = isTeammate === true ? "LEADERBOARD TEAMMATE"
+                              : isTeammate === false ? "LEADERBOARD OPPONENT"
+                              : "LEADERBOARD PLAYER";
+            el.innerHTML = `
+                <div class="rg-lb-header"><span class="rg-lb-dot"></span>${headerLabel}</div>
+                <div class="rg-lb-body">
+                    <div class="rg-lb-rank">
+                        <div class="rg-lb-hash">RANK</div>
+                        <div class="rg-lb-num">#${rank}</div>
+                    </div>
+                    <div class="rg-lb-info">
+                        <div class="rg-lb-name">${escapeHtml(name)}</div>
+                        <div class="rg-lb-mode">${modeLabel(mode)}</div>
+                    </div>
+                </div>
+            `;
+            stack.appendChild(el);
+            requestAnimationFrame(() => el.classList.add("show"));
+            setTimeout(() => {
+                el.classList.remove("show");
+                setTimeout(() => el.remove(), 320);
+            }, dur);
+        } catch (e) {
+            dbg("showLbOpponentPopup threw: " + (e && e.message ? e.message : e));
+        }
+    }
+
+    function derivedFormatFromPlayerCount(n) {
+        if (n === 2) return "Competitive1v1";
+        if (n === 3 || n === 4) return "Competitive2v2";
+        if (n === 5 || n === 6) return "Competitive3v3";
+        return null;
+    }
+
+    function resetMatchPopupState() {
+        _matchFormat = null;
+        _matchPlayerCount = 0;
+        _selfTeam = null;
+        _shownPopupsThisMatch = new Set();
+        _deferredMatch = null;
+        _rosterFired = false;
+        if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+    }
+
+    // called when a real-uid roster entry lands. we wait until the full roster
+    // is in before firing anything, because the photon Team: field is
+    // sometimes stale (game rebalances after the init lines) and we need to
+    // see the whole split to know if we can trust it.
+    async function onRosterEntry(entry) {
+        try {
+            const selfUid = lastKnownPlayerData?.Id;
+            if (!selfUid) return;
+            if (entry.uid === selfUid && entry.team) _selfTeam = entry.team;
+            // fire only once, only when roster is complete
+            if (!_matchFormat) {
+                // rare: no "Starting game with N players" line seen — stash for postmortem
+                const isTm = entry.team && _selfTeam && entry.team === _selfTeam;
+                if (!_deferredMatch) _deferredMatch = { opponents: [], teammates: [] };
+                const bucket = isTm ? _deferredMatch.teammates : _deferredMatch.opponents;
+                if (entry.uid !== selfUid && !bucket.some(p => p.uid === entry.uid)) bucket.push(entry);
+                return;
+            }
+            if (_matchPlayerCount && _liveRoster.length >= _matchPlayerCount) {
+                fireAllRankedPopups();
+            } else {
+                // safety net: if inits stop coming, fire after 3s of quiet
+                if (_rosterFireTimer) clearTimeout(_rosterFireTimer);
+                _rosterFireTimer = setTimeout(() => fireAllRankedPopups(), 3000);
+            }
+        } catch (e) {
+            dbg("onRosterEntry threw: " + (e && e.message ? e.message : e));
+        }
+    }
+
+    async function fireAllRankedPopups() {
+        try {
+            if (_rosterFired) return;
+            _rosterFired = true;
+            if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+            const selfUid = lastKnownPlayerData?.Id;
+            if (!selfUid || !_matchFormat) return;
+            // count each team so we can tell if the photon Team labels line up
+            // with a real match split (3v3 = 3+3, 2v2 = 2+2, 1v1 = 1+1)
+            const counts = {};
+            for (const p of _liveRoster) {
+                if (p.team) counts[p.team] = (counts[p.team] || 0) + 1;
+            }
+            const expectedPerSide = _matchPlayerCount / 2;
+            const teamsBalanced = counts.Orange === expectedPerSide && counts.Blue === expectedPerSide;
+            if (!teamsBalanced) {
+                dbg(`team split ${counts.Orange || 0}O/${counts.Blue || 0}B doesn't match a legit ${_matchPlayerCount}-player split — using neutral labels`);
+            }
+            const cache = await getLeaderboardCache();
+            if (!cache) { dbg("popup skip: no leaderboard cache available"); return; }
+            const cfg = await getRemoteConfig();
+            for (const entry of _liveRoster) {
+                if (entry.uid === selfUid) continue;
+                if (_shownPopupsThisMatch.has(entry.uid)) continue;
+                _shownPopupsThisMatch.add(entry.uid);
+                const hit = lookupInCache(cache, entry.uid, _matchFormat);
+                if (!hit) {
+                    dbg(`popup skip: "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${_matchFormat} top ${RG_LB_TOP_N}`);
+                    continue;
+                }
+                if (hit.rank > (cfg.minRankToShow || 100)) {
+                    dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
+                    continue;
+                }
+                let isTeammate = null; // null = don't know, use neutral label
+                if (teamsBalanced && _selfTeam && entry.team) {
+                    isTeammate = entry.team === _selfTeam;
+                }
+                const displayName = hit.name || entry.name;
+                const role = isTeammate === true ? "teammate" : isTeammate === false ? "opponent" : "player";
+                dbg(`popup fire: #${hit.rank} ${role} "${displayName}" in ${_matchFormat}`);
+                showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: _matchFormat, isTeammate });
+            }
+        } catch (e) {
+            dbg("fireAllRankedPopups threw: " + (e && e.message ? e.message : e));
+        }
+    }
+
+    // for 3/4-player matches we defer to match end when ratings deltas
+    // reveal the true mode. this runs after tryParseAndUpdate.
+    async function firePostmortemPopupsIfDeferred(prevRatings) {
+        try {
+            if (!_deferredMatch) return;
+            const g = lastKnownPlayerData?.ModesGlicko || {};
+            const changedRanked = RG_LB_MODES.filter(m => {
+                const before = prevRatings[m];
+                const after = g[m]?.displayRating;
+                return typeof after === "number" && typeof before === "number" && after !== before;
+            });
+            if (changedRanked.length !== 1) return;
+            const mode = changedRanked[0];
+            const cache = await getLeaderboardCache();
+            if (!cache) return;
+            const cfg = await getRemoteConfig();
+            const fire = (list, isTeammate) => {
+                for (const p of list) {
+                    const hit = lookupInCache(cache, p.uid, mode);
+                    if (!hit) continue;
+                    if (hit.rank > (cfg.minRankToShow || 100)) continue;
+                    showLbOpponentPopup({ rank: hit.rank, name: hit.name || p.name, mode, isTeammate });
+                }
+            };
+            fire(_deferredMatch.opponents, false);
+            fire(_deferredMatch.teammates, true);
+        } catch (e) {
+            dbg("firePostmortemPopupsIfDeferred threw: " + (e && e.message ? e.message : e));
+        }
+    }
+
     async function syncToRealLeaderboard(fb, data, displayName) {
+      try {
         const sourceUserId = data.Id;
 
         // piggy-back: refresh this member's MMR in the clan doc, get tag back
@@ -3348,6 +2248,9 @@
             wins: totalWins,
             matches: totalMatches,
         });
+      } catch (e) {
+        dbg("syncToRealLeaderboard threw: " + (e && e.message ? e.message : e));
+      }
     }
 
     // refresh my ranked MMR in the clan doc + recompute totalMMR.
@@ -3400,7 +2303,9 @@
                             const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
                             const ts = back.exists() ? back.data().lastSyncAt : null;
                             if (ts?.toMillis) learnServerTime(ts.toMillis());
-                        } catch (e) {}
+                        } catch (e) {
+                            dbg("serverNow calibration read failed, will retry next session");
+                        }
                     }
 
                     // throttled directory rebuild, instant local, Firestore at most every 3m
@@ -3425,29 +2330,33 @@
     }
 
     async function upsertIfChanged(fb, sourceUserId, playlist, fields) {
-        const stateKey = `${sourceUserId}_${playlist}`;
-        const newState = JSON.stringify(fields);
+        try {
+            const stateKey = `${sourceUserId}_${playlist}`;
+            const newState = JSON.stringify(fields);
 
-        if (lastEntryState.get(stateKey) === newState) {
-            return; // unchanged — skip
-        }
+            if (lastEntryState.get(stateKey) === newState) {
+                return; // unchanged — skip
+            }
 
-        const ok = await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
-        // only cache on success, a failed write would poison the cache and
-        // prevent any future retry
-        if (ok) {
-            lastEntryState.set(stateKey, newState);
-            saveEntryState();
+            const ok = await upsertPlaylistEntry(fb, sourceUserId, playlist, fields);
+            // only cache on success, a failed write would poison the cache and
+            // prevent any future retry
+            if (ok) {
+                lastEntryState.set(stateKey, newState);
+                saveEntryState();
+            }
+        } catch (e) {
+            dbg("upsertIfChanged threw: " + (e && e.message ? e.message : e));
         }
     }
 
     // ---------- Rank lookup ----------
-    // count aggregation: "how many entries have higher mmr than mine" = 1 cheap
-    // server-side count, not a collection download. cached; force=true after
-    // our own writes, otherwise once per session.
+    // count aggregation: "how many entries have higher mmr than mine" is one
+    // cheap server-side count, not a collection download. cached; force=true
+    // after our own writes, otherwise once per session.
     //
-    // we only re-query modes whose MMR actually moved since last check. someone
-    // else climbing could shuffle you, but that drift isn't worth 4 reads/match.
+    // only re-queries modes whose MMR actually moved since last check. someone
+    // else climbing could shuffle you, but not worth 4 reads/match.
 
     let ranksFetchedThisSession = false;
     const lastRankedMMR = new Map(); // playlist -> mmr at last query
@@ -3499,6 +2408,7 @@
                         }
                     } catch (e) {
                         // gap is nice-to-have, ignore failures
+                        dbg(`refreshRanks: mmr-to-next lookup failed for ${playlist}`);
                     }
                 } else {
                     cachedMmrToNext.delete(playlist);
@@ -3513,6 +2423,7 @@
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
         } catch (e) {
             // rank display is nice-to-have, don't crash on failure
+            dbg("refreshRanks failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Rank lookup failed:", e);
         }
     }
@@ -3523,20 +2434,20 @@
     let lastKnownPlayerData = null;
 
     // ---------- Last-game lobby roster (feeds Forge's Imposter section) ----------
-    // game logs "Initialized stats for player X" for each player when a match
-    // forms. we collect names while the match runs, freeze on matchEnd /
-    // LeaveRoom. persisted so a page refresh (Tampermonkey update needs one)
-    // doesn't wipe the roster before the user opens Forge, 13.4 shipped that
-    // bug and Imposter always showed empty state.
+    // game logs "Initialized stats for player X" per player as a match forms.
+    // we collect names while the match runs, freeze on matchEnd / LeaveRoom.
+    // persisted so a page refresh (Tampermonkey update requires one) doesn't
+    // wipe the roster before the user opens Forge — 13.4 shipped that bug
+    // and Imposter always showed empty.
     let lastGamePlayers = [];   // frozen roster of the last match: [{name, uid}]
     try { lastGamePlayers = JSON.parse(localStorage.getItem("rgHudLastRoster") ?? "[]"); }
     catch (e) { pushError(e, "loadLastRoster"); }
     let _liveRoster = [];       // in-progress match: [{name, uid}]
 
-    // "are we actually in a real match right now". set on the first init line
-    // with a REAL UserId (warm-up self-inits log empty UserId), cleared on
-    // matchEnd/LeaveRoom/new queue. all HUD-restore signals gate on this so
-    // a reconnect storm can't resurrect the HUD mid-match.
+    // "are we in a real match right now". set on first init line with a real
+    // UserId (warm-up self-inits log empty UserId), cleared on matchEnd /
+    // LeaveRoom / new queue. all HUD-restore signals gate on this so a
+    // reconnect storm can't resurrect the HUD mid-match.
     // v13.4 bug: includes("OnDisconnected") substring-matched
     // "PhotonConnector:OurOnDisconnected" and restored the HUD on every
     // reconnect attempt.
@@ -3559,8 +2470,8 @@
             try { localStorage.setItem("rgHudLastRoster", JSON.stringify(lastGamePlayers)); }
             catch (e) { pushError(e, "saveLastRoster"); }
             dbg(`Imposter roster captured: ${lastGamePlayers.length} player(s): ${lastGamePlayers.map(p => p.name).join(", ")}`);
-            // repaint Forge live if it's open. can't focus-steal here, you
-            // can't be typing in Forge while in a match.
+            // repaint Forge if it's open. no focus-steal risk mid-match,
+            // the user can't be typing in Forge while playing.
             const fv = document.getElementById("rgForgeView");
             if (fv && fv.style.display !== "none" && typeof RGNF !== "undefined" && RGNF.refresh) {
                 RGNF.refresh();
@@ -3611,17 +2522,22 @@
                 setAutoVisible(true);
                 // fire-and-forget audit write
                 writeMatchAudit(prevRatings, opponentsSnapshot);
+                // if we deferred the popup for an ambiguous 3/4-player match,
+                // the ratings delta now tells us the mode — show it postmortem
+                firePostmortemPopupsIfDeferred(prevRatings);
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
-                // fire the pending-steal verifier here too, login carries
-                // the raw nickname before any local processing
+                // login carries the raw nickname before any local processing,
+                // ideal spot for the pending-steal verifier
                 try {
                     const loginData = JSON.parse(text);
                     const rawNick = loginData?.Nickname ?? "";
                     if (rawNick && typeof RGNF !== "undefined" && RGNF.verifyStolenName) {
                         RGNF.verifyStolenName(rawNick);
                     }
-                } catch (e) { /* already logged */ }
+                } catch (e) {
+                    dbg("login pending-steal check failed: " + (e && e.message ? e.message : e));
+                }
             } else if (url.includes("/v0304_player/equipSkin")) {
                 // response is a bare quoted skin id, e.g. "body.2"
                 try {
@@ -3629,7 +2545,9 @@
                     if (lastKnownPlayerData) {
                         lastKnownPlayerData.EquippedSkinId = skinId;
                     }
-                } catch (e) {}
+                } catch (e) {
+                    dbg("equipSkin parse failed: " + (e && e.message ? e.message : e));
+                }
             }
         } catch (e) {
             // 13.5 swallowed clone.text() throws silently. log them.
@@ -3640,22 +2558,23 @@
 
     console.log = function (...args) {
         oldLog.apply(console, args);
+        // feed the raw buffer for atlasCap()
+        _rawPush("log", args);
         // 13.5: a throw in any branch below unwound the for-loop and every
         // state transition after it was silently missed. wrap it.
         try {
             for (const arg of args) {
                 if (typeof arg !== "string") continue;
 
-                // ratings payload also arrives via logged web-request text
-                // (login, echoed matchEnd). tryParseAndUpdate dedupes.
+                // ratings can also come in via logged request text (login, echoed
+                // matchEnd). tryParseAndUpdate dedupes with the fetch hook.
                 if (arg.includes('"ModesGlicko"')) {
                     const json = arg.substring(arg.indexOf("{"));
                     tryParseAndUpdate(json);
                 }
 
-                // ---- Field entry: queue warm-up OR real match forming ----
-                // line shape:
-                //   ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
+                // ---- init line: queue warm-up OR real match forming ----
+                // shape: ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
                 // UserId is the discriminator. warm-up logs the local player
                 // with an EMPTY UserId (verified 5x in 7/27 log dump); real
                 // match inits always populate it.
@@ -3664,9 +2583,11 @@
                     // v13.6: anchor only on "for player:" + "(UserId:..." so a
                     // future patch adding a field / tweaking spacing doesn't
                     // silently kill roster detection.
-                    const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]+)/);
+                    // also grabs team so we can tell opponents from teammates.
+                    const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]+)(?:,\s*Team:\s*([A-Za-z]+))?/);
                     const nm = (m?.[1] ?? "").trim();
                     const uid = (m?.[2] ?? "").trim();
+                    const team = (m?.[3] ?? "").trim() || null;
                     if (nm && uid) {
                         _lastInitLineAt = performance.now();
                         setAutoVisible(false); // real match — hide HUD
@@ -3677,8 +2598,11 @@
                         }
                         // dedupe by uid, names collide, mid-match backfills should ADD
                         if (!_liveRoster.some(p => p.uid === uid)) {
-                            _liveRoster.push({ name: nm, uid });
-                            dbg(`roster +1 "${nm}" (${_liveRoster.length} total)`);
+                            const entry = { name: nm, uid, team };
+                            _liveRoster.push(entry);
+                            dbg(`roster +1 "${nm}"${team ? ` (${team})` : ""} (${_liveRoster.length} total)`);
+                            // fire the leaderboard-opponent popup check
+                            onRosterEntry(entry);
                         }
                     } else if (nm) {
                         dbg(`warm-up init "${nm}" (empty uid) — ignored, inMatch=${_inMatch}`);
@@ -3690,9 +2614,22 @@
                     }
                 }
 
-                // ---- Left match another way (rage-quit, back-out) ----
+                // "Starting game with N players" fires right before the real
+                // uid inits. tells us format when it's unambiguous (2, 5, 6).
+                if (arg.includes("Starting game with") && arg.includes("players")) {
+                    const m = arg.match(/Starting game with\s+(\d+)\s+players/);
+                    if (m) {
+                        _matchPlayerCount = parseInt(m[1], 10);
+                        _matchFormat = derivedFormatFromPlayerCount(_matchPlayerCount);
+                        dbg(`match player count = ${_matchPlayerCount}, format = ${_matchFormat || "unknown"}`);
+                        // pre-warm the cache in the background so it's ready when roster fills
+                        getLeaderboardCache();
+                    }
+                }
+
+                // ---- left match another way (rage-quit, back-out) ----
                 // LeaveRoom / fresh queue can't coexist with mid-match. freeze
-                // and clear so Imposter survives early exits.
+                // so Imposter survives early exits.
                 if (arg.includes("PhotonNetwork:LeaveRoom") ||
                     arg.includes("Set player matchmaking start time")) {
                     if (_inMatch) {
@@ -3700,12 +2637,14 @@
                         freezeRoster();
                     }
                     _inMatch = false;
+                    // new match is being queued — clear popup state
+                    resetMatchPopupState();
                 }
 
-                // ---- Return-to-menu / recovery signals ----
+                // ---- return-to-menu / recovery signals ----
                 // v13.4 used "OnJoinedRoom"/"OnLeftRoom" (never appear) and
                 // "OnDisconnected" (only matched as substring of
-                // "OurOnDisconnected"). these are the actual log strings.
+                // "OurOnDisconnected"). these are the actual strings.
                 // gate restore on !_inMatch or a reconnect storm respawns the HUD.
                 // "Starting SetNickname" covers practice/private, which emit
                 // no room strings on exit.
@@ -3768,6 +2707,7 @@
             }
             eventConfigLoaded = true;
         } catch (e) {
+            dbg("loadEventConfig failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Event config load failed:", e);
         }
         return eventConfig;
@@ -3782,7 +2722,7 @@
 
     // ---------- Clan role permissions (server-driven) ----------
     // defaults match the old hardcoded behavior. admin/clanPerms can override
-    // any subset, e.g. { elder: { kick: true } }.
+    // any subset, e.g. { elder: { kick: true } }, no redeploy needed.
     const CLAN_ROLE_PERM_DEFAULTS = {
         leader:   { editClanInfo: true,  tagStyle: true,  kick: true,  approve: true,  roleChange: true,  transfer: true,  disband: true  },
         coleader: { editClanInfo: false, tagStyle: false, kick: true,  approve: true,  roleChange: true,  transfer: false, disband: false },
@@ -3799,11 +2739,12 @@
             clanRolePerms = snap.exists() ? snap.data() : null;
             clanRolePermsLoaded = true;
         } catch (e) {
+            dbg("loadClanRolePerms failed (falling back to defaults): " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Clan role perms load failed:", e);
         }
     }
 
-    // stored bool wins; missing = default. unknown role -> member (most restrictive).
+    // stored bool wins, missing = default. unknown role -> member (most restrictive).
     function rolePerm(role, key) {
         const r = (role && CLAN_ROLE_PERM_DEFAULTS[role]) ? role : "member";
         const stored = clanRolePerms?.[r]?.[key];
@@ -3816,7 +2757,8 @@
         return me?.role ?? "member";
     }
 
-    // offset learned from serverTimestamp round-trips. cosmetic only, never scoring.
+    // offset learned from serverTimestamp round-trips. cosmetic countdowns only,
+    // never scoring.
     function serverNow() {
         return Date.now() + (serverNowOffset ?? 0);
     }
@@ -4114,7 +3056,7 @@
     }
 
     // live clan-doc listener. attach while Clan tab is open, detach on close.
-    // callback must render from the snapshot, no refetching, or costs triple.
+    // callback renders straight from the snapshot — refetching triples reads.
     let _clanUnsub = null;
     let _clanListenerId = null;
     let _clanAttaching = false; // v13.6: guard against re-entry during init await
@@ -4187,6 +3129,7 @@
                 }
             );
         } catch (e) {
+            dbg("attachClanListener failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Clan listener attach failed:", e);
             _clanListenerId = null;
         } finally {
@@ -4230,13 +3173,14 @@
             clanLoaded = true;
             clanLoadedForAccount = uid;
         } catch (e) {
+            dbg("loadClanData failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Clan load failed:", e);
         }
     }
 
-    // COST: refreshDirectory reads EVERY clan doc + 1 write. fine for structural
-    // changes (create/join/kick/leave). routine per-match MMR ticks go through
-    // refreshDirectoryThrottled instead.
+    // refreshDirectory reads EVERY clan doc + 1 write. fine for structural
+    // changes (create/join/kick/leave). routine per-match MMR ticks go
+    // through refreshDirectoryThrottled.
 
     // zero-read patch of my own entry in the in-memory directory
     function patchMyClanInDirectory() {
@@ -4259,11 +3203,15 @@
     const DIR_REFRESH_THROTTLE_MS = 3 * 60 * 1000;
 
     async function refreshDirectoryThrottled(fb) {
-        patchMyClanInDirectory();
-        const now = Date.now();
-        if (now - lastDirRefreshAt < DIR_REFRESH_THROTTLE_MS) return;
-        lastDirRefreshAt = now;
-        await refreshDirectory(fb);
+        try {
+            patchMyClanInDirectory();
+            const now = Date.now();
+            if (now - lastDirRefreshAt < DIR_REFRESH_THROTTLE_MS) return;
+            lastDirRefreshAt = now;
+            await refreshDirectory(fb);
+        } catch (e) {
+            dbg("refreshDirectoryThrottled threw: " + (e && e.message ? e.message : e));
+        }
     }
 
 
@@ -4577,7 +3525,11 @@
                         }, 1800);
                     }
                     showToast("Saved! Open 🎨 Forge and hit Apply to refresh YOUR name -- members do the same on theirs.");
-                } catch (e) { console.error("[RG HUD] Save tag style failed:", e); showToast("Save failed."); }
+                } catch (e) {
+                    dbg("save tag style threw: " + (e && e.message ? e.message : e));
+                    console.error("[RG HUD] Save tag style failed:", e);
+                    showToast("Save failed.");
+                }
             };
         }
 
@@ -4617,6 +3569,7 @@
             await fb.setDoc(fb.doc(fb.db, "clans_directory", "index"), { clans });
             clanDirectory = clans;
         } catch (e) {
+            dbg("refreshDirectory failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Directory refresh failed:", e);
         }
         // repaint title in case standings flipped clan-lead status
@@ -4806,13 +3759,14 @@
                 await fb.deleteDoc(ref);
             }
         } catch (e) {
-            // notices are best-effort
+            // notices are best-effort, don't spam the user
+            dbg("checkClanNotices failed (non-fatal): " + (e && e.message ? e.message : e));
         }
     }
 
     // ---------- Role management ----------
     // leader > coleader > elder > member. multiple coleaders/elders allowed.
-    // gating enforced client-side (honor system).
+    // gating is client-side (honor system) — server rules don't enforce it.
 
     const ROLE_RANK = { leader: 3, coleader: 2, elder: 1, member: 0 };
 
@@ -4965,7 +3919,7 @@
 
     // ---------- Clan tag styling ----------
     // leader owns clan.tagStyle. members opt in via localStorage so the clan
-    // doc doesn't balloon. getClanTagPrefix() returns TMP markup used at Apply.
+    // doc doesn't balloon. getClanTagPrefix() returns TMP markup for Apply.
 
     const CLAN_TAG_OPTIN_KEY = "rgHudUseClanTag";
 
@@ -5016,9 +3970,9 @@
         return null;
     }
 
-    // strip a leading styled [TAG] from a raw nickname when it matches our tag.
+    // strip a leading styled [TAG] from a raw nickname if it matches our tag.
     // without this, the opt-in prefix stacks a second copy ([KING] [KING] ...).
-    // tolerates any TMP markup interleaved between the letters.
+    // tolerates TMP markup interleaved between the letters.
     function stripLeadingClanTagMarkup(raw) {
         const tag = String(myClan?.tag ?? "").trim();
         if (!raw || !tag) return raw || "";
@@ -5136,26 +4090,30 @@
     // ---------- Clan view rendering ----------
 
     async function renderClanView() {
-        const view = document.getElementById("rgClanView");
-        if (!view) return;
+        try {
+            const view = document.getElementById("rgClanView");
+            if (!view) return;
 
-        if (!lastKnownPlayerData) {
-            view.innerHTML = `<div style="opacity:.8;">Log in or play a match first to use clans.</div>`;
-            return;
+            if (!lastKnownPlayerData) {
+                view.innerHTML = `<div style="opacity:.8;">Log in or play a match first to use clans.</div>`;
+                return;
+            }
+
+            view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
+            await loadClanData(true);
+            const fb = await initFirebase();
+            // v13.6: dropped force=true on the two admin config loaders. they
+            // change so rarely the first session read is fine to cache. saves ~2
+            // Firestore reads per tab open. loadClanData(true) stays because
+            // clanless users have no live listener and need a fresh directory.
+            if (fb) await loadEventConfig(fb);
+            if (fb) await loadClanRolePerms(fb);
+
+            renderClanViewFromMemory();
+            if (myClan) attachClanListener();
+        } catch (e) {
+            dbg("renderClanView threw: " + (e && e.message ? e.message : e));
         }
-
-        view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
-        await loadClanData(true);
-        const fb = await initFirebase();
-        // v13.6: dropped force=true on the two admin config loaders. they
-        // change so rarely the first session read is fine to cache. saves ~2
-        // Firestore reads per tab open. loadClanData(true) stays because
-        // clanless users have no live listener and need a fresh directory.
-        if (fb) await loadEventConfig(fb);
-        if (fb) await loadClanRolePerms(fb);
-
-        renderClanViewFromMemory();
-        if (myClan) attachClanListener();
     }
 
     // zero-read repaint from in-memory myClan
@@ -5446,7 +4404,7 @@
             const cancelBtn = document.getElementById("rgDialogCancel");
 
             msgEl.textContent = message;
-            // v13.6: preserve line breaks for multi-line messages (session recap)
+            // preserve line breaks for multi-line dialog messages
             msgEl.style.whiteSpace = "pre-wrap";
             okBtn.textContent = okLabel;
             cancelBtn.textContent = cancelLabel;
@@ -5477,6 +4435,7 @@
 
     // rendered temporarily into the clan view
     async function showManageMemberMenu(userId, name, targetRole, actorRole, actorIsLeader) {
+      try {
         const view = document.getElementById("rgClanView");
         if (!view) return;
 
@@ -5525,74 +4484,15 @@
             btn.onclick = () => actions[parseInt(btn.getAttribute("data-i"))].run();
         });
         document.getElementById("rgMgBack").onclick = renderClanView;
+      } catch (e) {
+        dbg("showManageMemberMenu threw: " + (e && e.message ? e.message : e));
+      }
     }
 
     function escapeHtml(s) {
         return String(s ?? "").replace(/[&<>"']/g, c => (
             { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
         ));
-    }
-
-    // v13.6: on-demand session summary. plain text via showDialog.
-    function showSessionRecap() {
-        if (!sessionStart) {
-            showDialog({ message: "No session data yet. Log in or play a match, then check back.", okLabel: "OK", cancelLabel: "" });
-            return;
-        }
-        const lines = [];
-        const ms = Date.now() - sessionStart.startedAt;
-        const minutes = Math.floor(ms / 60000);
-        const hours = Math.floor(minutes / 60);
-        const minPart = minutes % 60;
-        lines.push(`Session length: ${hours > 0 ? hours + "h " : ""}${minPart}m`);
-
-        const data = lastKnownPlayerData;
-        if (data && data.ModesGlicko) {
-            lines.push("");
-            lines.push("MMR change this session:");
-            const modes = [
-                ["Competitive3v3", "3v3"],
-                ["Competitive2v2", "2v2"],
-                ["Competitive1v1", "1v1"],
-                ["Casual", "Casual"],
-            ];
-            let anyMovement = false;
-            for (const [key, label] of modes) {
-                const start = sessionStart[key];
-                const now = data.ModesGlicko[key]?.displayRating;
-                if (typeof start === "number" && typeof now === "number") {
-                    const d = now - start;
-                    if (d !== 0) anyMovement = true;
-                    const sign = d > 0 ? "+" : "";
-                    lines.push(`  ${label}: ${now} (${sign}${d})`);
-                }
-            }
-            if (!anyMovement) lines.push("  (no ranked matches counted yet)");
-        }
-
-        if (streakData && streakData.streak !== 0) {
-            const n = streakData.streak;
-            lines.push("");
-            lines.push(n > 0 ? `Current streak: 🔥 ${n} wins in a row` : `Current streak: ❄️ ${-n} losses in a row`);
-        }
-
-        if (eventPhase && eventPhase() === "active" && myClan) {
-            const uid = myUserId();
-            const contribution = myEventContribution(myClan, uid);
-            const clanScore = computeClanEventScore(myClan);
-            const standings = eventStandings();
-            const rank = standings.findIndex(c => c.id === myClan.id) + 1;
-            lines.push("");
-            lines.push(`Clan Clash: ${eventConfig?.name || "current event"}`);
-            if (typeof contribution === "number") {
-                const sign = contribution >= 0 ? "+" : "";
-                lines.push(`  Your contribution: ${sign}${contribution}`);
-            }
-            const clanSign = clanScore >= 0 ? "+" : "";
-            lines.push(`  Clan total: ${clanSign}${clanScore}${rank ? `  (#${rank}/${standings.length})` : ""}`);
-        }
-
-        showDialog({ message: lines.join("\n"), okLabel: "Close", cancelLabel: "" });
     }
 
     // ---------- Boot ----------
@@ -5624,8 +4524,8 @@
 
 
     // ==================================================================
-    // 🎨 NAME FORGE. rich-text in-game nickname builder.
-    // wrapped so helper names (esc, el, ...) don't collide with the HUD.
+    // 🎨 NAME FORGE — rich-text in-game nickname builder.
+    // wrapped in an IIFE so helper names (esc, el, ...) don't collide with the HUD.
     // edits the IN-GAME nickname; ✏️ Rename edits the leaderboard name.
     // ==================================================================
     const RGNF = (function () {
@@ -5635,13 +4535,13 @@
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
   const STORE_KEY = 'rgNameForge.presets.v1';
   const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
-  // per-account state, legacy key read once as fallback on upgrade
+  // per-account state, legacy key read once as a fallback on upgrade
   let _currentUserId = null;
   let _lastRawNickname = '';
   const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
   const HISTORY_KEY = 'rgNameForge.history.v1';
-  // steal receipt. boot-time SetNickname echo can undo a fresh steal, so
-  // we re-apply once after boot if the login nickname doesn't match.
+  // steal receipt. boot-time SetNickname echo can undo a fresh steal, so we
+  // re-apply once after boot if the login nickname doesn't match.
   const pendingStealKey = () => 'rgNameForge.pendingSteal.v1.' + (_currentUserId || 'anon');
   const PENDING_STEAL_TTL_MS = 15 * 60 * 1000;
   const FABPOS_KEY = 'rgNameForge.fabPos.v1';
@@ -6105,7 +5005,7 @@
   async function applyNickname(code) {
     const token = await getIdToken();
     // guard: IndexedDB fallback can serve a stale token in multi-account
-    // browsers and apply to the WRONG account. fail loudly instead.
+    // browsers, which would apply to the WRONG account. fail loudly instead.
     let mismatch = null;
     try {
       const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -6131,7 +5031,7 @@
   }
 
   // once per page load: check the last steal survived the game's boot echo.
-  // mismatch -> re-apply once after 4s so our write lands last. TTL-bound.
+  // mismatch -> re-apply once after 4s so our write lands last. TTL-guarded.
   let _stealVerified = false;
   function verifyPendingSteal(rawNickname) {
     if (_stealVerified) return;
@@ -6537,7 +5437,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
 
-  // among-us role reveal on name steal. pointer-events:none + self-removal.
+  // among-us role reveal on name steal. pointer-events:none, self-removes.
   function showImposterReveal(raw) {
     if (!document.getElementById('rgnfImposterKf')) {
       const st = document.createElement('style');
@@ -6619,7 +5519,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     panel.appendChild(head);
 
     // touch-to-exit raw mode. wired once, fires only on real user input.
-    // touching a styling control clears the raw snapshot so its handler wins.
+    // touching a styling control clears the raw snapshot so that handler wins.
     if (!panel._rgnfRawExitWired) {
       panel._rgnfRawExitWired = true;
       const exitRawIfStylingTouch = (e) => {
@@ -7378,17 +6278,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   // ------------------------------------------------------------------
-  // Input capture guard, MUST register before the game's handlers.
+  // Input capture guard — MUST register before the game's handlers.
   // rocketgoal.io binds control keys at window capture and preventDefaults them.
-  // we run at document-start, register first, and stopImmediatePropagation for
-  // events aimed at our UI so the game never sees them.
+  // We run at document-start, register first, and stopImmediatePropagation
+  // for events aimed at our UI so the game never sees them.
   // ------------------------------------------------------------------
   function installInputGuard() {
     const inUI = (t) => t && t.closest && (t.closest('.rgnf-panel') || t.closest('.rgnf-fab'));
     const isTextField = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
 
-    // we take over editing for our own fields, mutate value ourselves and fire
-    // a synthetic input event. works no matter what the game does with the key.
+    // we take over editing for our own fields, mutate value ourselves and
+    // fire a synthetic input event. works no matter what the game does.
     window.addEventListener('keydown', (e) => {
       const t = e.target;
       if (!inUI(t)) return;
@@ -7459,14 +6359,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
         verifyStolenName(rawNickname) { verifyPendingSteal(rawNickname); },
         refresh() { if (_rgnfPanel) render(_rgnfPanel); },
         // called on Forge open and on account switch. per-account state wins;
-        // otherwise seed from the current account's live nickname (never leak).
+        // otherwise seed from the current account's live nickname (no cross-account leak).
         syncToCurrentPlayer(userId, displayName, rawNickname) {
           if (!userId) return;
           if (rawNickname) _lastRawNickname = String(rawNickname);
           const prevId = _currentUserId;
           _currentUserId = userId;
-          // must run before the same-account early return, verification fires
-          // on every boot, not just account switches (latch inside makes it free)
+          // must run BEFORE the same-account early return. verification fires
+          // on every boot, not just account switches (inner latch makes repeat calls cheap).
           verifyPendingSteal(rawNickname);
           if (prevId === userId) return;
           const perUser = loadJSON(stateKey(), null);
@@ -7486,9 +6386,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
             saveJSON(stateKey(), state);
           }
 
-          // must render unconditionally. panel DOM exists from page load,
-          // and sync runs before mountIn on first open, gating on _mountedIn
-          // meant the swapped state never reached the screen.
+          // render unconditionally. panel DOM exists from page load, and sync
+          // runs before mountIn on first open — gating on _mountedIn would
+          // strand the swapped state off-screen.
           if (_rgnfPanel) render(_rgnfPanel);
         },
         // re-parent the panel into the HUD tab; scroll lives on the container
