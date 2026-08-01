@@ -717,15 +717,16 @@
     function dragElement(el, handle) {
         let dx = 0, dy = 0;
 
+        // addEventListener instead of document.onmousemove= so we don't
+        // clobber any other drag handler the page or game already set.
         handle.onmousedown = e => {
             if (e.target.closest(".rgIconBtn")) return;
             e.preventDefault();
             dx = e.clientX;
             dy = e.clientY;
-            document.onmousemove = drag;
-            document.onmouseup = () => {
-                document.onmousemove = null;
-                document.onmouseup = null;
+            const onUp = () => {
+                document.removeEventListener("mousemove", drag);
+                document.removeEventListener("mouseup", onUp);
                 try {
                     localStorage.setItem("rgHudPos", JSON.stringify({
                         top: el.style.top,
@@ -735,6 +736,8 @@
                     dbg("rgHudPos save on drag-end failed");
                 }
             };
+            document.addEventListener("mousemove", drag);
+            document.addEventListener("mouseup", onUp);
         };
 
         function drag(e) {
@@ -3521,7 +3524,11 @@
                         }, 1800);
                     }
                     showToast("Saved! Open 🎨 Forge and hit Apply to refresh YOUR name -- members do the same on theirs.");
-                } catch (e) { console.error("[RG HUD] Save tag style failed:", e); showToast("Save failed."); }
+                } catch (e) {
+                    dbg("save tag style threw: " + (e && e.message ? e.message : e));
+                    console.error("[RG HUD] Save tag style failed:", e);
+                    showToast("Save failed.");
+                }
             };
         }
 
