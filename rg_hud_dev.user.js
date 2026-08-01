@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.6-dev
+// @version      14.7-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -404,7 +404,7 @@
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
-                        <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">📋 Copy debug bundle</button>
+                        <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
                     </div>
                 </div>
                 <div id="rgClanView" style="display:none;">Loading clans...</div>
@@ -597,8 +597,8 @@
         };
 
         // trim player data, don't dump the whole login blob
-        document.getElementById("rgSetCopyDebug").onclick = async () => {
-            dbg("Copy debug bundle clicked");
+        document.getElementById("rgSetCopyDebug").onclick = () => {
+            dbg("Download debug bundle clicked");
             try {
                 const trimmedPlayer = lastKnownPlayerData ? {
                     Id: lastKnownPlayerData.Id,
@@ -668,12 +668,32 @@
                     errors: _rgErrorBuf,
                     log: _rgLogBuf.slice(-100),
                 };
-                await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
-                showToast("Debug bundle copied — paste it in a bug report");
+                const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+                const filename = `atlas-debug-${stamp}.txt`;
+                const text = [
+                    "=== ATLAS DEBUG BUNDLE ===",
+                    JSON.stringify(bundle, null, 2),
+                    "",
+                    "=== RAW GAME CONSOLE LOG ===",
+                    _rawLogBuf.join("\n"),
+                    "",
+                ].join("\n");
+                const url = URL.createObjectURL(new Blob([text], {
+                    type: "text/plain;charset=utf-8",
+                }));
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = filename;
+                link.style.display = "none";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 0);
+                showToast(`Downloaded ${filename}`);
             } catch (e) {
-                pushError(e, "copyDebugBundle");
-                console.error("[RG HUD] Copy debug bundle failed:", e);
-                showToast("Copy failed — see console");
+                pushError(e, "downloadDebugBundle");
+                console.error("[RG HUD] Download debug bundle failed:", e);
+                showToast("Download failed — see console");
             }
         };
 
