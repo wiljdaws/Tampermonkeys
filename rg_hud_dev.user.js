@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.5-dev
-// @description  Dev build of ATLAS. Testing Name Forge and clan race-condition fixes. Install alongside the prod ATLAS to compare.
+// @version      14.6-dev
+// @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
@@ -1158,6 +1158,9 @@
     function updateHUD(data) {
         createHUD();
         lastKnownPlayerData = data;
+        // Login/ratings can arrive after Photon roster lines. Resume popup
+        // detection now that the local user's uid is finally available.
+        if (_inMatch && _liveRoster.length) scheduleRankedRosterPopups();
         captureSessionStart(data);
         updateStreak(data);
         updateMomentum();
@@ -1826,7 +1829,9 @@
     let _shownPopupsThisMatch = new Set();
     let _deferredMatch = null;
     let _rosterFired = false;
+    let _rosterFiring = false;
     let _rosterFireTimer = null;
+    let _matchPopupGeneration = 0;
 
     async function fetchRemoteConfig() {
         try {
@@ -2099,14 +2104,69 @@
         return null;
     }
 
+    function parseRosterInitLine(line) {
+        const outer = String(line ?? "").match(
+            /Initialized stats for player\s*:?\s*(.*?)\s*\(([^)]*\bUserId:\s*[^)]*)\)/
+        );
+        if (!outer) return null;
+        const details = outer[2];
+        const uidMatch = details.match(/\bUserId:\s*([^,]*)/i);
+        if (!uidMatch) return null;
+        const teamMatch = details.match(/\bTeam:\s*([A-Za-z]+)/i);
+        const rawTeam = (teamMatch?.[1] ?? "").trim();
+        const team = /^orange$/i.test(rawTeam) ? "Orange"
+            : /^blue$/i.test(rawTeam) ? "Blue"
+            : rawTeam || null;
+        return {
+            name: (outer[1] ?? "").trim(),
+            uid: (uidMatch[1] ?? "").trim(),
+            team,
+        };
+    }
+
+    function trustedTeamContext(roster, selfUid, expectedPlayerCount) {
+        const counts = {};
+        for (const player of roster) {
+            if (player.team) counts[player.team] = (counts[player.team] || 0) + 1;
+        }
+        const expectedPerSide = expectedPlayerCount / 2;
+        const teamsBalanced = Number.isInteger(expectedPerSide)
+            && roster.length === expectedPlayerCount
+            && counts.Orange === expectedPerSide
+            && counts.Blue === expectedPerSide;
+        const selfTeam = roster.find(player => player.uid === selfUid)?.team || null;
+        return { counts, teamsBalanced, selfTeam };
+    }
+
     function resetMatchPopupState() {
+        _matchPopupGeneration++;
         _matchFormat = null;
         _matchPlayerCount = 0;
         _selfTeam = null;
         _shownPopupsThisMatch = new Set();
         _deferredMatch = null;
         _rosterFired = false;
+        _rosterFiring = false;
         if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+    }
+
+    function snapshotDeferredRoster() {
+        _deferredMatch = {
+            players: _liveRoster.map(player => ({ ...player })),
+        };
+    }
+
+    function scheduleRankedRosterPopups() {
+        if (_rosterFired || _rosterFiring || !_matchFormat || !_liveRoster.length) return;
+        if (!lastKnownPlayerData?.Id) return;
+        if (_matchPlayerCount && _liveRoster.length >= _matchPlayerCount) {
+            fireAllRankedPopups();
+            return;
+        }
+        // Safety net: if inits stop coming, fire a neutral partial-roster
+        // result after three seconds instead of missing the match entirely.
+        if (_rosterFireTimer) clearTimeout(_rosterFireTimer);
+        _rosterFireTimer = setTimeout(() => fireAllRankedPopups(), 3000);
     }
 
     // called when a real-uid roster entry lands. we wait until the full roster
@@ -2116,103 +2176,110 @@
     async function onRosterEntry(entry) {
         try {
             const selfUid = lastKnownPlayerData?.Id;
-            if (!selfUid) return;
-            if (entry.uid === selfUid && entry.team) _selfTeam = entry.team;
-            // fire only once, only when roster is complete
+            if (selfUid && entry.uid === selfUid && entry.team) _selfTeam = entry.team;
             if (!_matchFormat) {
-                // rare: no "Starting game with N players" line seen — stash for postmortem
-                const isTm = entry.team && _selfTeam && entry.team === _selfTeam;
-                if (!_deferredMatch) _deferredMatch = { opponents: [], teammates: [] };
-                const bucket = isTm ? _deferredMatch.teammates : _deferredMatch.opponents;
-                if (entry.uid !== selfUid && !bucket.some(p => p.uid === entry.uid)) bucket.push(entry);
+                // Missing/late "Starting game" line: retain the complete roster
+                // and classify it only after self + final teams are known.
+                snapshotDeferredRoster();
                 return;
             }
-            if (_matchPlayerCount && _liveRoster.length >= _matchPlayerCount) {
-                fireAllRankedPopups();
-            } else {
-                // safety net: if inits stop coming, fire after 3s of quiet
-                if (_rosterFireTimer) clearTimeout(_rosterFireTimer);
-                _rosterFireTimer = setTimeout(() => fireAllRankedPopups(), 3000);
-            }
+            scheduleRankedRosterPopups();
         } catch (e) {
             dbg("onRosterEntry threw: " + (e && e.message ? e.message : e));
         }
     }
 
     async function fireAllRankedPopups() {
+        const generation = _matchPopupGeneration;
         try {
-            if (_rosterFired) return;
-            _rosterFired = true;
-            if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+            if (_rosterFired || _rosterFiring) return;
             const selfUid = lastKnownPlayerData?.Id;
             if (!selfUid || !_matchFormat) return;
+            _rosterFiring = true;
+            if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+            const roster = _liveRoster.map(player => ({ ...player }));
+            const matchFormat = _matchFormat;
+            const matchPlayerCount = _matchPlayerCount;
             // count each team so we can tell if the photon Team labels line up
             // with a real match split (3v3 = 3+3, 2v2 = 2+2, 1v1 = 1+1)
-            const counts = {};
-            for (const p of _liveRoster) {
-                if (p.team) counts[p.team] = (counts[p.team] || 0) + 1;
-            }
-            const expectedPerSide = _matchPlayerCount / 2;
-            const teamsBalanced = counts.Orange === expectedPerSide && counts.Blue === expectedPerSide;
+            const { counts, teamsBalanced, selfTeam } =
+                trustedTeamContext(roster, selfUid, matchPlayerCount);
             if (!teamsBalanced) {
-                dbg(`team split ${counts.Orange || 0}O/${counts.Blue || 0}B doesn't match a legit ${_matchPlayerCount}-player split — using neutral labels`);
+                dbg(`team split ${counts.Orange || 0}O/${counts.Blue || 0}B doesn't match a legit ${matchPlayerCount}-player split — using neutral labels`);
             }
             const cache = await getLeaderboardCache();
+            if (generation !== _matchPopupGeneration) return;
             if (!cache) { dbg("popup skip: no leaderboard cache available"); return; }
             const cfg = await getRemoteConfig();
-            for (const entry of _liveRoster) {
+            if (generation !== _matchPopupGeneration) return;
+            _rosterFired = true;
+            for (const entry of roster) {
                 if (entry.uid === selfUid) continue;
                 if (_shownPopupsThisMatch.has(entry.uid)) continue;
                 _shownPopupsThisMatch.add(entry.uid);
-                const hit = lookupInCache(cache, entry.uid, _matchFormat);
+                const hit = lookupInCache(cache, entry.uid, matchFormat);
                 if (!hit) {
-                    dbg(`popup skip: "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${_matchFormat} top ${RG_LB_TOP_N}`);
+                    dbg(`popup skip: "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${matchFormat} top ${RG_LB_TOP_N}`);
                     continue;
                 }
-                if (hit.rank > (cfg.minRankToShow || 100)) {
+                if (hit.rank > (cfg.minRankToShow ?? 100)) {
                     dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
                     continue;
                 }
                 let isTeammate = null; // null = don't know, use neutral label
-                if (teamsBalanced && _selfTeam && entry.team) {
-                    isTeammate = entry.team === _selfTeam;
+                if (teamsBalanced && selfTeam && entry.team) {
+                    isTeammate = entry.team === selfTeam;
                 }
                 const displayName = hit.name || entry.name;
                 const role = isTeammate === true ? "teammate" : isTeammate === false ? "opponent" : "player";
-                dbg(`popup fire: #${hit.rank} ${role} "${displayName}" in ${_matchFormat}`);
-                showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: _matchFormat, isTeammate });
+                dbg(`popup fire: #${hit.rank} ${role} "${displayName}" in ${matchFormat}`);
+                showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: matchFormat, isTeammate });
             }
         } catch (e) {
             dbg("fireAllRankedPopups threw: " + (e && e.message ? e.message : e));
+        } finally {
+            if (generation === _matchPopupGeneration) _rosterFiring = false;
         }
     }
 
-    // for 3/4-player matches we defer to match end when ratings deltas
-    // reveal the true mode. this runs after tryParseAndUpdate.
+    // If the Starting line was missing, defer until the ratings delta reveals
+    // the playlist. Capture everything before the first await so match-end can
+    // safely reset global popup state for the next match.
     async function firePostmortemPopupsIfDeferred(prevRatings) {
+        const deferred = _deferredMatch;
+        _deferredMatch = null;
+        const players = deferred?.players?.map(player => ({ ...player })) ?? [];
+        const selfUid = lastKnownPlayerData?.Id;
+        const alreadyShown = new Set(_shownPopupsThisMatch);
+        const g = lastKnownPlayerData?.ModesGlicko || {};
+        const changedRanked = RG_LB_MODES.filter(mode => {
+            const before = prevRatings?.[mode];
+            const after = g[mode]?.displayRating;
+            return typeof after === "number" && typeof before === "number" && after !== before;
+        });
         try {
-            if (!_deferredMatch) return;
-            const g = lastKnownPlayerData?.ModesGlicko || {};
-            const changedRanked = RG_LB_MODES.filter(m => {
-                const before = prevRatings[m];
-                const after = g[m]?.displayRating;
-                return typeof after === "number" && typeof before === "number" && after !== before;
-            });
-            if (changedRanked.length !== 1) return;
+            if (!deferred || !selfUid || !players.length || changedRanked.length !== 1) return;
             const mode = changedRanked[0];
             const cache = await getLeaderboardCache();
             if (!cache) return;
             const cfg = await getRemoteConfig();
-            const fire = (list, isTeammate) => {
-                for (const p of list) {
-                    const hit = lookupInCache(cache, p.uid, mode);
-                    if (!hit) continue;
-                    if (hit.rank > (cfg.minRankToShow || 100)) continue;
-                    showLbOpponentPopup({ rank: hit.rank, name: hit.name || p.name, mode, isTeammate });
-                }
-            };
-            fire(_deferredMatch.opponents, false);
-            fire(_deferredMatch.teammates, true);
+            const { teamsBalanced, selfTeam } =
+                trustedTeamContext(players, selfUid, players.length);
+            for (const player of players) {
+                if (player.uid === selfUid || alreadyShown.has(player.uid)) continue;
+                alreadyShown.add(player.uid);
+                const hit = lookupInCache(cache, player.uid, mode);
+                if (!hit || hit.rank > (cfg.minRankToShow ?? 100)) continue;
+                const isTeammate = teamsBalanced && selfTeam && player.team
+                    ? player.team === selfTeam
+                    : null;
+                showLbOpponentPopup({
+                    rank: hit.rank,
+                    name: hit.name || player.name,
+                    mode,
+                    isTeammate,
+                });
+            }
         } catch (e) {
             dbg("firePostmortemPopupsIfDeferred threw: " + (e && e.message ? e.message : e));
         }
@@ -2545,9 +2612,11 @@
                 setAutoVisible(true);
                 // fire-and-forget audit write
                 writeMatchAudit(prevRatings, opponentsSnapshot);
-                // if we deferred the popup for an ambiguous 3/4-player match,
-                // the ratings delta now tells us the mode — show it postmortem
+                // If Starting was missing, the ratings delta now reveals mode.
+                // The function snapshots its inputs before awaiting, so reset
+                // immediately and prevent timers/state leaking into a rematch.
                 firePostmortemPopupsIfDeferred(prevRatings);
+                resetMatchPopupState();
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
                 // login carries the raw nickname before any local processing,
@@ -2603,14 +2672,12 @@
                 // match inits always populate it.
                 // v13.4 bug: warm-up inits restarted the roster mid-queue.
                 if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
-                    // v13.6: anchor only on "for player:" + "(UserId:..." so a
-                    // future patch adding a field / tweaking spacing doesn't
-                    // silently kill roster detection.
-                    // also grabs team so we can tell opponents from teammates.
-                    const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]+)(?:,\s*Team:\s*([A-Za-z]+))?/);
-                    const nm = (m?.[1] ?? "").trim();
-                    const uid = (m?.[2] ?? "").trim();
-                    const team = (m?.[3] ?? "").trim() || null;
+                    // Parse the parenthesized fields independently so empty
+                    // warm-up UserIds and future extra fields remain valid.
+                    const parsed = parseRosterInitLine(arg);
+                    const nm = parsed?.name ?? "";
+                    const uid = parsed?.uid ?? "";
+                    const team = parsed?.team ?? null;
                     if (nm && uid) {
                         _lastInitLineAt = performance.now();
                         setAutoVisible(false); // real match — hide HUD
@@ -2619,13 +2686,24 @@
                             _inMatch = true;
                             dbg(`match forming — roster reset, first player "${nm}"`);
                         }
-                        // dedupe by uid, names collide, mid-match backfills should ADD
-                        if (!_liveRoster.some(p => p.uid === uid)) {
+                        // Dedupe by uid, but accept a later corrected team/name
+                        // before firing. Photon can re-emit after rebalancing.
+                        const existing = _liveRoster.find(player => player.uid === uid);
+                        if (!existing) {
                             const entry = { name: nm, uid, team };
                             _liveRoster.push(entry);
                             dbg(`roster +1 "${nm}"${team ? ` (${team})` : ""} (${_liveRoster.length} total)`);
                             // fire the leaderboard-opponent popup check
                             onRosterEntry(entry);
+                        } else {
+                            const nameChanged = nm && nm !== existing.name;
+                            const teamChanged = team && team !== existing.team;
+                            if (nameChanged) existing.name = nm;
+                            if (teamChanged) existing.team = team;
+                            if (nameChanged || teamChanged) {
+                                dbg(`roster corrected "${existing.name}"${existing.team ? ` (${existing.team})` : ""}`);
+                                onRosterEntry(existing);
+                            }
                         }
                     } else if (nm) {
                         dbg(`warm-up init "${nm}" (empty uid) — ignored, inMatch=${_inMatch}`);
@@ -2647,6 +2725,12 @@
                         dbg(`match player count = ${_matchPlayerCount}, format = ${_matchFormat || "unknown"}`);
                         // pre-warm the cache in the background so it's ready when roster fills
                         getLeaderboardCache();
+                        if (_matchFormat) {
+                            // Late Starting line: live roster now owns delivery;
+                            // discard deferred state to prevent match-end duplicates.
+                            _deferredMatch = null;
+                            scheduleRankedRosterPopups();
+                        }
                     }
                 }
 
