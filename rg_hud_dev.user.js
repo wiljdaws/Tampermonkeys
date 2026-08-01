@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.4-dev
+// @version      14.5-dev
 // @description  Dev build of ATLAS. Testing Name Forge and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -4730,25 +4730,44 @@
     try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ }
   }
 
-  // rawCode is the exact in-game TMP markup, while state.name is the fallback
-  // used as soon as somebody touches a structured control. Keep them in sync
-  // so exiting raw mode never resurrects an older name from the text box.
-  function editableNameFromRaw(raw) {
-    const nameLine = String(raw ?? "").split(/<br\s*\/?\s*>/i)[0];
-    return nameLine
+  // rawCode is the exact in-game TMP markup, while the structured fields are
+  // used as soon as somebody touches a Forge control. The first non-empty line
+  // is the name and the last is its editable title.
+  function editableTextFromRaw(raw) {
+    return String(raw ?? "")
       .replace(/<(?!sprite=\d+\s*>)[^>]*>/gi, "")
       .replace(/\s+/g, " ")
       .trim();
   }
 
+  function editableFieldsFromRaw(raw) {
+    const lines = String(raw ?? "")
+      .split(/<br\s*\/?\s*>|\r\n?|\n/gi)
+      .map(editableTextFromRaw)
+      .filter(Boolean);
+    const titleText = lines.length > 1 ? lines[lines.length - 1] : "";
+    return {
+      name: lines[0] ?? "",
+      titleOn: Boolean(titleText),
+      titleText,
+    };
+  }
+
+  function syncEditableFieldsFromRaw(raw) {
+    const fields = editableFieldsFromRaw(raw);
+    state.name = fields.name;
+    state.titleOn = fields.titleOn;
+    state.titleText = fields.titleText;
+  }
+
   function setRawSnapshot(raw) {
     state.rawCode = String(raw ?? "");
-    state.name = editableNameFromRaw(state.rawCode);
+    syncEditableFieldsFromRaw(state.rawCode);
   }
 
   // Repair a persisted pre-fix state before the first render.
   if (state.rawCode) {
-    state.name = editableNameFromRaw(state.rawCode);
+    syncEditableFieldsFromRaw(state.rawCode);
     saveJSON(stateKey(), state);
   }
 
@@ -5694,7 +5713,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
             || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-imposter-sec')
             || t.closest('.rgnf-head')) return;
-        state.name = editableNameFromRaw(state.rawCode);
+        syncEditableFieldsFromRaw(state.rawCode);
         state.rawCode = null;
         saveJSON(stateKey(), state);
         const bar = panel.querySelector('.rgnf-modebar');
@@ -6533,7 +6552,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           const perUser = loadJSON(stateKey(), null);
           if (perUser) {
             state = Object.assign(defaultState(), perUser);
-            if (state.rawCode) state.name = editableNameFromRaw(state.rawCode);
+            if (state.rawCode) syncEditableFieldsFromRaw(state.rawCode);
           } else {
             // fresh seed: the whole current in-game name as a raw snapshot.
             // first styling edit clears it and rebuilds from state.name.
