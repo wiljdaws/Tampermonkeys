@@ -3458,6 +3458,8 @@
     let _selfTeam = null;
     let _shownPopupsThisMatch = new Set();
     let _deferredMatch = null;
+    let _rosterFired = false;
+    let _rosterFireTimer = null;
 
     async function fetchRemoteConfig() {
         try {
@@ -3696,7 +3698,9 @@
             const el = document.createElement("div");
             el.className = "rg-lb-popup";
             el.style.setProperty("--tier-color", tierColorForRank(rank));
-            const headerLabel = isTeammate ? "LEADERBOARD TEAMMATE" : "LEADERBOARD OPPONENT";
+            const headerLabel = isTeammate === true ? "LEADERBOARD TEAMMATE"
+                              : isTeammate === false ? "LEADERBOARD OPPONENT"
+                              : "LEADERBOARD PLAYER";
             el.innerHTML = `
                 <div class="rg-lb-header"><span class="rg-lb-dot"></span>${headerLabel}</div>
                 <div class="rg-lb-body">
@@ -3734,54 +3738,86 @@
         _selfTeam = null;
         _shownPopupsThisMatch = new Set();
         _deferredMatch = null;
+        _rosterFired = false;
+        if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
     }
 
-    // called when a real-uid roster entry lands. figures out opponent vs teammate,
-    // fires the popup if the mode is known, otherwise stashes for postmortem.
+    // called when a real-uid roster entry lands. we wait until the full roster
+    // is in before firing anything, because the photon Team: field is
+    // sometimes stale (game rebalances after the init lines) and we need to
+    // see the whole split to know if we can trust it.
     async function onRosterEntry(entry) {
         try {
             const selfUid = lastKnownPlayerData?.Id;
             if (!selfUid) return;
-            if (entry.uid === selfUid) {
-                if (entry.team) _selfTeam = entry.team;
-                for (const p of _liveRoster) {
-                    if (p.uid !== selfUid) await checkOneOpponent(p);
-                }
+            if (entry.uid === selfUid && entry.team) _selfTeam = entry.team;
+            // fire only once, only when roster is complete
+            if (!_matchFormat) {
+                // rare: no "Starting game with N players" line seen — stash for postmortem
+                const isTm = entry.team && _selfTeam && entry.team === _selfTeam;
+                if (!_deferredMatch) _deferredMatch = { opponents: [], teammates: [] };
+                const bucket = isTm ? _deferredMatch.teammates : _deferredMatch.opponents;
+                if (entry.uid !== selfUid && !bucket.some(p => p.uid === entry.uid)) bucket.push(entry);
                 return;
             }
-            if (_selfTeam) await checkOneOpponent(entry);
+            if (_matchPlayerCount && _liveRoster.length >= _matchPlayerCount) {
+                fireAllRankedPopups();
+            } else {
+                // safety net: if inits stop coming, fire after 3s of quiet
+                if (_rosterFireTimer) clearTimeout(_rosterFireTimer);
+                _rosterFireTimer = setTimeout(() => fireAllRankedPopups(), 3000);
+            }
         } catch (e) {
             dbg("onRosterEntry threw: " + (e && e.message ? e.message : e));
         }
     }
 
-    async function checkOneOpponent(entry) {
-        if (entry.uid === lastKnownPlayerData?.Id) return; // never popup ourselves
-        const isTeammate = entry.team && _selfTeam && entry.team === _selfTeam;
-        if (!_matchFormat) {
-            if (!_deferredMatch) _deferredMatch = { opponents: [], teammates: [] };
-            const bucket = isTeammate ? _deferredMatch.teammates : _deferredMatch.opponents;
-            if (!bucket.some(p => p.uid === entry.uid)) bucket.push(entry);
-            return;
+    async function fireAllRankedPopups() {
+        try {
+            if (_rosterFired) return;
+            _rosterFired = true;
+            if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+            const selfUid = lastKnownPlayerData?.Id;
+            if (!selfUid || !_matchFormat) return;
+            // count each team so we can tell if the photon Team labels line up
+            // with a real match split (3v3 = 3+3, 2v2 = 2+2, 1v1 = 1+1)
+            const counts = {};
+            for (const p of _liveRoster) {
+                if (p.team) counts[p.team] = (counts[p.team] || 0) + 1;
+            }
+            const expectedPerSide = _matchPlayerCount / 2;
+            const teamsBalanced = counts.Orange === expectedPerSide && counts.Blue === expectedPerSide;
+            if (!teamsBalanced) {
+                dbg(`team split ${counts.Orange || 0}O/${counts.Blue || 0}B doesn't match a legit ${_matchPlayerCount}-player split — using neutral labels`);
+            }
+            const cache = await getLeaderboardCache();
+            if (!cache) { dbg("popup skip: no leaderboard cache available"); return; }
+            const cfg = await getRemoteConfig();
+            for (const entry of _liveRoster) {
+                if (entry.uid === selfUid) continue;
+                if (_shownPopupsThisMatch.has(entry.uid)) continue;
+                _shownPopupsThisMatch.add(entry.uid);
+                const hit = lookupInCache(cache, entry.uid, _matchFormat);
+                if (!hit) {
+                    dbg(`popup skip: "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${_matchFormat} top ${RG_LB_TOP_N}`);
+                    continue;
+                }
+                if (hit.rank > (cfg.minRankToShow || 100)) {
+                    dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
+                    continue;
+                }
+                let isTeammate = null; // null = don't know, use neutral label
+                if (teamsBalanced && _selfTeam && entry.team) {
+                    isTeammate = entry.team === _selfTeam;
+                }
+                const displayName = hit.name || entry.name;
+                const role = isTeammate === true ? "teammate" : isTeammate === false ? "opponent" : "player";
+                dbg(`popup fire: #${hit.rank} ${role} "${displayName}" in ${_matchFormat}`);
+                showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: _matchFormat, isTeammate });
+            }
+        } catch (e) {
+            dbg("fireAllRankedPopups threw: " + (e && e.message ? e.message : e));
         }
-        if (_shownPopupsThisMatch.has(entry.uid)) return;
-        _shownPopupsThisMatch.add(entry.uid);
-        const cache = await getLeaderboardCache();
-        if (!cache) { dbg(`popup skip: no leaderboard cache available`); return; }
-        const hit = lookupInCache(cache, entry.uid, _matchFormat);
-        if (!hit) {
-            const role = isTeammate ? "teammate" : "opponent";
-            dbg(`popup skip: ${role} "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${_matchFormat} top ${RG_LB_TOP_N}`);
-            return;
-        }
-        const cfg = await getRemoteConfig();
-        if (hit.rank > (cfg.minRankToShow || 100)) {
-            dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
-            return;
-        }
-        const displayName = hit.name || entry.name;
-        dbg(`popup fire: #${hit.rank} ${isTeammate ? "teammate" : "opponent"} "${displayName}" in ${_matchFormat}`);
-        showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: _matchFormat, isTeammate });
     }
 
     // for 3/4-player matches we defer to match end when ratings deltas
