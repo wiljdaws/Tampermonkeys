@@ -23,13 +23,21 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const workspaceDirectory = path.resolve(scriptDirectory, "..");
 const stateDirectory = path.join(workspaceDirectory, ".migration-state");
 const ALLOWED_COLLECTIONS = new Set([
+  "admin",
   "clans",
   "clans_directory",
   "clan_name_keys",
   "clan_tag_keys",
   "clan_memberships",
   "clan_devices",
+  "clan_notices",
+  "events",
   "leaderboard",
+]);
+const EXACT_CONTROL_PATHS = new Set([
+  "admin/blacklist",
+  "admin/migration",
+  "events/current",
 ]);
 
 export const HELP = `Validate or apply an approved ATLAS 16.0 migration plan.
@@ -147,7 +155,22 @@ function validateOperation(operation) {
     throw new Error("Plan contains an invalid operation");
   }
   const segments = String(operation.path || "").split("/");
-  if (segments.length !== 2 || !ALLOWED_COLLECTIONS.has(segments[0])) {
+  const collection = segments[0];
+  const documentId = segments[1];
+  const allowedPath =
+    segments.length === 2
+    && ALLOWED_COLLECTIONS.has(collection)
+    && (
+      !["admin", "events", "clan_notices"].includes(collection)
+      || EXACT_CONTROL_PATHS.has(operation.path)
+      || (
+        collection === "clan_notices"
+        && Boolean(documentId)
+        && documentId !== "."
+        && documentId !== ".."
+      )
+    );
+  if (!allowedPath) {
     throw new Error(`Operation path is not allowed: ${operation.path}`);
   }
   if (!operation.precondition

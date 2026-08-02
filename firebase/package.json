@@ -13,10 +13,11 @@
     "test:leaderboard-popup": "node scripts/run-emulator-test.mjs --config firebase.json -- \"node --test tests/leaderboard-popup.test.mjs\"",
     "test:hud-client": "node --test tests/hud-client-audit.test.mjs",
     "test:hud-races": "node scripts/run-emulator-test.mjs --config firebase.json -- \"node --test tests/hud-races.test.mjs\"",
-    "test:migrations": "node --test tests/migration-plan.test.mjs tests/migration-apply.test.mjs",
+    "test:migrations": "node --test tests/migration-plan.test.mjs tests/migration-apply.test.mjs tests/rollout-bridge.test.mjs",
     "test:snapshots": "node --test tests/snapshot-tools.test.mjs",
     "test:contracts": "node --test tests/contract.test.mjs tests/operation-budgets.test.mjs && node scripts/run-emulator-test.mjs --config firebase.json -- \"node --test tests/integration-regressions.test.mjs\"",
     "plan:migrations": "node scripts/plan-migrations.mjs --fixture tests/fixtures/firestore-shapes.json",
+    "plan:rollout-bridge": "node scripts/plan-rollout-bridge.mjs",
     "apply:migrations": "node scripts/apply-migrations.mjs",
     "snapshot:production": "node scripts/snapshot-production.mjs",
     "verify:baseline": "node scripts/verify-baseline.mjs"
