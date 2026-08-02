@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.10-dev
+// @version      14.12-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -5084,12 +5084,13 @@
   // ------------------------------------------------------------------
   // TMP code generation
   // ------------------------------------------------------------------
-  function colorizeText(text, mode, solid, stops, skipSpaces, waveAmp = 0) {
+  function colorizeText(text, mode, solid, stops, skipSpaces, waveAmp = 0, solidAlpha = 255) {
     const wave = waveAmp !== 0;
+    const aaSolid = solidAlpha < 255 ? alphaHex(solidAlpha) : '';
 
     // fast paths when no per-letter work is needed
     if (!wave && mode === 'none') return text;
-    if (!wave && mode === 'solid') return `<${solid.toUpperCase()}>` + text;
+    if (!wave && mode === 'solid') return `<${solid.toUpperCase()}${aaSolid}>` + text;
 
     const tokens = tokenize(text);
     const paintable = tokens.filter(t => t.type === 'char' && !(skipSpaces && t.value === ' '));
@@ -5100,8 +5101,7 @@
     let lastColor = null;
     let out = '';
     if (mode === 'solid') {
-      const aaN = (s.solidAlpha ?? 255) < 255 ? alphaHex(s.solidAlpha) : '';
-      out += `<${solid.toUpperCase()}${aaN}>`;
+      out += `<${solid.toUpperCase()}${aaSolid}>`;
     }
     for (const tok of tokens) {
       if (tok.type === 'sprite') { out += tok.value; continue; }
@@ -5134,6 +5134,23 @@
     return tokens;
   }
 
+  function resolveTitleColorStyle(s) {
+    if (s.titleColorMode === 'inherit') {
+      return {
+        mode: s.colorMode,
+        solid: s.solidColor,
+        stops: s.stops,
+        alpha: s.colorMode === 'solid' ? (s.solidAlpha ?? 255) : 255,
+      };
+    }
+    return {
+      mode: s.titleColorMode,
+      solid: s.titleColor,
+      stops: s.titleStops,
+      alpha: s.titleAlpha ?? 255,
+    };
+  }
+
   function buildCode(s) {
     let open = '';
     let close = '';
@@ -5146,20 +5163,29 @@
     if (s.underline) { open += '<u>'; close = '</u>' + close; }
     if (s.strike) { open += '<s>'; close = '</s>' + close; }
 
-    const nameCode = colorizeText(s.name, s.colorMode, s.solidColor, s.stops, s.skipSpaces, s.waveOn ? s.waveAmp : 0);
+    const nameCode = colorizeText(
+      s.name,
+      s.colorMode,
+      s.solidColor,
+      s.stops,
+      s.skipSpaces,
+      s.waveOn ? s.waveAmp : 0,
+      s.solidAlpha ?? 255,
+    );
 
     let code = open + nameCode + close;
 
     // title line, fully independent styling
     if (s.titleOn && s.titleText.trim().length > 0) {
       let t = s.titleText;
-      if (s.titleColorMode === 'solid') {
-        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
-        t = `<${s.titleColor.toUpperCase()}${aa}>` + t;
-      } else if (s.titleColorMode === 'gradient') {
-        t = colorizeText(t, 'gradient', s.titleColor, s.titleStops, s.skipSpaces);
+      const titleColor = resolveTitleColorStyle(s);
+      if (titleColor.mode === 'solid') {
+        const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
+        t = `<${titleColor.solid.toUpperCase()}${aa}>` + t;
+      } else if (titleColor.mode === 'gradient') {
+        t = colorizeText(t, 'gradient', titleColor.solid, titleColor.stops, s.skipSpaces);
         // append alpha byte to every <#RRGGBB> so gradients can be transparent too
-        const aaG = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
+        const aaG = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
         if (aaG) t = t.replace(/<(#[0-9A-Fa-f]{6})>/g, `<$1${aaG}>`);
       }
       let tOpen = '', tClose = '';
@@ -5296,22 +5322,22 @@
       if (s.titleUnderline) titleDeco.push('underline');
       if (s.titleStrike) titleDeco.push('line-through');
       if (titleDeco.length) titleLine.style.textDecorationLine = titleDeco.join(' ');
-      if (s.titleColorMode === 'solid') {
+      const titleColor = resolveTitleColorStyle(s);
+      if (titleColor.mode === 'solid') {
         titleLine.textContent = s.titleText;
         // 8-digit hex: append alpha byte when < 255
-        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
-        titleLine.style.color = s.titleColor + aa;
-      } else if (s.titleColorMode === 'gradient') {
-        // use titleStops (was leaking s.stops from the name)
+        const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
+        titleLine.style.color = titleColor.solid + aa;
+      } else if (titleColor.mode === 'gradient') {
         const chars = [...s.titleText];
         const paint = chars.filter(c => c !== ' ').length;
-        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
+        const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
         let j = 0;
         for (const c of chars) {
           const sp = document.createElement('span');
           sp.textContent = c;
           if (c !== ' ') {
-            sp.style.color = gradientAt(s.titleStops, paint === 1 ? 0 : j / (paint - 1)) + aa;
+            sp.style.color = gradientAt(titleColor.stops, paint === 1 ? 0 : j / (paint - 1)) + aa;
             j++;
           }
           titleLine.appendChild(sp);
@@ -5948,7 +5974,30 @@ _rgnfFab = fab; _rgnfPanel = panel;
     return root;
   }
 
+  function captureForgeScroll(panel) {
+    const saved = [];
+    for (let node = panel; node; node = node.parentElement) {
+      if (node === panel || node.id === 'rgForgeView' || node.id === 'rgBody') {
+        saved.push({
+          node,
+          top: node.scrollTop,
+          left: node.scrollLeft,
+        });
+      }
+      if (node.id === 'rgHUD') break;
+    }
+    return saved;
+  }
+
+  function restoreForgeScroll(saved) {
+    saved.forEach(({ node, top, left }) => {
+      node.scrollTop = top;
+      node.scrollLeft = left;
+    });
+  }
+
   function render(panel) {
+    const savedScroll = captureForgeScroll(panel);
     panel.innerHTML = '';
     saveJSON(stateKey(), state);
 
@@ -6686,6 +6735,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     secActions.appendChild(el('div', { class: 'rgnf-row' }, [applyBtn, copyBtn]));
     secActions.appendChild(statusLine);
     panel.appendChild(secActions);
+    restoreForgeScroll(savedScroll);
   }
 
   function sliderRow(panel, label, key, min, max, unit) {
