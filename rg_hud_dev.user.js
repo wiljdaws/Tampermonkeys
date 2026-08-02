@@ -3946,7 +3946,8 @@
             }
             if (myClan) {
                 const deviceId = getDeviceId();
-                if (!clanHasDeviceId(myClan, uid, deviceId)) {
+                if (clanReservationsEnabled()
+                    || !clanHasDeviceId(myClan, uid, deviceId)) {
                     const linkResult = await linkCurrentClanDevice(
                         fb,
                         myClan,
