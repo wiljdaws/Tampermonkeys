@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      15.0-dev
+// @version      15.1-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -349,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -6072,6 +6072,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
     return root;
   }
 
+  function renderRawPreview(raw, s) {
+    if (s.scoredMode === 'hide') return renderRawTMP(raw);
+    return renderRawTMP(raw + scoredSuffix(s) + ' Scored!');
+  }
+
   function captureForgeScroll(panel) {
     const saved = [];
     for (let node = panel; node; node = node.parentElement) {
@@ -6168,7 +6173,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       setRawSnapshot(rawEdit.value);
       const rawPfx = _prefix();
       const rawEffective = rawPfx + effectiveForgeCode(state);
-      pv.replaceChildren(renderRawTMP(rawEffective + ' Scored!'));
+      pv.replaceChildren(renderRawPreview(rawPfx + state.rawCode, state));
       charSpan.textContent = `${rawEffective.length} chars`;
       const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
       letterSpan.textContent = `${[...plainLetters].length} letters`;
@@ -6188,7 +6193,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         // name will preview doubled, fix by deleting them in the textarea.
         const rawPfx = _prefix();
         const rawEffective = rawPfx + effectiveForgeCode(state);
-        pv.replaceChildren(renderRawTMP(rawEffective + ' Scored!'));
+        pv.replaceChildren(renderRawPreview(rawPfx + state.rawCode, state));
         if (rawEdit.value !== state.rawCode) rawEdit.value = state.rawCode;
         autosizeRawEdit();
         charSpan.textContent = `${rawEffective.length} chars`;
