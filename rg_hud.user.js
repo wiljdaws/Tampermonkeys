@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      14.4
+// @version      14.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -12,7 +12,6 @@
 // @downloadURL  https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js
 // @supportURL   https://github.com/wiljdaws/Tampermonkeys/issues
 // ==/UserScript==
-
 
 (function () {
     'use strict';
@@ -143,6 +142,8 @@
         glowColor2: "#00d4ff",
         // brings back the old 🚀 Rocket Goal HUD title
         ogTitle: false,
+        // coarse browser estimate; never presented as exact Photon ping
+        pingTrackerEnabled: false,
     };
 
     let settings = { ...DEFAULT_SETTINGS };
@@ -155,6 +156,139 @@
     function saveSettings() {
         try { localStorage.setItem("rgHudSettings", JSON.stringify(settings)); }
         catch (e) { pushError(e, "saveSettings"); }
+    }
+
+    const PING_PROBE_INTERVAL_MS = 3000;
+    const PING_PROBE_TIMEOUT_MS = 2500;
+    let pingTrackerIntervalId = null;
+    let pingTrackerProbeInFlight = false;
+    let pingTrackerProbeGeneration = 0;
+    let pingTrackerSamples = [];
+    let pingTrackerLastRtt = null;
+    function browserConnection() {
+        if (typeof navigator === "undefined") return null;
+        return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+    }
+
+    function ensurePingTracker() {
+        let tracker = document.getElementById("rgPingTracker");
+        if (tracker || !document.body) return tracker;
+        tracker = document.createElement("div");
+        tracker.id = "rgPingTracker";
+        tracker.setAttribute("aria-live", "off");
+        tracker.style.cssText = [
+            "display:none",
+            "position:fixed",
+            "top:12px",
+            "left:12px",
+            "z-index:999999997",
+            "pointer-events:none",
+            "user-select:none",
+            "align-items:center",
+            "gap:5px",
+            "padding:0",
+            "border:0",
+            "background:transparent",
+            "color:#cbd5e1",
+            "font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",
+            "font-variant-numeric:tabular-nums",
+            "letter-spacing:.04em",
+            "opacity:.78",
+            "text-shadow:0 1px 2px #000,0 0 5px rgba(0,0,0,.85)",
+        ].join(";");
+        tracker.innerHTML = [
+            '<span data-rg-rtt-dot style="width:5px;height:5px;border-radius:50%;background:#94a3b8;box-shadow:0 0 4px currentColor;"></span>',
+            '<span data-rg-rtt-value>NET —</span>',
+        ].join("");
+        document.body.appendChild(tracker);
+        return tracker;
+    }
+
+    function renderPingTracker(rtt = pingTrackerLastRtt, source = "active site probe") {
+        const tracker = ensurePingTracker();
+        if (!tracker) return;
+        if (!settings.pingTrackerEnabled || !_inMatch) {
+            tracker.style.display = "none";
+            return;
+        }
+        const dot = tracker.querySelector("[data-rg-rtt-dot]");
+        const value = tracker.querySelector("[data-rg-rtt-value]");
+        tracker.style.display = "flex";
+        if (!Number.isFinite(rtt) || rtt <= 0) {
+            if (value) value.textContent = "NET —";
+            if (dot) dot.style.background = "#94a3b8";
+            tracker.style.color = "#cbd5e1";
+            tracker.title = "Network RTT estimate is unavailable";
+            return;
+        }
+        const rounded = Math.round(rtt);
+        const color = rounded <= 60 ? "#4ade80" : rounded <= 120 ? "#facc15" : "#fb7185";
+        if (value) value.textContent = `${rounded} ms`;
+        if (dot) dot.style.background = color;
+        tracker.style.color = color;
+        tracker.title = `${source}; not exact Photon server ping`;
+    }
+
+    function medianPingSample(samples) {
+        const sorted = samples.slice().sort((a, b) => a - b);
+        return sorted[Math.floor(sorted.length / 2)] ?? null;
+    }
+
+    async function probePingTracker(generation) {
+        if (pingTrackerProbeInFlight || generation !== pingTrackerProbeGeneration
+            || !settings.pingTrackerEnabled || !_inMatch) return;
+        pingTrackerProbeInFlight = true;
+        let timeoutId = null;
+        try {
+            const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+            if (controller) {
+                timeoutId = setTimeout(() => controller.abort(), PING_PROBE_TIMEOUT_MS);
+            }
+            const startedAt = performance.now();
+            const target = new URL("/favicon.ico", location.origin);
+            target.searchParams.set("atlas_rtt", Date.now().toString(36));
+            await fetch(target.href, {
+                method: "HEAD",
+                cache: "no-store",
+                credentials: "omit",
+                signal: controller?.signal,
+            });
+            if (generation !== pingTrackerProbeGeneration
+                || !settings.pingTrackerEnabled || !_inMatch) return;
+            const sample = Math.max(1, Math.round(performance.now() - startedAt));
+            pingTrackerSamples.push(sample);
+            if (pingTrackerSamples.length > 3) pingTrackerSamples.shift();
+            pingTrackerLastRtt = medianPingSample(pingTrackerSamples);
+            renderPingTracker(pingTrackerLastRtt, "Active RTT estimate to rocketgoal.io");
+        } catch (e) {
+            if (generation !== pingTrackerProbeGeneration
+                || !settings.pingTrackerEnabled || !_inMatch) return;
+            const fallback = Number(browserConnection()?.rtt);
+            pingTrackerLastRtt = Number.isFinite(fallback) && fallback > 0 ? fallback : null;
+            renderPingTracker(pingTrackerLastRtt, "Browser connection RTT fallback");
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+            pingTrackerProbeInFlight = false;
+        }
+    }
+
+    function syncPingTracker() {
+        pingTrackerProbeGeneration++;
+        pingTrackerSamples = [];
+        pingTrackerLastRtt = null;
+        renderPingTracker();
+        if (pingTrackerIntervalId) {
+            clearInterval(pingTrackerIntervalId);
+            pingTrackerIntervalId = null;
+        }
+        if (settings.pingTrackerEnabled && _inMatch) {
+            const generation = pingTrackerProbeGeneration;
+            probePingTracker(generation);
+            pingTrackerIntervalId = setInterval(
+                () => probePingTracker(generation),
+                PING_PROBE_INTERVAL_MS,
+            );
+        }
     }
 
     function hexToRgba(hex, alpha) {
@@ -215,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -399,13 +533,14 @@
                     <div id="rgContent">Waiting for data...</div>
                     <div id="rgSettingsPanel" style="display:none;border-top:1px solid #00bfff44;margin-top:8px;padding-top:6px;">
                         <div class="rgSettingRow"><span title="Bring back the original 🚀 Rocket Goal HUD title">OG Title</span><input type="checkbox" id="rgSetOgTitle"></div>
+                        <div class="rgSettingRow"><span title="Active RTT estimate to rocketgoal.io every 3 seconds; not exact Photon server ping">Network RTT</span><input type="checkbox" id="rgSetPingTracker"></div>
                         <div class="rgSettingRow"><span>Glow</span><input type="checkbox" id="rgSetGlow"></div>
                         <div class="rgSettingRow"><span>Speed</span><input type="range" id="rgSetSpeed" min="1" max="10" step="0.5"></div>
                         <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
-                        <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">📋 Copy debug bundle</button>
+                        <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
                     </div>
                 </div>
                 <div id="rgClanView" style="display:none;">Loading clans...</div>
@@ -569,8 +704,10 @@
         const setColor2 = document.getElementById("rgSetColor2");
 
         const setOgTitle = document.getElementById("rgSetOgTitle");
+        const setPingTracker = document.getElementById("rgSetPingTracker");
         function syncSettingInputs() {
             setOgTitle.checked = !!settings.ogTitle;
+            setPingTracker.checked = !!settings.pingTrackerEnabled;
             setGlow.checked = settings.glowEnabled;
             setSpeed.value = settings.glowSpeed;
             setOpacity.value = settings.glowOpacity;
@@ -584,6 +721,11 @@
             saveSettings();
             applyTitle();
         };
+        setPingTracker.onchange = () => {
+            settings.pingTrackerEnabled = setPingTracker.checked;
+            saveSettings();
+            syncPingTracker();
+        };
         setGlow.onchange = () => { settings.glowEnabled = setGlow.checked; saveSettings(); applyGlowSettings(); };
         setSpeed.oninput = () => { settings.glowSpeed = parseFloat(setSpeed.value); saveSettings(); applyGlowSettings(); };
         setOpacity.oninput = () => { settings.glowOpacity = parseFloat(setOpacity.value); saveSettings(); applyGlowSettings(); };
@@ -595,11 +737,12 @@
             saveSettings();
             syncSettingInputs();
             applyGlowSettings();
+            syncPingTracker();
         };
 
         // trim player data, don't dump the whole login blob
-        document.getElementById("rgSetCopyDebug").onclick = async () => {
-            dbg("Copy debug bundle clicked");
+        document.getElementById("rgSetCopyDebug").onclick = () => {
+            dbg("Download debug bundle clicked");
             try {
                 const trimmedPlayer = lastKnownPlayerData ? {
                     Id: lastKnownPlayerData.Id,
@@ -651,6 +794,7 @@
                         _lastInitLineAt,
                         _lastRecoverySignalAt,
                         _lastValidRatingsAt,
+                        networkRttEstimateMs: pingTrackerLastRtt,
                     },
                     ui,
                     clan: myClan ? {
@@ -669,12 +813,32 @@
                     errors: _rgErrorBuf,
                     log: _rgLogBuf.slice(-100),
                 };
-                await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
-                showToast("Debug bundle copied — paste it in a bug report");
+                const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+                const filename = `atlas-debug-${stamp}.txt`;
+                const text = [
+                    "=== ATLAS DEBUG BUNDLE ===",
+                    JSON.stringify(bundle, null, 2),
+                    "",
+                    "=== RAW GAME CONSOLE LOG ===",
+                    _rawLogBuf.join("\n"),
+                    "",
+                ].join("\n");
+                const url = URL.createObjectURL(new Blob([text], {
+                    type: "text/plain;charset=utf-8",
+                }));
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = filename;
+                link.style.display = "none";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 0);
+                showToast(`Downloaded ${filename}`);
             } catch (e) {
-                pushError(e, "copyDebugBundle");
-                console.error("[RG HUD] Copy debug bundle failed:", e);
-                showToast("Copy failed — see console");
+                pushError(e, "downloadDebugBundle");
+                console.error("[RG HUD] Download debug bundle failed:", e);
+                showToast("Download failed — see console");
             }
         };
 
@@ -1159,6 +1323,9 @@
     function updateHUD(data) {
         createHUD();
         lastKnownPlayerData = data;
+        // Login/ratings can arrive after Photon roster lines. Resume popup
+        // detection now that the local user's uid is finally available.
+        if (_inMatch && _liveRoster.length) scheduleRankedRosterPopups();
         captureSessionStart(data);
         updateStreak(data);
         updateMomentum();
@@ -1272,13 +1439,13 @@
 
         try {
             const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot } =
+            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot, runTransaction } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
 
-            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot };
+            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot, runTransaction };
             return firestoreReady;
         } catch (e) {
             dbg("initFirebase failed: " + (e && e.message ? e.message : e));
@@ -1812,7 +1979,7 @@
     const RG_LB_DEFAULT_CONFIG = {
         popupDurationMs: 6000,
         popupEnabled: true,
-        cacheRefreshHours: 24,
+        cacheRefreshHours: 3,
         minRankToShow: 100,
     };
 
@@ -1827,7 +1994,9 @@
     let _shownPopupsThisMatch = new Set();
     let _deferredMatch = null;
     let _rosterFired = false;
+    let _rosterFiring = false;
     let _rosterFireTimer = null;
+    let _matchPopupGeneration = 0;
 
     async function fetchRemoteConfig() {
         try {
@@ -2100,14 +2269,69 @@
         return null;
     }
 
+    function parseRosterInitLine(line) {
+        const outer = String(line ?? "").match(
+            /Initialized stats for player\s*:?\s*(.*?)\s*\(([^)]*\bUserId:\s*[^)]*)\)/
+        );
+        if (!outer) return null;
+        const details = outer[2];
+        const uidMatch = details.match(/\bUserId:\s*([^,]*)/i);
+        if (!uidMatch) return null;
+        const teamMatch = details.match(/\bTeam:\s*([A-Za-z]+)/i);
+        const rawTeam = (teamMatch?.[1] ?? "").trim();
+        const team = /^orange$/i.test(rawTeam) ? "Orange"
+            : /^blue$/i.test(rawTeam) ? "Blue"
+            : rawTeam || null;
+        return {
+            name: (outer[1] ?? "").trim(),
+            uid: (uidMatch[1] ?? "").trim(),
+            team,
+        };
+    }
+
+    function trustedTeamContext(roster, selfUid, expectedPlayerCount) {
+        const counts = {};
+        for (const player of roster) {
+            if (player.team) counts[player.team] = (counts[player.team] || 0) + 1;
+        }
+        const expectedPerSide = expectedPlayerCount / 2;
+        const teamsBalanced = Number.isInteger(expectedPerSide)
+            && roster.length === expectedPlayerCount
+            && counts.Orange === expectedPerSide
+            && counts.Blue === expectedPerSide;
+        const selfTeam = roster.find(player => player.uid === selfUid)?.team || null;
+        return { counts, teamsBalanced, selfTeam };
+    }
+
     function resetMatchPopupState() {
+        _matchPopupGeneration++;
         _matchFormat = null;
         _matchPlayerCount = 0;
         _selfTeam = null;
         _shownPopupsThisMatch = new Set();
         _deferredMatch = null;
         _rosterFired = false;
+        _rosterFiring = false;
         if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+    }
+
+    function snapshotDeferredRoster() {
+        _deferredMatch = {
+            players: _liveRoster.map(player => ({ ...player })),
+        };
+    }
+
+    function scheduleRankedRosterPopups() {
+        if (_rosterFired || _rosterFiring || !_matchFormat || !_liveRoster.length) return;
+        if (!lastKnownPlayerData?.Id) return;
+        if (_matchPlayerCount && _liveRoster.length >= _matchPlayerCount) {
+            fireAllRankedPopups();
+            return;
+        }
+        // Safety net: if inits stop coming, fire a neutral partial-roster
+        // result after three seconds instead of missing the match entirely.
+        if (_rosterFireTimer) clearTimeout(_rosterFireTimer);
+        _rosterFireTimer = setTimeout(() => fireAllRankedPopups(), 3000);
     }
 
     // called when a real-uid roster entry lands. we wait until the full roster
@@ -2117,103 +2341,110 @@
     async function onRosterEntry(entry) {
         try {
             const selfUid = lastKnownPlayerData?.Id;
-            if (!selfUid) return;
-            if (entry.uid === selfUid && entry.team) _selfTeam = entry.team;
-            // fire only once, only when roster is complete
+            if (selfUid && entry.uid === selfUid && entry.team) _selfTeam = entry.team;
             if (!_matchFormat) {
-                // rare: no "Starting game with N players" line seen — stash for postmortem
-                const isTm = entry.team && _selfTeam && entry.team === _selfTeam;
-                if (!_deferredMatch) _deferredMatch = { opponents: [], teammates: [] };
-                const bucket = isTm ? _deferredMatch.teammates : _deferredMatch.opponents;
-                if (entry.uid !== selfUid && !bucket.some(p => p.uid === entry.uid)) bucket.push(entry);
+                // Missing/late "Starting game" line: retain the complete roster
+                // and classify it only after self + final teams are known.
+                snapshotDeferredRoster();
                 return;
             }
-            if (_matchPlayerCount && _liveRoster.length >= _matchPlayerCount) {
-                fireAllRankedPopups();
-            } else {
-                // safety net: if inits stop coming, fire after 3s of quiet
-                if (_rosterFireTimer) clearTimeout(_rosterFireTimer);
-                _rosterFireTimer = setTimeout(() => fireAllRankedPopups(), 3000);
-            }
+            scheduleRankedRosterPopups();
         } catch (e) {
             dbg("onRosterEntry threw: " + (e && e.message ? e.message : e));
         }
     }
 
     async function fireAllRankedPopups() {
+        const generation = _matchPopupGeneration;
         try {
-            if (_rosterFired) return;
-            _rosterFired = true;
-            if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+            if (_rosterFired || _rosterFiring) return;
             const selfUid = lastKnownPlayerData?.Id;
             if (!selfUid || !_matchFormat) return;
+            _rosterFiring = true;
+            if (_rosterFireTimer) { clearTimeout(_rosterFireTimer); _rosterFireTimer = null; }
+            const roster = _liveRoster.map(player => ({ ...player }));
+            const matchFormat = _matchFormat;
+            const matchPlayerCount = _matchPlayerCount;
             // count each team so we can tell if the photon Team labels line up
             // with a real match split (3v3 = 3+3, 2v2 = 2+2, 1v1 = 1+1)
-            const counts = {};
-            for (const p of _liveRoster) {
-                if (p.team) counts[p.team] = (counts[p.team] || 0) + 1;
-            }
-            const expectedPerSide = _matchPlayerCount / 2;
-            const teamsBalanced = counts.Orange === expectedPerSide && counts.Blue === expectedPerSide;
+            const { counts, teamsBalanced, selfTeam } =
+                trustedTeamContext(roster, selfUid, matchPlayerCount);
             if (!teamsBalanced) {
-                dbg(`team split ${counts.Orange || 0}O/${counts.Blue || 0}B doesn't match a legit ${_matchPlayerCount}-player split — using neutral labels`);
+                dbg(`team split ${counts.Orange || 0}O/${counts.Blue || 0}B doesn't match a legit ${matchPlayerCount}-player split — using neutral labels`);
             }
             const cache = await getLeaderboardCache();
+            if (generation !== _matchPopupGeneration) return;
             if (!cache) { dbg("popup skip: no leaderboard cache available"); return; }
             const cfg = await getRemoteConfig();
-            for (const entry of _liveRoster) {
+            if (generation !== _matchPopupGeneration) return;
+            _rosterFired = true;
+            for (const entry of roster) {
                 if (entry.uid === selfUid) continue;
                 if (_shownPopupsThisMatch.has(entry.uid)) continue;
                 _shownPopupsThisMatch.add(entry.uid);
-                const hit = lookupInCache(cache, entry.uid, _matchFormat);
+                const hit = lookupInCache(cache, entry.uid, matchFormat);
                 if (!hit) {
-                    dbg(`popup skip: "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${_matchFormat} top ${RG_LB_TOP_N}`);
+                    dbg(`popup skip: "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${matchFormat} top ${RG_LB_TOP_N}`);
                     continue;
                 }
-                if (hit.rank > (cfg.minRankToShow || 100)) {
+                if (hit.rank > (cfg.minRankToShow ?? 100)) {
                     dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
                     continue;
                 }
                 let isTeammate = null; // null = don't know, use neutral label
-                if (teamsBalanced && _selfTeam && entry.team) {
-                    isTeammate = entry.team === _selfTeam;
+                if (teamsBalanced && selfTeam && entry.team) {
+                    isTeammate = entry.team === selfTeam;
                 }
                 const displayName = hit.name || entry.name;
                 const role = isTeammate === true ? "teammate" : isTeammate === false ? "opponent" : "player";
-                dbg(`popup fire: #${hit.rank} ${role} "${displayName}" in ${_matchFormat}`);
-                showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: _matchFormat, isTeammate });
+                dbg(`popup fire: #${hit.rank} ${role} "${displayName}" in ${matchFormat}`);
+                showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: matchFormat, isTeammate });
             }
         } catch (e) {
             dbg("fireAllRankedPopups threw: " + (e && e.message ? e.message : e));
+        } finally {
+            if (generation === _matchPopupGeneration) _rosterFiring = false;
         }
     }
 
-    // for 3/4-player matches we defer to match end when ratings deltas
-    // reveal the true mode. this runs after tryParseAndUpdate.
+    // If the Starting line was missing, defer until the ratings delta reveals
+    // the playlist. Capture everything before the first await so match-end can
+    // safely reset global popup state for the next match.
     async function firePostmortemPopupsIfDeferred(prevRatings) {
+        const deferred = _deferredMatch;
+        _deferredMatch = null;
+        const players = deferred?.players?.map(player => ({ ...player })) ?? [];
+        const selfUid = lastKnownPlayerData?.Id;
+        const alreadyShown = new Set(_shownPopupsThisMatch);
+        const g = lastKnownPlayerData?.ModesGlicko || {};
+        const changedRanked = RG_LB_MODES.filter(mode => {
+            const before = prevRatings?.[mode];
+            const after = g[mode]?.displayRating;
+            return typeof after === "number" && typeof before === "number" && after !== before;
+        });
         try {
-            if (!_deferredMatch) return;
-            const g = lastKnownPlayerData?.ModesGlicko || {};
-            const changedRanked = RG_LB_MODES.filter(m => {
-                const before = prevRatings[m];
-                const after = g[m]?.displayRating;
-                return typeof after === "number" && typeof before === "number" && after !== before;
-            });
-            if (changedRanked.length !== 1) return;
+            if (!deferred || !selfUid || !players.length || changedRanked.length !== 1) return;
             const mode = changedRanked[0];
             const cache = await getLeaderboardCache();
             if (!cache) return;
             const cfg = await getRemoteConfig();
-            const fire = (list, isTeammate) => {
-                for (const p of list) {
-                    const hit = lookupInCache(cache, p.uid, mode);
-                    if (!hit) continue;
-                    if (hit.rank > (cfg.minRankToShow || 100)) continue;
-                    showLbOpponentPopup({ rank: hit.rank, name: hit.name || p.name, mode, isTeammate });
-                }
-            };
-            fire(_deferredMatch.opponents, false);
-            fire(_deferredMatch.teammates, true);
+            const { teamsBalanced, selfTeam } =
+                trustedTeamContext(players, selfUid, players.length);
+            for (const player of players) {
+                if (player.uid === selfUid || alreadyShown.has(player.uid)) continue;
+                alreadyShown.add(player.uid);
+                const hit = lookupInCache(cache, player.uid, mode);
+                if (!hit || hit.rank > (cfg.minRankToShow ?? 100)) continue;
+                const isTeammate = teamsBalanced && selfTeam && player.team
+                    ? player.team === selfTeam
+                    : null;
+                showLbOpponentPopup({
+                    rank: hit.rank,
+                    name: hit.name || player.name,
+                    mode,
+                    isTeammate,
+                });
+            }
         } catch (e) {
             dbg("firePostmortemPopupsIfDeferred threw: " + (e && e.message ? e.message : e));
         }
@@ -2278,13 +2509,31 @@
                     // syncedAt: client ms on my member entry so teammates get
                     // per-member freshness ("2m ago"). serverTimestamp() isn't
                     // allowed inside array elements anyway.
-                    const members = (myClan.members ?? []).map(m =>
-                        m.userId === uid ? { ...m, mmr: myMMR, syncedAt: Date.now() } : m
-                    );
-                    const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
-                    // stamp server time, we read it back to calibrate serverNow()
-                    const writeClanMMR = () => fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
-                        { members, totalMMR, lastSyncAt: fb.serverTimestamp() }, { merge: true });
+                    // Always rebuild from the transaction's fresh server copy.
+                    // A plain setDoc used our stale in-memory members array and
+                    // could erase somebody who had just been approved.
+                    const clanId = myClan.id;
+                    const clanRef = fb.doc(fb.db, "clans", clanId);
+                    const syncedAt = Date.now();
+                    let committedClan = null;
+                    const writeClanMMR = () => {
+                        committedClan = null;
+                        return fb.runTransaction(fb.db, async tx => {
+                            const liveSnap = await tx.get(clanRef);
+                            if (!liveSnap.exists()) return;
+                            const liveClan = liveSnap.data();
+                            const liveMembers = liveClan.members ?? [];
+                            if (!liveMembers.some(m => m.userId === uid)) return;
+                            const members = liveMembers.map(m =>
+                                m.userId === uid ? { ...m, mmr: myMMR, syncedAt } : m
+                            );
+                            const totalMMR = members.reduce((s, m) => s + (m.mmr ?? 0), 0);
+                            tx.set(clanRef,
+                                { members, totalMMR, lastSyncAt: fb.serverTimestamp() },
+                                { merge: true });
+                            committedClan = { ...liveClan, id: clanId, members, totalMMR };
+                        });
+                    };
                     try {
                         await writeClanMMR();
                     } catch (firstErr) {
@@ -2294,8 +2543,14 @@
                         await new Promise(r => setTimeout(r, 5000));
                         await writeClanMMR();
                     }
-                    myClan.members = members;
-                    myClan.totalMMR = totalMMR;
+                    if (!committedClan) {
+                        dbg("Clan MMR transaction skipped: clan missing or player no longer on roster");
+                        detachClanListener();
+                        myClan = null;
+                        clanLoaded = false;
+                        return null;
+                    }
+                    myClan = sanitizeClanDoc(committedClan);
 
                     // one-time serverNow calibration per session
                     if (serverNowOffset === null) {
@@ -2518,13 +2773,16 @@
                 tryParseAndUpdate(text);
                 dbg(`matchEnd response — roster at ${_liveRoster.length}, restoring HUD`);
                 _inMatch = false;
+                syncPingTracker();
                 freezeRoster();
                 setAutoVisible(true);
                 // fire-and-forget audit write
                 writeMatchAudit(prevRatings, opponentsSnapshot);
-                // if we deferred the popup for an ambiguous 3/4-player match,
-                // the ratings delta now tells us the mode — show it postmortem
+                // If Starting was missing, the ratings delta now reveals mode.
+                // The function snapshots its inputs before awaiting, so reset
+                // immediately and prevent timers/state leaking into a rematch.
                 firePostmortemPopupsIfDeferred(prevRatings);
+                resetMatchPopupState();
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
                 // login carries the raw nickname before any local processing,
@@ -2580,29 +2838,39 @@
                 // match inits always populate it.
                 // v13.4 bug: warm-up inits restarted the roster mid-queue.
                 if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
-                    // v13.6: anchor only on "for player:" + "(UserId:..." so a
-                    // future patch adding a field / tweaking spacing doesn't
-                    // silently kill roster detection.
-                    // also grabs team so we can tell opponents from teammates.
-                    const m = arg.match(/Initialized stats for player\s*:?\s*(.*?)\s*\(UserId:\s*([^,)]+)(?:,\s*Team:\s*([A-Za-z]+))?/);
-                    const nm = (m?.[1] ?? "").trim();
-                    const uid = (m?.[2] ?? "").trim();
-                    const team = (m?.[3] ?? "").trim() || null;
+                    // Parse the parenthesized fields independently so empty
+                    // warm-up UserIds and future extra fields remain valid.
+                    const parsed = parseRosterInitLine(arg);
+                    const nm = parsed?.name ?? "";
+                    const uid = parsed?.uid ?? "";
+                    const team = parsed?.team ?? null;
                     if (nm && uid) {
                         _lastInitLineAt = performance.now();
                         setAutoVisible(false); // real match — hide HUD
                         if (!_inMatch) {
                             _liveRoster = [];
                             _inMatch = true;
+                            syncPingTracker();
                             dbg(`match forming — roster reset, first player "${nm}"`);
                         }
-                        // dedupe by uid, names collide, mid-match backfills should ADD
-                        if (!_liveRoster.some(p => p.uid === uid)) {
+                        // Dedupe by uid, but accept a later corrected team/name
+                        // before firing. Photon can re-emit after rebalancing.
+                        const existing = _liveRoster.find(player => player.uid === uid);
+                        if (!existing) {
                             const entry = { name: nm, uid, team };
                             _liveRoster.push(entry);
                             dbg(`roster +1 "${nm}"${team ? ` (${team})` : ""} (${_liveRoster.length} total)`);
                             // fire the leaderboard-opponent popup check
                             onRosterEntry(entry);
+                        } else {
+                            const nameChanged = nm && nm !== existing.name;
+                            const teamChanged = team && team !== existing.team;
+                            if (nameChanged) existing.name = nm;
+                            if (teamChanged) existing.team = team;
+                            if (nameChanged || teamChanged) {
+                                dbg(`roster corrected "${existing.name}"${existing.team ? ` (${existing.team})` : ""}`);
+                                onRosterEntry(existing);
+                            }
                         }
                     } else if (nm) {
                         dbg(`warm-up init "${nm}" (empty uid) — ignored, inMatch=${_inMatch}`);
@@ -2624,6 +2892,12 @@
                         dbg(`match player count = ${_matchPlayerCount}, format = ${_matchFormat || "unknown"}`);
                         // pre-warm the cache in the background so it's ready when roster fills
                         getLeaderboardCache();
+                        if (_matchFormat) {
+                            // Late Starting line: live roster now owns delivery;
+                            // discard deferred state to prevent match-end duplicates.
+                            _deferredMatch = null;
+                            scheduleRankedRosterPopups();
+                        }
                     }
                 }
 
@@ -2637,6 +2911,7 @@
                         freezeRoster();
                     }
                     _inMatch = false;
+                    syncPingTracker();
                     // new match is being queued — clear popup state
                     resetMatchPopupState();
                 }
@@ -3123,9 +3398,18 @@
                 },
                 (err) => {
                     // v13.6: without onError, revoked perms froze the UI silently
-                    console.warn("[RG HUD] Clan listener error:", err);
-                    showError("Clan updates disconnected — reopen the Clan tab to refresh");
+                    // 14.5: also retry - background tabs get throttled and the
+                    //       listener dies quiet. without this, syncs sit stale
+                    //       for 50+ min until someone refreshes.
+                    dbg("clan listener error, scheduling reconnect: " + (err && err.message ? err.message : err));
+                    console.warn("[RG HUD] Clan listener error, will retry in 30s:", err);
                     detachClanListener();
+                    setTimeout(() => {
+                        if (myClan) {
+                            dbg("clan listener auto-reconnecting");
+                            attachClanListener();
+                        }
+                    }, 30 * 1000);
                 }
             );
         } catch (e) {
@@ -3635,20 +3919,50 @@
         }
 
         try {
-            const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", clanId));
-            if (!clanSnap.exists()) return;
-            const clan = clanSnap.data();
-
-            if ((clan.members ?? []).length >= clanMaxMembers()) {
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const requestName = myName();
+            let outcome = "sent";
+            await fb.runTransaction(fb.db, async tx => {
+                const clanSnap = await tx.get(clanRef);
+                if (!clanSnap.exists()) {
+                    outcome = "missing";
+                    return;
+                }
+                const clan = clanSnap.data();
+                if ((clan.members ?? []).some(m => m.userId === uid)) {
+                    outcome = "member";
+                    return;
+                }
+                if ((clan.members ?? []).length >= clanMaxMembers()) {
+                    outcome = "full";
+                    return;
+                }
+                if ((clan.joinRequests ?? []).some(r => r.userId === uid)) {
+                    outcome = "pending";
+                    return;
+                }
+                outcome = "sent";
+                const joinRequests = [...(clan.joinRequests ?? []), { userId: uid, name: requestName }];
+                tx.set(clanRef, { joinRequests }, { merge: true });
+            });
+            if (outcome === "missing") {
+                showToast("That clan no longer exists.");
+                return;
+            }
+            if (outcome === "member") {
+                await loadClanData(true);
+                showToast("You're already in this clan.");
+                renderClanView();
+                return;
+            }
+            if (outcome === "full") {
                 showToast("That clan is full.");
                 return;
             }
-            if ((clan.joinRequests ?? []).some(r => r.userId === uid)) {
+            if (outcome === "pending") {
                 showToast("You already requested to join.");
                 return;
             }
-            const joinRequests = [...(clan.joinRequests ?? []), { userId: uid, name: myName() }];
-            await fb.setDoc(fb.doc(fb.db, "clans", clanId), { joinRequests }, { merge: true });
             dbg(`Join request sent to clan ${clanId}`);
             showToast("Join request sent!");
             renderClanView();
@@ -3674,19 +3988,55 @@
         }
 
         try {
-            const req = (myClan.joinRequests ?? []).find(r => r.userId === userId);
-            const joinRequests = (myClan.joinRequests ?? []).filter(r => r.userId !== userId);
-            let members = myClan.members ?? [];
-
-            if (approve && req && members.length < clanMaxMembers()
-                && !members.some(m => m.userId === userId)) {
-                members = [...members, { userId: req.userId, name: req.name, role: "member" }];
+            const clanId = myClan.id;
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const actorUid = myUserId();
+            let committedClan = null;
+            let outcome = approve ? "approved" : "denied";
+            await fb.runTransaction(fb.db, async tx => {
+                committedClan = null;
+                const clanSnap = await tx.get(clanRef);
+                if (!clanSnap.exists()) {
+                    outcome = "missing";
+                    return;
+                }
+                const liveClan = clanSnap.data();
+                const liveMembers = liveClan.members ?? [];
+                const actor = liveMembers.find(m => m.userId === actorUid);
+                if (approve && (!actor || !rolePerm(actor.role, "approve"))) {
+                    outcome = "forbidden";
+                    return;
+                }
+                const req = (liveClan.joinRequests ?? []).find(r => r.userId === userId);
+                if (!req) {
+                    outcome = "handled";
+                    return;
+                }
+                if (approve && liveMembers.length >= clanMaxMembers()) {
+                    outcome = "full";
+                    return;
+                }
+                const joinRequests = (liveClan.joinRequests ?? []).filter(r => r.userId !== userId);
+                let members = liveMembers;
+                if (approve && !members.some(m => m.userId === userId)) {
+                    members = [...members, { userId: req.userId, name: req.name, role: "member" }];
+                }
+                tx.set(clanRef, { joinRequests, members }, { merge: true });
+                committedClan = { ...liveClan, id: clanId, joinRequests, members };
+                outcome = approve ? "approved" : "denied";
+            });
+            if (!committedClan) {
+                if (outcome === "missing") showToast("That clan no longer exists.");
+                else if (outcome === "forbidden") showToast("Your current role can't approve join requests.");
+                else if (outcome === "full") showToast("That clan is full.");
+                else showToast("That request was already handled.");
+                await loadClanData(true);
+                renderClanView();
+                return;
             }
 
-            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { joinRequests, members }, { merge: true });
             dbg(`Join request ${approve ? "approved" : "denied"} for ${userId}`);
-            myClan.joinRequests = joinRequests;
-            myClan.members = members;
+            myClan = sanitizeClanDoc(committedClan);
             await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
@@ -4518,6 +4868,7 @@
         if (initStale && recoveryRecent) {
             dbg(`_inMatch watchdog: stale for ${((now - _lastInitLineAt) / 60000).toFixed(1)}m + recent recovery signal -- clearing`);
             _inMatch = false;
+            syncPingTracker();
             setAutoVisible(true);
         }
     }, 60 * 1000);
@@ -4539,7 +4890,10 @@
   let _currentUserId = null;
   let _lastRawNickname = '';
   const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
-  const HISTORY_KEY = 'rgNameForge.history.v1';
+  function nameForgeHistoryKey(userId) {
+    return 'rgNameForge.history.v2.' + (userId || 'anon');
+  }
+  const historyKey = () => nameForgeHistoryKey(_currentUserId);
   // steal receipt. boot-time SetNickname echo can undo a fresh steal, so we
   // re-apply once after boot if the login nickname doesn't match.
   const pendingStealKey = () => 'rgNameForge.pendingSteal.v1.' + (_currentUserId || 'anon');
@@ -4632,6 +4986,76 @@
     try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ }
   }
 
+  // rawCode is the exact in-game TMP markup, while the structured fields are
+  // used as soon as somebody touches a Forge control. The first non-empty line
+  // is the name and the last is its editable title.
+  function editableTextFromRaw(raw) {
+    return String(raw ?? "")
+      .replace(/<(?!sprite=\d+\s*>)[^>]*>/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function editableFieldsFromRaw(raw) {
+    const lines = String(raw ?? "")
+      .split(/<br\s*\/?\s*>|\r\n?|\n/gi)
+      .map(editableTextFromRaw)
+      .filter(Boolean);
+    const titleText = lines.length > 1 ? lines[lines.length - 1] : "";
+    return {
+      name: lines[0] ?? "",
+      titleOn: Boolean(titleText),
+      titleText,
+    };
+  }
+
+  function updatedRecentHistory(history, entry) {
+    const entries = Array.isArray(history) ? history : [];
+    return [
+      entry,
+      ...entries.filter(item => item && item.code !== entry.code),
+    ].slice(0, 5);
+  }
+
+  function recordRecentApply(code, rawCode = code) {
+    const editableName = editableFieldsFromRaw(rawCode).name;
+    const plain = editableName
+      .replace(/<sprite=\d+\s*>/gi, '')
+      .trim()
+      .slice(0, 24) || '(markup only)';
+    const entry = {
+      code: String(code),
+      rawCode: String(rawCode),
+      plain,
+      ts: Date.now(),
+    };
+    const history = loadJSON(historyKey(), []);
+    saveJSON(historyKey(), updatedRecentHistory(history, entry));
+  }
+
+  function syncEditableFieldsFromRaw(raw) {
+    const fields = editableFieldsFromRaw(raw);
+    state.name = fields.name;
+    state.titleOn = fields.titleOn;
+    state.titleText = fields.titleText;
+  }
+
+  function loadStateSnapshot(snapshot) {
+    state = Object.assign(defaultState(), snapshot || {});
+    if (state.rawCode) syncEditableFieldsFromRaw(state.rawCode);
+  }
+
+  function setRawSnapshot(raw) {
+    state.rawCode = String(raw ?? "");
+    syncEditableFieldsFromRaw(state.rawCode);
+  }
+
+  // Repair a persisted pre-fix state before the first render.
+  if (state.rawCode) {
+    syncEditableFieldsFromRaw(state.rawCode);
+    saveJSON(stateKey(), state);
+  }
+
   function hexToRgb(hex) {
     const h = hex.replace('#', '');
     return {
@@ -4687,12 +5111,13 @@
   // ------------------------------------------------------------------
   // TMP code generation
   // ------------------------------------------------------------------
-  function colorizeText(text, mode, solid, stops, skipSpaces, waveAmp = 0) {
+  function colorizeText(text, mode, solid, stops, skipSpaces, waveAmp = 0, solidAlpha = 255) {
     const wave = waveAmp !== 0;
+    const aaSolid = solidAlpha < 255 ? alphaHex(solidAlpha) : '';
 
     // fast paths when no per-letter work is needed
     if (!wave && mode === 'none') return text;
-    if (!wave && mode === 'solid') return `<${solid.toUpperCase()}>` + text;
+    if (!wave && mode === 'solid') return `<${solid.toUpperCase()}${aaSolid}>` + text;
 
     const tokens = tokenize(text);
     const paintable = tokens.filter(t => t.type === 'char' && !(skipSpaces && t.value === ' '));
@@ -4703,8 +5128,7 @@
     let lastColor = null;
     let out = '';
     if (mode === 'solid') {
-      const aaN = (s.solidAlpha ?? 255) < 255 ? alphaHex(s.solidAlpha) : '';
-      out += `<${solid.toUpperCase()}${aaN}>`;
+      out += `<${solid.toUpperCase()}${aaSolid}>`;
     }
     for (const tok of tokens) {
       if (tok.type === 'sprite') { out += tok.value; continue; }
@@ -4737,6 +5161,23 @@
     return tokens;
   }
 
+  function resolveTitleColorStyle(s) {
+    if (s.titleColorMode === 'inherit') {
+      return {
+        mode: s.colorMode,
+        solid: s.solidColor,
+        stops: s.stops,
+        alpha: s.colorMode === 'solid' ? (s.solidAlpha ?? 255) : 255,
+      };
+    }
+    return {
+      mode: s.titleColorMode,
+      solid: s.titleColor,
+      stops: s.titleStops,
+      alpha: s.titleAlpha ?? 255,
+    };
+  }
+
   function buildCode(s) {
     let open = '';
     let close = '';
@@ -4749,20 +5190,29 @@
     if (s.underline) { open += '<u>'; close = '</u>' + close; }
     if (s.strike) { open += '<s>'; close = '</s>' + close; }
 
-    const nameCode = colorizeText(s.name, s.colorMode, s.solidColor, s.stops, s.skipSpaces, s.waveOn ? s.waveAmp : 0);
+    const nameCode = colorizeText(
+      s.name,
+      s.colorMode,
+      s.solidColor,
+      s.stops,
+      s.skipSpaces,
+      s.waveOn ? s.waveAmp : 0,
+      s.solidAlpha ?? 255,
+    );
 
     let code = open + nameCode + close;
 
     // title line, fully independent styling
     if (s.titleOn && s.titleText.trim().length > 0) {
       let t = s.titleText;
-      if (s.titleColorMode === 'solid') {
-        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
-        t = `<${s.titleColor.toUpperCase()}${aa}>` + t;
-      } else if (s.titleColorMode === 'gradient') {
-        t = colorizeText(t, 'gradient', s.titleColor, s.titleStops, s.skipSpaces);
+      const titleColor = resolveTitleColorStyle(s);
+      if (titleColor.mode === 'solid') {
+        const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
+        t = `<${titleColor.solid.toUpperCase()}${aa}>` + t;
+      } else if (titleColor.mode === 'gradient') {
+        t = colorizeText(t, 'gradient', titleColor.solid, titleColor.stops, s.skipSpaces);
         // append alpha byte to every <#RRGGBB> so gradients can be transparent too
-        const aaG = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
+        const aaG = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
         if (aaG) t = t.replace(/<(#[0-9A-Fa-f]{6})>/g, `<$1${aaG}>`);
       }
       let tOpen = '', tClose = '';
@@ -4899,22 +5349,22 @@
       if (s.titleUnderline) titleDeco.push('underline');
       if (s.titleStrike) titleDeco.push('line-through');
       if (titleDeco.length) titleLine.style.textDecorationLine = titleDeco.join(' ');
-      if (s.titleColorMode === 'solid') {
+      const titleColor = resolveTitleColorStyle(s);
+      if (titleColor.mode === 'solid') {
         titleLine.textContent = s.titleText;
         // 8-digit hex: append alpha byte when < 255
-        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
-        titleLine.style.color = s.titleColor + aa;
-      } else if (s.titleColorMode === 'gradient') {
-        // use titleStops (was leaking s.stops from the name)
+        const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
+        titleLine.style.color = titleColor.solid + aa;
+      } else if (titleColor.mode === 'gradient') {
         const chars = [...s.titleText];
         const paint = chars.filter(c => c !== ' ').length;
-        const aa = (s.titleAlpha ?? 255) < 255 ? alphaHex(s.titleAlpha) : '';
+        const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
         let j = 0;
         for (const c of chars) {
           const sp = document.createElement('span');
           sp.textContent = c;
           if (c !== ' ') {
-            sp.style.color = gradientAt(s.titleStops, paint === 1 ? 0 : j / (paint - 1)) + aa;
+            sp.style.color = gradientAt(titleColor.stops, paint === 1 ? 0 : j / (paint - 1)) + aa;
             j++;
           }
           titleLine.appendChild(sp);
@@ -5030,7 +5480,47 @@
     return { ok: res.ok && body.trim() === 'true', status: res.status, body };
   }
 
-  // once per page load: check the last steal survived the game's boot echo.
+  // The nickname endpoint can return true before the game finishes its own
+  // SetNickname boot echo. Keep one receipt for every Name Forge write and
+  // re-apply once after the echo window. A newer click cancels the old retry.
+  let _nicknameApplyRevision = 0;
+  const NICKNAME_SETTLE_RETRY_MS = 4000;
+  async function applyNicknameStable(code, body = code) {
+    const revision = ++_nicknameApplyRevision;
+    const receipt = { code, body, ts: Date.now(), revision };
+    _stealVerified = false;
+    saveJSON(pendingStealKey(), receipt);
+
+    let first;
+    try {
+      first = await applyNickname(code);
+    } catch (err) {
+      const current = loadJSON(pendingStealKey(), null);
+      if (current?.revision === revision) saveJSON(pendingStealKey(), null);
+      throw err;
+    }
+    if (!first.ok) {
+      const current = loadJSON(pendingStealKey(), null);
+      if (current?.revision === revision) saveJSON(pendingStealKey(), null);
+      return first;
+    }
+
+    setTimeout(async () => {
+      if (_nicknameApplyRevision !== revision) return;
+      const current = loadJSON(pendingStealKey(), null);
+      if (!current || current.revision !== revision || current.code !== code) return;
+      try {
+        const retry = await applyNickname(code);
+        dbg(`nickname settle retry -> ${retry.ok ? "OK" : "FAILED (" + retry.status + ")"}`);
+      } catch (err) {
+        dbg("nickname settle retry error: " + (err && err.message ? err.message : err));
+      }
+    }, NICKNAME_SETTLE_RETRY_MS);
+
+    return first;
+  }
+
+  // once per page load: check the last name apply survived the game's boot echo.
   // mismatch -> re-apply once after 4s so our write lands last. TTL-guarded.
   let _stealVerified = false;
   function verifyPendingSteal(rawNickname) {
@@ -5059,17 +5549,21 @@
         (nickStripped && (nickStripped === bodyStripped || nickStripped === codeStripped))
     )) {
       saveJSON(pendingStealKey(), null);
-      fdbg('pending steal verified — stolen name stuck server-side');
+      fdbg('pending name apply verified — nickname stuck server-side');
       return;
     }
-    fdbg('pending steal MISMATCH — boot echo overwrote the stolen name, re-applying in 4s');
+    if (pending.revision && pending.revision === _nicknameApplyRevision) {
+      fdbg('pending name apply is waiting for its scheduled settle retry');
+      return;
+    }
+    fdbg('pending name apply MISMATCH — boot echo overwrote it, re-applying in 4s');
     setTimeout(async () => {
       try {
         const r = await applyNickname(pending.code);
-        fdbg(`pending steal re-apply -> ${r.ok ? 'OK — refresh once more to see it in-game' : 'FAILED (' + r.status + ')'}`);
+        fdbg(`pending name re-apply -> ${r.ok ? 'OK — refresh once more to see it in-game' : 'FAILED (' + r.status + ')'}`);
         if (r.ok) saveJSON(pendingStealKey(), null);
       } catch (err) {
-        fdbg('pending steal re-apply error: ' + (err && err.message ? err.message : err));
+        fdbg('pending name re-apply error: ' + (err && err.message ? err.message : err));
       }
     }, 4000);
   }
@@ -5507,7 +6001,30 @@ _rgnfFab = fab; _rgnfPanel = panel;
     return root;
   }
 
+  function captureForgeScroll(panel) {
+    const saved = [];
+    for (let node = panel; node; node = node.parentElement) {
+      if (node === panel || node.id === 'rgForgeView' || node.id === 'rgBody') {
+        saved.push({
+          node,
+          top: node.scrollTop,
+          left: node.scrollLeft,
+        });
+      }
+      if (node.id === 'rgHUD') break;
+    }
+    return saved;
+  }
+
+  function restoreForgeScroll(saved) {
+    saved.forEach(({ node, top, left }) => {
+      node.scrollTop = top;
+      node.scrollLeft = left;
+    });
+  }
+
   function render(panel) {
+    const savedScroll = captureForgeScroll(panel);
     panel.innerHTML = '';
     saveJSON(stateKey(), state);
 
@@ -5530,6 +6047,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
             || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-imposter-sec')
             || t.closest('.rgnf-head')) return;
+        syncEditableFieldsFromRaw(state.rawCode);
         state.rawCode = null;
         saveJSON(stateKey(), state);
         const bar = panel.querySelector('.rgnf-modebar');
@@ -5558,7 +6076,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         hrow.appendChild(el('button', {
           class: 'rgnf-chip', text: '↺',
           title: 'Reset to my current in-game name',
-          onclick: () => { state.rawCode = _lastRawNickname; render(panel); },
+          onclick: () => { setRawSnapshot(_lastRawNickname); render(panel); },
         }));
       }
       secPreview.appendChild(hrow);
@@ -5575,7 +6093,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     rawEdit.addEventListener('input', () => {
       autosizeRawEdit();
       // capturing text as rawCode flips us into raw mode (refreshPreview keys off it)
-      state.rawCode = rawEdit.value;
+      setRawSnapshot(rawEdit.value);
       const rawPfx = _prefix();
       pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
       charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
@@ -5932,20 +6450,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
             try {
               // one-click: apply first, reveal over a name that's already live
               const codeApplied = _prefix() + raw;
-              const r = await applyNickname(codeApplied);
+              const r = await applyNicknameStable(codeApplied, raw);
               if (r.ok) {
-                state.rawCode = raw;
+                setRawSnapshot(raw);
                 _lastRawNickname = raw;
-                const hist = loadJSON(HISTORY_KEY, []);
-                const plain = raw.replace(/<[^>]*>/g, '').trim().slice(0, 24) || '(markup only)';
-                hist.unshift({ code: codeApplied, plain, ts: Date.now() });
-                saveJSON(HISTORY_KEY, hist.slice(0, 5));
-                // both forms, login nicknames come back clan-tag-stripped
-                saveJSON(pendingStealKey(), { code: codeApplied, body: raw, ts: Date.now() });
+                recordRecentApply(codeApplied, raw);
                 render(panel);
                 showImposterReveal(raw);
-                // silent re-apply, a race sometimes needed a second push
-                setTimeout(() => { applyNickname(codeApplied).catch(() => {}); }, 1000);
                 return;
               }
               b.textContent = '✗';
@@ -6031,7 +6542,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
           const row = el('div', { class: 'rgnf-preset' });
           row.style.marginLeft = '10px';
           row.appendChild(el('span', { text: p.label }));
-          row.appendChild(el('button', { class: 'rgnf-chip', text: 'Load', onclick: () => { state = Object.assign(defaultState(), p.state); render(panel); } }));
+          row.appendChild(el('button', {
+            class: 'rgnf-chip',
+            text: 'Load',
+            onclick: () => {
+              loadStateSnapshot(p.state);
+              render(panel);
+            },
+          }));
           row.appendChild(el('button', {
             class: 'rgnf-chip', text: '📁', title: 'Move to folder',
             onclick: () => {
@@ -6119,18 +6637,21 @@ _rgnfFab = fab; _rgnfPanel = panel;
     ]));
 
     // last 5 applies. 💾 promotes to a permanent preset before it rotates out.
-    const hist = loadJSON(HISTORY_KEY, []);
+    const hist = loadJSON(historyKey(), []);
     if (hist.length) {
       secPresets.appendChild(el('h4', { text: 'Recently applied (auto — newest 5 only)' }));
       const histWrap = el('div', { class: 'rgnf-presets' });
       hist.forEach((h) => {
+        const recentPreview = el('span', { title: h.code });
+        recentPreview.style.cssText = 'flex:1;overflow:hidden;max-height:44px;white-space:normal;';
+        recentPreview.appendChild(renderRawTMP(h.code));
         histWrap.appendChild(el('div', { class: 'rgnf-preset' }, [
-          el('span', { text: h.plain, title: h.code }),
+          recentPreview,
           el('button', {
             class: 'rgnf-chip', text: '💾', title: 'Save this as a permanent preset',
             onclick: () => {
               // strip the clan-tag prefix, the checkbox owns it
-              let code = h.code;
+              let code = h.rawCode || h.code;
               const pfx = _prefix();
               if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
               const snap = Object.assign(defaultState(), { rawCode: code });
@@ -6164,14 +6685,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
               const b = e.currentTarget;
               b.textContent = '…';
               try {
-                const r = await applyNickname(h.code);
+                const r = await applyNicknameStable(h.code, h.code);
                 if (r.ok) {
                   // load what was applied into preview so the screen matches live
-                  let code = h.code;
+                  let code = h.rawCode || h.code;
                   const pfx = _prefix();
                   if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
-                  state.rawCode = code;
+                  setRawSnapshot(code);
                   _lastRawNickname = code;
+                  recordRecentApply(h.code, code);
                   render(panel);
                   return;
                 }
@@ -6184,7 +6706,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       });
       histWrap.appendChild(el('button', {
         class: 'rgnf-chip', text: 'Clear history',
-        onclick: () => { saveJSON(HISTORY_KEY, []); render(panel); },
+        onclick: () => { saveJSON(historyKey(), []); render(panel); },
       }));
       secPresets.appendChild(histWrap);
     }
@@ -6204,14 +6726,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
           const codeApplied = _prefix() + (state.rawCode ? state.rawCode : buildCode(state));
           // reset target is unprefixed, checkbox owns the tag (double-tag fix)
           _lastRawNickname = state.rawCode ? state.rawCode : buildCode(state);
-          const result = await applyNickname(codeApplied);
+          const result = await applyNicknameStable(codeApplied, _lastRawNickname);
           if (result.ok) {
-            statusLine.className = 'rgnf-status ok';
-            statusLine.textContent = '✓ Nickname updated';
-            const hist = loadJSON(HISTORY_KEY, []);
-            const plain = state.name.replace(/<[^>]*>/g, '').slice(0, 24) || '(sprites only)';
-            hist.unshift({ code: codeApplied, plain, ts: Date.now() });
-            saveJSON(HISTORY_KEY, hist.slice(0, 5));
+            recordRecentApply(codeApplied, _lastRawNickname);
+            render(panel);
+            const refreshedStatus = panel.querySelector('.rgnf-status');
+            if (refreshedStatus) {
+              refreshedStatus.className = 'rgnf-status ok';
+              refreshedStatus.textContent = '✓ Nickname updated';
+            }
           } else {
             statusLine.className = 'rgnf-status err';
             statusLine.textContent = `✗ ${result.status}: ${result.body.slice(0, 120)}`;
@@ -6241,6 +6764,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     secActions.appendChild(el('div', { class: 'rgnf-row' }, [applyBtn, copyBtn]));
     secActions.appendChild(statusLine);
     panel.appendChild(secActions);
+    restoreForgeScroll(savedScroll);
   }
 
   function sliderRow(panel, label, key, min, max, unit) {
@@ -6371,15 +6895,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
           if (prevId === userId) return;
           const perUser = loadJSON(stateKey(), null);
           if (perUser) {
-            state = Object.assign(defaultState(), perUser);
+            loadStateSnapshot(perUser);
           } else {
             // fresh seed: the whole current in-game name as a raw snapshot.
             // first styling edit clears it and rebuilds from state.name.
             state = defaultState();
             const raw = String(rawNickname || "").trim();
             if (raw) {
-              state.rawCode = raw;
-              state.name = raw.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+              setRawSnapshot(raw);
             } else {
               state.name = String(displayName || "").trim();
             }
