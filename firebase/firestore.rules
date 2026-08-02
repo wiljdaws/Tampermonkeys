@@ -550,6 +550,10 @@ service cloud.firestore {
     match /clans_directory/{docId} {
       allow read: if true;
       allow create, update: if isAdmin()
+                            || (
+                              docId == 'index'
+                              && legacyClanWritesEnabled()
+                            )
                             || validDirectoryWrite(
                               docId,
                               request.resource.data

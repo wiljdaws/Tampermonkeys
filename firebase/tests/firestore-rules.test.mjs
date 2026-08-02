@@ -570,6 +570,23 @@ test("legacy writes are temporary and cannot overwrite migrated clans", async ()
   } else {
     await assertFails(operation);
   }
+  const legacyDirectoryWrite = setDoc(
+    doc(publicDb(), "clans_directory", "index"),
+    {
+      clans: [{
+        id: "legacy",
+        name: "Legacy Clan",
+        tag: "LEG",
+        memberIds: ["player-a"],
+        deviceIds: ["device-a"],
+      }],
+    },
+  );
+  if (compatibilityMode) {
+    await assertSucceeds(legacyDirectoryWrite);
+  } else {
+    await assertFails(legacyDirectoryWrite);
+  }
 
   const strict = strictClan();
   await writeStrictClan(publicDb(), "strict", strict);
