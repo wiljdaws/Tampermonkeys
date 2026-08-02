@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      14.6
+// @version      14.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -349,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5076,6 +5076,100 @@
     };
   }
 
+  function editableGlyphs(text) {
+    const glyphs = [];
+    const value = String(text ?? '');
+    for (let i = 0; i < value.length;) {
+      const sprite = value.slice(i).match(/^<sprite=\d+\s*>/i);
+      if (sprite) {
+        glyphs.push(sprite[0]);
+        i += sprite[0].length;
+        continue;
+      }
+      const glyph = String.fromCodePoint(value.codePointAt(i));
+      glyphs.push(glyph);
+      i += glyph.length;
+    }
+    return glyphs;
+  }
+
+  function replaceRawVisibleText(raw, nextText) {
+    const replacements = editableGlyphs(nextText);
+    const value = String(raw ?? '');
+    const tokens = [];
+    for (let i = 0; i < value.length;) {
+      if (value[i] === '<') {
+        const close = value.indexOf('>', i);
+        if (close >= 0) {
+          const tag = value.slice(i, close + 1);
+          tokens.push({
+            type: /^<sprite=\d+\s*>$/i.test(tag) ? 'visible' : 'tag',
+            value: tag,
+          });
+          i = close + 1;
+          continue;
+        }
+      }
+      const glyph = String.fromCodePoint(value.codePointAt(i));
+      tokens.push({ type: 'visible', value: glyph });
+      i += glyph.length;
+    }
+    let lastVisible = -1;
+    tokens.forEach((token, index) => {
+      if (token.type === 'visible') lastVisible = index;
+    });
+    let replacementIndex = 0;
+    let output = '';
+    let trailingTags = '';
+    tokens.forEach((token, index) => {
+      if (index > lastVisible && token.type === 'tag') {
+        trailingTags += token.value;
+      } else if (token.type === 'tag') {
+        output += token.value;
+      } else if (replacementIndex < replacements.length) {
+        output += replacements[replacementIndex++];
+      }
+    });
+    if (lastVisible < 0) {
+      output = '';
+      trailingTags = tokens.map(token => token.value).join('');
+    }
+    return output
+      + replacements.slice(replacementIndex).join('')
+      + trailingTags;
+  }
+
+  function replaceRawTitleText(raw, nextTitle) {
+    const value = String(raw ?? '');
+    const lineBreak = /<br\s*\/?\s*>|\r\n?|\n/gi;
+    const lines = [];
+    let lineStart = 0;
+    let match;
+    while ((match = lineBreak.exec(value)) !== null) {
+      lines.push({ start: lineStart, end: match.index });
+      lineStart = match.index + match[0].length;
+    }
+    lines.push({ start: lineStart, end: value.length });
+    if (lines.length === 1) {
+      return nextTitle ? value + '<br>' + nextTitle : value;
+    }
+    let titleLine = null;
+    for (let i = lines.length - 1; i >= 1; i--) {
+      const candidate = value.slice(lines[i].start, lines[i].end);
+      if (editableTextFromRaw(candidate)) {
+        titleLine = lines[i];
+        break;
+      }
+    }
+    titleLine ||= lines[lines.length - 1];
+    return value.slice(0, titleLine.start)
+      + replaceRawVisibleText(
+        value.slice(titleLine.start, titleLine.end),
+        nextTitle,
+      )
+      + value.slice(titleLine.end);
+  }
+
   function updatedRecentHistory(history, entry) {
     const entries = Array.isArray(history) ? history : [];
     return [
@@ -6128,7 +6222,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         if (t.closest('.rgnf-modebar') || t.closest('.rgnf-actions-sec')
             || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
             || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-imposter-sec')
-            || t.closest('.rgnf-scored-sec')
+            || t.closest('.rgnf-scored-sec') || t.closest('.rgnf-raw-text-safe')
             || t.closest('.rgnf-head')) return;
         syncEditableFieldsFromRaw(state.rawCode);
         state.rawCode = null;
@@ -6393,7 +6487,20 @@ _rgnfFab = fab; _rgnfPanel = panel;
     if (state.titleOn) {
       // text input
       secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
-        el('input', { type: 'text', placeholder: 'e.g. RGC FINALIST', value: state.titleText, oninput: (e) => { state.titleText = e.target.value; refreshPreview(); } }),
+        el('input', {
+          class: 'rgnf-raw-text-safe',
+          type: 'text',
+          placeholder: 'e.g. RGC FINALIST',
+          value: state.titleText,
+          oninput: (e) => {
+            const nextTitle = e.target.value;
+            if (typeof state.rawCode === 'string') {
+              state.rawCode = replaceRawTitleText(state.rawCode, nextTitle);
+            }
+            state.titleText = nextTitle;
+            refreshPreview();
+          },
+        }),
       ]));
       // color mode
       const tm = el('div', { class: 'rgnf-row' });
