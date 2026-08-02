@@ -1,0 +1,629 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null
+             && request.auth.token.email in [
+               'underflagfg@gmail.com',
+               'therootedengineer@gmail.com'
+             ];
+    }
+
+    function controlExists() {
+      return exists(/databases/$(database)/documents/admin/blacklist);
+    }
+
+    function control() {
+      return get(/databases/$(database)/documents/admin/blacklist).data;
+    }
+
+    function migrationControlExists() {
+      return exists(/databases/$(database)/documents/admin/migration);
+    }
+
+    function legacyClanWritesEnabled() {
+      return migrationControlExists()
+             && get(/databases/$(database)/documents/admin/migration).data.allowLegacyClanWrites == true;
+    }
+
+    function meetsVersionFloor(versionNum) {
+      return versionNum is number
+             && versionNum >= 16.0
+             && (
+               !controlExists()
+               || !('minVersion' in control())
+               || !(control().minVersion is number)
+               || versionNum >= control().minVersion
+             );
+    }
+
+    function isBlocked(userId, deviceId) {
+      return controlExists()
+             && (
+               (
+                 'userIds' in control()
+                 && control().userIds is list
+                 && userId is string
+                 && userId in control().userIds
+               )
+               || (
+                 'deviceIds' in control()
+                 && control().deviceIds is list
+                 && deviceId is string
+                 && deviceId in control().deviceIds
+               )
+             );
+    }
+
+    function validClientIdentity(userId, deviceId, versionNum) {
+      return userId is string
+             && userId.size() > 0
+             && deviceId is string
+             && deviceId.size() > 0
+             && meetsVersionFloor(versionNum)
+             && !isBlocked(userId, deviceId);
+    }
+
+    function hasFreshWriteStamp(data) {
+      return 'lastWriteAt' in data
+             && data.lastWriteAt == request.time;
+    }
+
+    function validClanName(name) {
+      return name is string
+             && name.size() > 0
+             && name.size() <= 24;
+    }
+
+    function validClanTag(tag) {
+      return tag is string
+             && tag.size() >= 2
+             && tag.size() <= 4
+             && tag.matches('^[A-Z]+$');
+    }
+
+    function validRole(role) {
+      return role in ['leader', 'coleader', 'elder', 'member'];
+    }
+
+    function validJoinRequests(data) {
+      return !('joinRequests' in data)
+             || (
+               data.joinRequests is list
+               && data.joinRequests.size() <= 20
+             );
+    }
+
+    function validClanCore(data) {
+      return validClanName(data.name)
+             && validClanTag(data.tag)
+             && data.normalizedName is string
+             && data.normalizedName.size() > 0
+             && data.nameKey is string
+             && data.nameKey.size() == 64
+             && data.tagKey == data.tag
+             && data.lockVersion == 1
+             && data.members is map
+             && data.memberIds is list
+             && data.memberIds.size() >= 1
+             && data.memberIds.size() <= 5
+             && data.memberIds.size() == data.memberIds.toSet().size()
+             && data.members.keys().toSet() == data.memberIds.toSet()
+             && data.leaderId is string
+             && data.leaderId in data.memberIds
+             && data.members[data.leaderId].role == 'leader'
+             && data.members[data.leaderId].deviceIds is list
+             && data.deviceId is string
+             && data.deviceId in data.members[data.leaderId].deviceIds
+             && data.deviceIds is list
+             && data.deviceIds.size() <= 25
+             && data.deviceIds.size() == data.deviceIds.toSet().size()
+             && validJoinRequests(data)
+             && data.versionNum is number
+             && data.versionNum >= 16.0;
+    }
+
+    function validMembershipLockAfter(clanId, data, index) {
+      return data.memberIds.size() <= index
+             || membershipLockMatches(clanId, data, index);
+    }
+
+    function membershipLockMatches(clanId, data, index) {
+      let lock = getAfter(/databases/$(database)/documents/clan_memberships/$(data.memberIds[index])).data;
+      return lock.clanId == clanId
+             && validRole(lock.role)
+             && lock.role == data.members[data.memberIds[index]].role
+             && lock.deviceIds == data.members[data.memberIds[index]].deviceIds;
+    }
+
+    function validNameAndTagLocksAfter(clanId, data) {
+      let nameLock = getAfter(/databases/$(database)/documents/clan_name_keys/$(data.nameKey)).data;
+      let tagLock = getAfter(/databases/$(database)/documents/clan_tag_keys/$(data.tagKey)).data;
+      return nameLock.clanId == clanId
+             && tagLock.clanId == clanId;
+    }
+
+    function validDirectoryData(clanId, directory, clan) {
+      return directory.clanId == clanId
+             && directory.name == clan.name
+             && directory.tag == clan.tag
+             && directory.leaderId == clan.leaderId
+             && directory.memberCount == clan.memberIds.size()
+             && directory.memberIds == clan.memberIds
+             && directory.deviceIds == clan.deviceIds;
+    }
+
+    function validDirectoryAfter(clanId, data) {
+      let directory = getAfter(/databases/$(database)/documents/clans_directory/$(clanId)).data;
+      return validDirectoryData(clanId, directory, data);
+    }
+
+    function validDirectoryWrite(clanId, directory) {
+      let clan = getAfter(/databases/$(database)/documents/clans/$(clanId)).data;
+      return clanId != 'index'
+             && clan.lockVersion == 1
+             && (
+               !exists(/databases/$(database)/documents/clans/$(clanId))
+               || get(/databases/$(database)/documents/clans/$(clanId)).data != clan
+             );
+    }
+
+    function validClanLocksAfter(clanId, data) {
+      return validNameAndTagLocksAfter(clanId, data)
+             && validMembershipLockAfter(clanId, data, 0)
+             && validMembershipLockAfter(clanId, data, 1)
+             && validMembershipLockAfter(clanId, data, 2)
+             && validMembershipLockAfter(clanId, data, 3)
+             && validMembershipLockAfter(clanId, data, 4)
+             && validDirectoryAfter(clanId, data);
+    }
+
+    function validStrictClanWrite(clanId, data) {
+      return validClanCore(data)
+             && validClientIdentity(data.leaderId, data.deviceId, data.versionNum)
+             && validClanLocksAfter(clanId, data);
+    }
+
+    function validLegacyClanIdentity(data) {
+      return data.leaderId is string
+             && data.leaderId.size() > 0
+             && meetsVersionFloor(data.versionNum)
+             && (
+               (
+                 'deviceId' in data
+                 && data.deviceId is string
+                 && data.deviceId.size() > 0
+                 && !isBlocked(data.leaderId, data.deviceId)
+               )
+               || (
+                 !('deviceId' in data)
+                 && !isBlocked(data.leaderId, '')
+               )
+             );
+    }
+
+    function validLegacyClanWrite(data) {
+      return legacyClanWritesEnabled()
+             && data.members is list
+             && data.members.size() >= 1
+             && data.members.size() <= 5
+             && validClanName(data.name)
+             && validClanTag(data.tag)
+             && validJoinRequests(data)
+             && validLegacyClanIdentity(data);
+    }
+
+    function validDeviceLockAfter(deviceIds, clanId, userId, index) {
+      return deviceIds.size() <= index
+             || deviceLockMatches(deviceIds[index], clanId, userId);
+    }
+
+    function deviceLockMatches(deviceId, clanId, userId) {
+      let lock = getAfter(/databases/$(database)/documents/clan_devices/$(deviceId)).data;
+      return lock.clanId == clanId
+             && lock.userId == userId;
+    }
+
+    function validMembershipWrite(userId) {
+      let data = request.resource.data;
+      let clanPath = /databases/$(database)/documents/clans/$(data.clanId);
+      let clan = getAfter(clanPath).data;
+      return data.clanId is string
+             && data.deviceIds is list
+             && data.deviceIds.size() <= 5
+             && userId in clan.memberIds
+             && clan.members[userId].role == data.role
+             && clan.members[userId].deviceIds == data.deviceIds
+             && validDeviceLockAfter(data.deviceIds, data.clanId, userId, 0)
+             && validDeviceLockAfter(data.deviceIds, data.clanId, userId, 1)
+             && validDeviceLockAfter(data.deviceIds, data.clanId, userId, 2)
+             && validDeviceLockAfter(data.deviceIds, data.clanId, userId, 3)
+             && validDeviceLockAfter(data.deviceIds, data.clanId, userId, 4);
+    }
+
+    function oldMembershipReleased(userId) {
+      let oldClanPath = /databases/$(database)/documents/clans/$(resource.data.clanId);
+      return resource.data.clanId == request.resource.data.clanId
+             || !existsAfter(oldClanPath)
+             || !(userId in getAfter(oldClanPath).data.memberIds);
+    }
+
+    function membershipDeviceReleased(deviceIds, index) {
+      return deviceIds.size() <= index
+             || !existsAfter(/databases/$(database)/documents/clan_devices/$(deviceIds[index]));
+    }
+
+    function validMembershipDelete(userId) {
+      let oldClanPath = /databases/$(database)/documents/clans/$(resource.data.clanId);
+      return resource.data.deviceIds is list
+             && resource.data.deviceIds.size() <= 5
+             && (
+               !existsAfter(oldClanPath)
+               || !(userId in getAfter(oldClanPath).data.memberIds)
+             )
+             && membershipDeviceReleased(resource.data.deviceIds, 0)
+             && membershipDeviceReleased(resource.data.deviceIds, 1)
+             && membershipDeviceReleased(resource.data.deviceIds, 2)
+             && membershipDeviceReleased(resource.data.deviceIds, 3)
+             && membershipDeviceReleased(resource.data.deviceIds, 4);
+    }
+
+    function validDeviceWrite(deviceId) {
+      let data = request.resource.data;
+      let membershipPath = /databases/$(database)/documents/clan_memberships/$(data.userId);
+      let membership = getAfter(membershipPath).data;
+      return data.clanId is string
+             && data.userId is string
+             && membership.clanId == data.clanId
+             && deviceId in membership.deviceIds;
+    }
+
+    function oldDeviceReleased(deviceId) {
+      let oldMembershipPath = /databases/$(database)/documents/clan_memberships/$(resource.data.userId);
+      return (
+               resource.data.clanId == request.resource.data.clanId
+               && resource.data.userId == request.resource.data.userId
+             )
+             || !existsAfter(oldMembershipPath)
+             || !(deviceId in getAfter(oldMembershipPath).data.deviceIds);
+    }
+
+    function validDeviceDelete(deviceId) {
+      let membershipPath = /databases/$(database)/documents/clan_memberships/$(resource.data.userId);
+      return !existsAfter(membershipPath)
+             || !(deviceId in getAfter(membershipPath).data.deviceIds);
+    }
+
+    function validNameLockWrite(key) {
+      let data = request.resource.data;
+      let clanPath = /databases/$(database)/documents/clans/$(data.clanId);
+      let clan = getAfter(clanPath).data;
+      return data.clanId is string
+             && data.normalizedName is string
+             && clan.nameKey == key
+             && clan.normalizedName == data.normalizedName;
+    }
+
+    function oldNameLockReleased(key) {
+      let oldClanPath = /databases/$(database)/documents/clans/$(resource.data.clanId);
+      return resource.data.clanId == request.resource.data.clanId
+             || !existsAfter(oldClanPath)
+             || getAfter(oldClanPath).data.nameKey != key;
+    }
+
+    function validNameLockDelete(key) {
+      let clanPath = /databases/$(database)/documents/clans/$(resource.data.clanId);
+      return !existsAfter(clanPath)
+             || getAfter(clanPath).data.nameKey != key;
+    }
+
+    function validTagLockWrite(key) {
+      let data = request.resource.data;
+      let clanPath = /databases/$(database)/documents/clans/$(data.clanId);
+      let clan = getAfter(clanPath).data;
+      return data.clanId is string
+             && data.tag == key
+             && clan.tagKey == key;
+    }
+
+    function oldTagLockReleased(key) {
+      let oldClanPath = /databases/$(database)/documents/clans/$(resource.data.clanId);
+      return resource.data.clanId == request.resource.data.clanId
+             || !existsAfter(oldClanPath)
+             || getAfter(oldClanPath).data.tagKey != key;
+    }
+
+    function validTagLockDelete(key) {
+      let clanPath = /databases/$(database)/documents/clans/$(resource.data.clanId);
+      return !existsAfter(clanPath)
+             || getAfter(clanPath).data.tagKey != key;
+    }
+
+    function memberLockGone(data, index) {
+      return data.memberIds.size() <= index
+             || !existsAfter(/databases/$(database)/documents/clan_memberships/$(data.memberIds[index]));
+    }
+
+    function validClanDelete(clanId) {
+      let data = resource.data;
+      return data.nameKey is string
+             && data.tagKey is string
+             && data.memberIds is list
+             && data.memberIds.size() <= 5
+             && !existsAfter(/databases/$(database)/documents/clan_name_keys/$(data.nameKey))
+             && !existsAfter(/databases/$(database)/documents/clan_tag_keys/$(data.tagKey))
+             && !existsAfter(/databases/$(database)/documents/clans_directory/$(clanId))
+             && memberLockGone(data, 0)
+             && memberLockGone(data, 1)
+             && memberLockGone(data, 2)
+             && memberLockGone(data, 3)
+             && memberLockGone(data, 4);
+    }
+
+    function validLeaderboardEntry(data) {
+      return data.keys().hasAll([
+               'sourceUserId',
+               'deviceId',
+               'versionNum',
+               'lastWriteAt',
+               'playlist',
+               'name'
+             ])
+             && data.keys().hasOnly([
+               'sourceUserId',
+               'deviceId',
+               'scriptVersion',
+               'versionNum',
+               'lastWriteAt',
+               'playlist',
+               'name',
+               'mmr',
+               'wins',
+               'matches',
+               'flag',
+               'icons',
+               'iconSize',
+               'glowColor',
+               'glowStrength',
+               'updatedAt'
+             ])
+             && data.playlist in ['1v1', '2v2', '3v3', 'wins']
+             && data.name is string
+             && data.name.size() > 0
+             && data.name.size() <= 22
+             && (!('flag' in data) || (
+               data.flag is string
+               && data.flag.size() <= 2048
+             ))
+             && (!('icons' in data) || (
+               (data.icons is string && data.icons.size() <= 10000)
+               || (data.icons is list && data.icons.size() <= 12)
+             ))
+             && (!('iconSize' in data) || (
+               data.iconSize is number
+               && data.iconSize >= 12
+               && data.iconSize <= 50
+             ))
+             && (!('glowColor' in data) || (
+               data.glowColor is string
+               && data.glowColor.matches('^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$')
+             ))
+             && (!('glowStrength' in data) || (
+               data.glowStrength is number
+               && data.glowStrength >= 0
+               && data.glowStrength <= 50
+             ))
+             && (!('updatedAt' in data) || (
+               data.updatedAt is timestamp
+               || (data.updatedAt is string && data.updatedAt.size() <= 64)
+             ))
+             && (
+               data.playlist == 'wins'
+               ? (
+                 data.wins is number
+                 && data.matches is number
+                 && data.wins >= 0
+                 && data.matches >= 0
+                 && data.wins <= data.matches
+                 && data.matches <= 100000
+               )
+               : (
+                 data.mmr is number
+                 && data.mmr >= 0
+                 && data.mmr <= 35000
+               )
+             );
+    }
+
+    function validSubmission(data) {
+      return data.keys().hasAll([
+               'sourceUserId',
+               'deviceId',
+               'versionNum',
+               'lastWriteAt',
+               'nickname',
+               'ratings'
+             ])
+             && data.sourceUserId is string
+             && data.nickname is string
+             && data.nickname.size() > 0
+             && data.nickname.size() <= 500
+             && data.ratings is map
+             && (!('displayName' in data) || (
+               data.displayName is string
+               && data.displayName.size() > 0
+               && data.displayName.size() <= 15
+             ))
+             && (!('xp' in data) || (
+               data.xp is number
+               && data.xp >= 0
+               && data.xp <= 1000000
+             ));
+    }
+
+    match /leaderboard/{docId} {
+      allow read: if true;
+      allow create: if isAdmin()
+                    || (
+                      validLeaderboardEntry(request.resource.data)
+                      && docId == request.resource.data.sourceUserId + '_' + request.resource.data.playlist
+                      && validClientIdentity(
+                        request.resource.data.sourceUserId,
+                        request.resource.data.deviceId,
+                        request.resource.data.versionNum
+                      )
+                      && hasFreshWriteStamp(request.resource.data)
+                      && exists(/databases/$(database)/documents/script_submissions/$(request.resource.data.sourceUserId))
+                    );
+      allow update: if isAdmin()
+                    || (
+                      resource.data.sourceUserId == request.resource.data.sourceUserId
+                      && resource.data.playlist == request.resource.data.playlist
+                      && validLeaderboardEntry(request.resource.data)
+                      && docId == request.resource.data.sourceUserId + '_' + request.resource.data.playlist
+                      && validClientIdentity(
+                        request.resource.data.sourceUserId,
+                        request.resource.data.deviceId,
+                        request.resource.data.versionNum
+                      )
+                      && hasFreshWriteStamp(request.resource.data)
+                      && exists(/databases/$(database)/documents/script_submissions/$(request.resource.data.sourceUserId))
+                    );
+      allow delete: if isAdmin();
+    }
+
+    match /script_submissions/{sourceUserId} {
+      allow read: if true;
+      allow create, update: if validSubmission(request.resource.data)
+                            && sourceUserId == request.resource.data.sourceUserId
+                            && validClientIdentity(
+                              request.resource.data.sourceUserId,
+                              request.resource.data.deviceId,
+                              request.resource.data.versionNum
+                            )
+                            && hasFreshWriteStamp(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /iconKey/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /atlas_config/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /events/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /clans/{clanId} {
+      allow read: if true;
+      allow create: if isAdmin()
+                    || validStrictClanWrite(clanId, request.resource.data);
+      allow update: if isAdmin()
+                    || (
+                      validStrictClanWrite(clanId, request.resource.data)
+                      && (
+                        !('lockVersion' in resource.data)
+                        || resource.data.nameKey == request.resource.data.nameKey
+                           || validNameLockDelete(resource.data.nameKey)
+                      )
+                      && (
+                        !('lockVersion' in resource.data)
+                        || resource.data.tagKey == request.resource.data.tagKey
+                           || validTagLockDelete(resource.data.tagKey)
+                      )
+                    )
+                    || (
+                      !('lockVersion' in resource.data)
+                      && !('lockVersion' in request.resource.data)
+                      && validLegacyClanWrite(request.resource.data)
+                    );
+      allow delete: if isAdmin() && validClanDelete(clanId);
+    }
+
+    match /clans_directory/{docId} {
+      allow read: if true;
+      allow create, update: if isAdmin()
+                            || validDirectoryWrite(
+                              docId,
+                              request.resource.data
+                            );
+      allow delete: if isAdmin()
+                    && docId != 'index'
+                    && !existsAfter(/databases/$(database)/documents/clans/$(docId));
+    }
+
+    match /clan_name_keys/{key} {
+      allow read: if true;
+      allow create: if validNameLockWrite(key);
+      allow update: if validNameLockWrite(key)
+                    && oldNameLockReleased(key);
+      allow delete: if validNameLockDelete(key);
+    }
+
+    match /clan_tag_keys/{key} {
+      allow read: if true;
+      allow create: if validTagLockWrite(key);
+      allow update: if validTagLockWrite(key)
+                    && oldTagLockReleased(key);
+      allow delete: if validTagLockDelete(key);
+    }
+
+    match /clan_memberships/{userId} {
+      allow read: if true;
+      allow create: if validMembershipWrite(userId);
+      allow update: if validMembershipWrite(userId)
+                    && oldMembershipReleased(userId);
+      allow delete: if validMembershipDelete(userId);
+    }
+
+    match /clan_devices/{deviceId} {
+      allow read: if true;
+      allow create: if validDeviceWrite(deviceId);
+      allow update: if validDeviceWrite(deviceId)
+                    && oldDeviceReleased(deviceId);
+      allow delete: if validDeviceDelete(deviceId);
+    }
+
+    match /clan_notices/{userId} {
+      allow read, delete: if true;
+      allow create, update: if isAdmin()
+                            || (
+                              request.resource.data.type == 'kicked'
+                              && validClientIdentity(
+                                request.resource.data.sourceUserId,
+                                request.resource.data.deviceId,
+                                request.resource.data.versionNum
+                              )
+                            );
+    }
+
+    match /admin/blacklist {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /admin/clanPerms {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /admin/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /match_audits/{docId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

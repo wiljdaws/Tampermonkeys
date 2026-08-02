@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "containsProductionValues": false,
+    "scenario": "Sanitized established-clan and newer-test-clan device conflict"
+  },
+  "clans": [
+    {
+      "id": "clan-established",
+      "name": "Established Clan",
+      "tag": "EST",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "leaderId": "player-established",
+      "members": [
+        {
+          "userId": "player-established",
+          "name": "Established Player",
+          "role": "leader",
+          "mmr": 4200,
+          "deviceIds": [
+            "device-shared"
+          ]
+        }
+      ],
+      "eventBaseline": {
+        "player-established": 4000
+      },
+      "totalMMR": 4200
+    },
+    {
+      "id": "clan-newer-test",
+      "name": "Newer Test Clan",
+      "tag": "TST",
+      "createdAt": "2026-07-31T00:00:00.000Z",
+      "leaderId": "player-test",
+      "members": [
+        {
+          "userId": "player-test",
+          "name": "Test Player",
+          "role": "leader",
+          "mmr": 1200,
+          "deviceIds": [
+            "device-shared"
+          ]
+        }
+      ],
+      "eventBaseline": {
+        "player-test": 1000
+      },
+      "totalMMR": 1200
+    }
+  ]
+}
