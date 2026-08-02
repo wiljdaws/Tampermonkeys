@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      15.1-dev
+// @version      15.2-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -349,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5027,6 +5027,12 @@
     match = value.match(/<sub><size=25%>\s*$/i);
     if (match) {
       return { rawCode: value.slice(0, match.index), scoredMode: 'tiny' };
+    }
+    // Older custom names hid "Scored!" by stacking many empty <sub> tags.
+    // That shrinks/moves the text but keeps its width, shifting centered titles.
+    match = value.match(/(?:\s*<sub>){4,}\s*$/i);
+    if (match) {
+      return { rawCode: value.slice(0, match.index), scoredMode: 'hide' };
     }
     match = value.match(/<size=(\d+)%><(#[0-9a-f]{6})>\s*$/i);
     if (match) {
