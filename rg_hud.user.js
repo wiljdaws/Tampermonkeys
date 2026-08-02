@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      14.8
+// @version      14.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -349,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -4208,7 +4208,7 @@
         }
     }
 
-    // show + clear any pending kick notice
+    // Show a clan notice once, then clear it.
     async function checkClanNotices() {
         const fb = await initFirebase();
         if (!fb) return;
@@ -4221,16 +4221,23 @@
                 const n = snap.data();
                 if (n.type === "kicked") {
                     const extra = n.message ? `  Message: "${n.message}"` : "";
-                    showDialog({
+                    await showDialog({
                         message: `You were removed from clan "${n.clanName}".${extra}`,
                         okLabel: "OK",
                         cancelLabel: "Dismiss",
+                    });
+                } else if (n.type === "admin_disbanded") {
+                    const extra = n.message ? `  Message: "${n.message}"` : "";
+                    await showDialog({
+                        message: `An ATLAS admin disbanded clan "${n.clanName}".${extra}`,
+                        okLabel: "OK",
+                        cancelLabel: "Close",
                     });
                 }
                 await fb.deleteDoc(ref);
             }
         } catch (e) {
-            // notices are best-effort, don't spam the user
+            // Notices should never block the rest of ATLAS.
             dbg("checkClanNotices failed (non-fatal): " + (e && e.message ? e.message : e));
         }
     }
