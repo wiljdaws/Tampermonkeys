@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      16.0
+// @version      16.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -361,7 +361,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1638,11 +1638,27 @@
         return false;
     }
 
+    function atlasStampedMutationData(ref, data) {
+        const path = String(ref?.path || "");
+        if (!/^clans\/[^/]+$/.test(path)
+            || !data
+            || typeof data !== "object"
+            || Array.isArray(data)) {
+            return data;
+        }
+        return {
+            ...data,
+            scriptVersion: SCRIPT_VERSION,
+            versionNum: SCRIPT_VERSION_NUM,
+        };
+    }
+
     async function atlasSetDoc(fb, label, ref, data, options) {
         if (!(await atlasMutationAllowed(fb, label))) return false;
         logWrite(label);
-        if (options === undefined) await fb.setDoc(ref, data);
-        else await fb.setDoc(ref, data, options);
+        const stamped = atlasStampedMutationData(ref, data);
+        if (options === undefined) await fb.setDoc(ref, stamped);
+        else await fb.setDoc(ref, stamped, options);
         return true;
     }
 
@@ -1662,13 +1678,21 @@
                     logRead(ref?.path || `${label} transaction`);
                     return snapshot;
                 },
-                set: (...args) => {
+                set: (ref, data, ...args) => {
                     logWrite(label);
-                    return transaction.set(...args);
+                    return transaction.set(
+                        ref,
+                        atlasStampedMutationData(ref, data),
+                        ...args
+                    );
                 },
-                update: (...args) => {
+                update: (ref, data, ...args) => {
                     logWrite(label);
-                    return transaction.update(...args);
+                    return transaction.update(
+                        ref,
+                        atlasStampedMutationData(ref, data),
+                        ...args
+                    );
                 },
                 delete: (...args) => {
                     logWrite(label);

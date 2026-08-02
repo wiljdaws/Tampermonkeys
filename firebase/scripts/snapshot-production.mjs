@@ -187,12 +187,18 @@ function safeApiError(status, body) {
   return new Error(`Google API request failed (${status}): ${message}`);
 }
 
-async function getJson(fetchImpl, token, url, { missingIsNull = false } = {}) {
+async function getJson(
+  fetchImpl,
+  token,
+  url,
+  { missingIsNull = false, quotaProject = "" } = {},
+) {
   const response = await fetchImpl(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
+      ...(quotaProject ? { "X-Goog-User-Project": quotaProject } : {}),
     },
     redirect: "error",
   });
@@ -212,7 +218,7 @@ async function fetchDocument(fetchImpl, token, project, documentPath) {
     fetchImpl,
     token,
     `${firestoreDocumentsBase(project)}/${documentPath}`,
-    { missingIsNull: true },
+    { missingIsNull: true, quotaProject: project },
   );
   return body ? decodeFirestoreDocument(body) : null;
 }
@@ -227,7 +233,9 @@ async function fetchCollection(fetchImpl, token, project, collectionPath) {
     url.searchParams.set("pageSize", "1000");
     url.searchParams.set("orderBy", "__name__");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const body = await getJson(fetchImpl, token, url);
+    const body = await getJson(fetchImpl, token, url, {
+      quotaProject: project,
+    });
     documents.push(
       ...(body.documents || []).map(document => decodeFirestoreDocument(document)),
     );
@@ -240,7 +248,9 @@ async function fetchRulesMetadata(fetchImpl, token, project) {
   try {
     const releasesUrl =
       `https://firebaserules.googleapis.com/v1/projects/${encodeURIComponent(project)}/releases?pageSize=100`;
-    const releases = await getJson(fetchImpl, token, releasesUrl);
+    const releases = await getJson(fetchImpl, token, releasesUrl, {
+      quotaProject: project,
+    });
     const release = (releases.releases || []).find(candidate =>
       candidate.name?.endsWith("/releases/cloud.firestore"));
     if (!release?.rulesetName) {
@@ -253,6 +263,7 @@ async function fetchRulesMetadata(fetchImpl, token, project) {
       fetchImpl,
       token,
       `https://firebaserules.googleapis.com/v1/${release.rulesetName}`,
+      { quotaProject: project },
     );
     return {
       captured: true,
@@ -275,9 +286,10 @@ async function fetchIndexMetadata(fetchImpl, token, project) {
       const url = new URL(
         `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(project)}/databases/(default)/collectionGroups/-/indexes`,
       );
-      url.searchParams.set("pageSize", "200");
       if (pageToken) url.searchParams.set("pageToken", pageToken);
-      const body = await getJson(fetchImpl, token, url);
+      const body = await getJson(fetchImpl, token, url, {
+        quotaProject: project,
+      });
       indexes.push(...(body.indexes || []));
       pageToken = body.nextPageToken || "";
     } while (pageToken);

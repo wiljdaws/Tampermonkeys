@@ -74,7 +74,7 @@ check keeps name, tag, member, device, and directory parity within Firestore's
 rule access limits.
 
 Legacy clan documents stay readable. While the compatibility flag is true,
-ATLAS 16.0 can update an unmigrated legacy document. A document with
+ATLAS 16.1 can update an unmigrated legacy document. A document with
 `lockVersion: 1` can never be changed back to the legacy shape.
 
 ## Read-only production snapshot
@@ -204,9 +204,9 @@ skips already verified writes and resumes the remaining batches.
 Use `INCIDENT_RELEASE_RUNBOOK.md` for the approval gates and command checklist.
 
 1. Capture current standings and the full rollback snapshot in two places.
-2. Deploy compatibility-capable ATLAS 16.0 and both websites. Keep clan
+2. Deploy compatibility-capable ATLAS 16.1 and both websites. Keep clan
    reservations off.
-3. Verify the 16.0 update URL and both websites. This approved forced rollout
+3. Verify the 16.1 update URL and both websites. This approved forced rollout
    uses the final rules and `minVersion` instead of waiting for passive
    adoption.
 4. Set `admin/migration.allowLegacyClanWrites` to `true`.
@@ -223,7 +223,7 @@ Use `INCIDENT_RELEASE_RUNBOOK.md` for the approval gates and command checklist.
 11. Deploy `firestore.indexes.json`, including `playlist + wins DESC`, and wait
     until the index is ready.
 12. Deploy the reviewed `firestore.rules`.
-13. Enable clan reservations, set `admin/blacklist.minVersion` to `16.0`, and
+13. Enable clan reservations, set `admin/blacklist.minVersion` to `16.1`, and
     set `admin/migration.allowLegacyClanWrites` to `false`.
 14. Smoke-test leaderboard sync, clan create, join, approve, rename, role
     change, leave, kick, and authenticated admin disband.
@@ -237,7 +237,7 @@ Use `INCIDENT_RELEASE_RUNBOOK.md` for the approval gates and command checklist.
 3. Restore the reviewed pre-rollout rules and indexes from version control and
    the snapshot metadata.
 4. Restore the previous `admin/blacklist.minVersion`.
-5. Set `admin/migration.allowLegacyClanWrites` to `true` only if ATLAS 16.0
+5. Set `admin/migration.allowLegacyClanWrites` to `true` only if ATLAS 16.1
    compatibility writes are needed during rollback.
 6. Keep new lock and directory documents. Do not mass-delete them.
 7. Restore data only from the verified pre-change snapshot with a separately
