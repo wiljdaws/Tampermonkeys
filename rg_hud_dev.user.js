@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.9-dev
+// @version      14.10-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -5013,6 +5013,11 @@
     state.titleText = fields.titleText;
   }
 
+  function loadStateSnapshot(snapshot) {
+    state = Object.assign(defaultState(), snapshot || {});
+    if (state.rawCode) syncEditableFieldsFromRaw(state.rawCode);
+  }
+
   function setRawSnapshot(raw) {
     state.rawCode = String(raw ?? "");
     syncEditableFieldsFromRaw(state.rawCode);
@@ -6464,7 +6469,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
           const row = el('div', { class: 'rgnf-preset' });
           row.style.marginLeft = '10px';
           row.appendChild(el('span', { text: p.label }));
-          row.appendChild(el('button', { class: 'rgnf-chip', text: 'Load', onclick: () => { state = Object.assign(defaultState(), p.state); render(panel); } }));
+          row.appendChild(el('button', {
+            class: 'rgnf-chip',
+            text: 'Load',
+            onclick: () => {
+              loadStateSnapshot(p.state);
+              render(panel);
+            },
+          }));
           row.appendChild(el('button', {
             class: 'rgnf-chip', text: '📁', title: 'Move to folder',
             onclick: () => {
@@ -6804,8 +6816,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           if (prevId === userId) return;
           const perUser = loadJSON(stateKey(), null);
           if (perUser) {
-            state = Object.assign(defaultState(), perUser);
-            if (state.rawCode) syncEditableFieldsFromRaw(state.rawCode);
+            loadStateSnapshot(perUser);
           } else {
             // fresh seed: the whole current in-game name as a raw snapshot.
             // first styling edit clears it and rebuilds from state.name.
