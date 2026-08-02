@@ -16,6 +16,7 @@ import {
   decodeFirestoreDocument,
   parseSnapshotArguments,
   runSnapshotCommand,
+  SNAPSHOT_TARGETS,
   snapshotsDirectory,
 } from "../scripts/snapshot-production.mjs";
 import {
@@ -115,6 +116,14 @@ function baselineSnapshot() {
       "device-a",
       { clanId: "clan-a", userId: "player-a" },
     ]]),
+    clan_notices: collection("clan_notices", [[
+      "player-a",
+      {
+        type: "kicked",
+        clanId: "clan-old",
+        clanName: "Old Clan",
+      },
+    ]]),
     leaderboard: collection("leaderboard", [[
       "player-a_3v3",
       {
@@ -153,6 +162,10 @@ function baselineSnapshot() {
 }
 
 test("snapshot arguments require a project and reject mutation flags", () => {
+  assert.ok(SNAPSHOT_TARGETS.some(target =>
+    target.key === "clan_notices"
+    && target.kind === "collection"
+    && target.path === "clan_notices"));
   assert.deepEqual(parseSnapshotArguments([]), { help: true });
   assert.deepEqual(parseSnapshotArguments(["--help"]), { help: true });
   assert.deepEqual(
@@ -367,7 +380,7 @@ test("snapshot capture uses GET and writes only to ignored snapshots", async () 
       now,
     });
     assert.equal(result.outputDirectory, expectedDirectory);
-    assert.ok(requests.length >= 13);
+    assert.ok(requests.length >= 14);
     assert.ok(requests.every(request => request.options.method === "GET"));
     assert.ok(requests.every(
       request =>
@@ -385,6 +398,7 @@ test("snapshot capture uses GET and writes only to ignored snapshots", async () 
     assert.doesNotMatch(snapshotText, /secret-test-token/);
     assert.equal(result.manifest.collectionCounts["events/current"], 1);
     assert.equal(result.manifest.collectionCounts["admin/blacklist"], 1);
+    assert.equal(result.manifest.collectionCounts.clan_notices, 0);
   } finally {
     await rm(expectedDirectory, { recursive: true, force: true });
   }

@@ -34,6 +34,7 @@ export const SNAPSHOT_TARGETS = [
   { key: "clan_tag_keys", kind: "collection", path: "clan_tag_keys" },
   { key: "clan_memberships", kind: "collection", path: "clan_memberships" },
   { key: "clan_devices", kind: "collection", path: "clan_devices" },
+  { key: "clan_notices", kind: "collection", path: "clan_notices" },
   { key: "leaderboard", kind: "collection", path: "leaderboard" },
   { key: "iconKey", kind: "collection", path: "iconKey" },
   {

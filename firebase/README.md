@@ -1,13 +1,14 @@
 # ATLAS Firebase workspace
 
 This folder contains the Firestore rules, indexes, emulator tests, snapshots,
-and ATLAS 16.0 migration tools for `rgleaderboard`.
+ATLAS 16.0 migration tools, and the approved ATLAS 16.1 bridge planner.
 
 ## Safety
 
 - The default Firebase project is `demo-rgleaderboard`.
 - Tests use the local Firestore emulator.
 - `plan:migrations` reads local JSON only.
+- `plan:rollout-bridge` reads one local snapshot and writes one local plan.
 - `apply:migrations` is a local dry run unless `--apply` and every production
   gate are present.
 - Snapshot output, plans, approvals, and checkpoints are ignored by Git.
@@ -93,8 +94,10 @@ npm run snapshot:production -- --project rgleaderboard
 ```
 
 The command gets a token from `gcloud auth print-access-token`, sends only GET
-requests, and writes a private folder under `.snapshots/`. The manifest records
-SHA-256 hashes, byte sizes, document counts, rules metadata, and index metadata.
+requests, and writes a private folder under `.snapshots/`. The snapshot includes
+current clan notices so a bridge plan can use exact overwrite or missing
+preconditions. The manifest records SHA-256 hashes, byte sizes, document counts,
+rules metadata, and index metadata.
 
 Compare pre- and post-change snapshots locally:
 
@@ -136,6 +139,57 @@ The planner:
 
 The sanitized device-conflict fixture represents the audited established-clan
 versus newer-test-clan case without storing production names or IDs.
+
+## Build the approved ATLAS 16.1 bridge plan
+
+This planner is only for the approved bridge: keep the established clan,
+disband the newer one-member test clan, leave the newer leaderboard duplicate
+for later, keep reservations off, enable legacy writes, freeze structural clan
+actions, and require ATLAS 16.1. Do not put a real clan ID or name in version
+control.
+
+The default and help commands are offline:
+
+```bash
+npm run plan:rollout-bridge
+npm run plan:rollout-bridge -- --help
+```
+
+Use one fresh local snapshot and all required arguments:
+
+```bash
+mkdir -p .migration-plans .migration-approvals
+npm run plan:rollout-bridge -- \
+  --snapshot .snapshots/<fresh-snapshot>/snapshot.json \
+  --disband-clan-id '<approved-newer-test-clan-id>' \
+  --expect-clan-name '<exact-approved-clan-name>' \
+  --min-version 16.1 \
+  --output .migration-plans/atlas-16.1-bridge.json
+
+shasum -a 256 .migration-plans/atlas-16.1-bridge.json
+npm run apply:migrations -- \
+  --plan .migration-plans/atlas-16.1-bridge.json
+```
+
+The last command is the offline dry run. Review the exact hash, `summary`,
+`rollbackValues`, every precondition, and every ID in
+`approval.operationIds`. Confirm `leaderboardOperations` and
+`otherClanOperations` are both zero.
+
+Create `.migration-approvals/atlas-16.1-bridge.json` locally. Copy every ID
+from `approval.operationIds`; omitting any one blocks apply:
+
+```json
+{
+  "schemaVersion": 1,
+  "project": "rgleaderboard",
+  "planSha256": "<exact-64-character-plan-hash>",
+  "approvedOperationIds": [
+    "<every-operation-id-from-the-reviewed-plan>"
+  ],
+  "conflictResolutions": []
+}
+```
 
 ## Approvals file
 
@@ -199,36 +253,42 @@ write, each commit uses the current server update time, and every batch is read
 back. Completed operation IDs are saved under `.migration-state/`. A retry
 skips already verified writes and resumes the remaining batches.
 
-## Exact rollout
+## Exact approved bridge rollout
 
 Use `INCIDENT_RELEASE_RUNBOOK.md` for the approval gates and command checklist.
 
-1. Capture current standings and the full rollback snapshot in two places.
-2. Deploy compatibility-capable ATLAS 16.1 and both websites. Keep clan
-   reservations off.
-3. Verify the 16.1 update URL and both websites. This approved forced rollout
-   uses the final rules and `minVersion` instead of waiting for passive
-   adoption.
-4. Set `admin/migration.allowLegacyClanWrites` to `true`.
-5. Freeze create, rename, join, approve, kick, leave, transfer, and disband.
-6. Take a fresh snapshot and copy it to a second protected location.
-7. Generate the plan, record its exact hash, and review conflicts, blockers,
-   destructive paths, rules, indexes, and expected operation counts.
-8. Create the separate approvals file. Do not approve unresolved clan ownership
-   or missing-device cases.
-9. Run the gated apply command once. If interrupted, rerun the same command
-   with the same plan, hash, and approvals.
-10. Take a second snapshot and run `verify:baseline`. Require exact clan roster,
-    scoring, baseline, directory, and lock parity.
-11. Deploy `firestore.indexes.json`, including `playlist + wins DESC`, and wait
-    until the index is ready.
-12. Deploy the reviewed `firestore.rules`.
-13. Enable clan reservations, set `admin/blacklist.minVersion` to `16.1`, and
-    set `admin/migration.allowLegacyClanWrites` to `false`.
-14. Smoke-test leaderboard sync, clan create, join, approve, rename, role
-    change, leave, kick, and authenticated admin disband.
-15. Unfreeze structural actions and monitor failures and operation counts for
-    one hour and 24 hours.
+1. Publish and verify ATLAS 16.1 and both websites.
+2. Capture a fresh rollback snapshot in two places. It must include
+   `clan_notices`.
+3. Generate the bridge plan with the exact approved clan ID and name. Record
+   the hash and run the offline apply dry run.
+4. Review every destructive operation, precondition, rollback value, and
+   approval ID. The plan must not touch leaderboard rows or another clan.
+5. Create the local approvals file with the exact plan hash and every operation
+   ID.
+6. **APPROVAL-GATED LIVE ACTION:** deploy the tested compatibility rules.
+7. Run the gated apply command:
+
+```bash
+npm run apply:migrations -- \
+  --plan .migration-plans/atlas-16.1-bridge.json \
+  --apply \
+  --project rgleaderboard \
+  --confirm-project rgleaderboard \
+  --approved-plan-sha256 <exact-plan-hash> \
+  --approvals .migration-approvals/atlas-16.1-bridge.json
+```
+
+8. Take a read-only post-bridge snapshot. Verify the control documents, frozen
+   structural permissions, notices, legacy directory, and one approved clan
+   deletion. Confirm leaderboard rows and every other clan are unchanged.
+9. Keep `useClanReservations=false`, all structural actions frozen,
+   `allowLegacyClanWrites=true`, and `minVersion=16.1`.
+
+The final data migration remains blocked until members with missing device
+identities open ATLAS 16.1 and self-link. Do not enable reservations, disable
+legacy writes, unfreeze structural actions, or run the ATLAS 16.0 data
+migration before those devices are present in a fresh snapshot.
 
 ## Exact rollback
 
