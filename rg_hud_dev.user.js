@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.13-dev
+// @version      15.0-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -349,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5009,6 +5009,67 @@
     };
   }
 
+  function scoredSuffix(s) {
+    switch (s.scoredMode) {
+      case 'hide': return '<size=0>';
+      case 'tiny': return '<sub><size=25%>';
+      case 'styled': return `<size=${s.scoredSizePct}%><${s.scoredColor.toUpperCase()}>`;
+      default: return '';
+    }
+  }
+
+  function splitRawScoredSuffix(raw) {
+    const value = String(raw ?? '');
+    let match = value.match(/<size=0>\s*$/i);
+    if (match) {
+      return { rawCode: value.slice(0, match.index), scoredMode: 'hide' };
+    }
+    match = value.match(/<sub><size=25%>\s*$/i);
+    if (match) {
+      return { rawCode: value.slice(0, match.index), scoredMode: 'tiny' };
+    }
+    match = value.match(/<size=(\d+)%><(#[0-9a-f]{6})>\s*$/i);
+    if (match) {
+      return {
+        rawCode: value.slice(0, match.index),
+        scoredMode: 'styled',
+        scoredSizePct: Number(match[1]),
+        scoredColor: match[2],
+      };
+    }
+    return { rawCode: value, scoredMode: 'default' };
+  }
+
+  function rawSnapshotFields(raw) {
+    const scored = splitRawScoredSuffix(raw);
+    return {
+      rawCode: scored.rawCode,
+      ...editableFieldsFromRaw(scored.rawCode),
+      colorMode: 'none',
+      solidAlpha: 255,
+      bold: false,
+      italic: false,
+      underline: false,
+      strike: false,
+      sizePct: 100,
+      rotateDeg: 0,
+      waveOn: false,
+      markOn: false,
+      titleColorMode: 'inherit',
+      titleSizePct: 100,
+      titleSub: false,
+      titlePaletteKey: null,
+      titleBold: false,
+      titleItalic: false,
+      titleUnderline: false,
+      titleStrike: false,
+      titleAlpha: 255,
+      scoredMode: scored.scoredMode,
+      ...(scored.scoredSizePct ? { scoredSizePct: scored.scoredSizePct } : {}),
+      ...(scored.scoredColor ? { scoredColor: scored.scoredColor } : {}),
+    };
+  }
+
   function updatedRecentHistory(history, entry) {
     const entries = Array.isArray(history) ? history : [];
     return [
@@ -5042,17 +5103,16 @@
 
   function loadStateSnapshot(snapshot) {
     state = Object.assign(defaultState(), snapshot || {});
-    if (state.rawCode) syncEditableFieldsFromRaw(state.rawCode);
+    if (state.rawCode) setRawSnapshot(state.rawCode);
   }
 
   function setRawSnapshot(raw) {
-    state.rawCode = String(raw ?? "");
-    syncEditableFieldsFromRaw(state.rawCode);
+    Object.assign(state, rawSnapshotFields(raw));
   }
 
   // Repair a persisted pre-fix state before the first render.
   if (state.rawCode) {
-    syncEditableFieldsFromRaw(state.rawCode);
+    setRawSnapshot(state.rawCode);
     saveJSON(stateKey(), state);
   }
 
@@ -5225,15 +5285,17 @@
       code += '<br>' + tOpen + t + tClose;
     }
 
-    // trailing tags to style whatever "Scored!" text the game appends
-    switch (s.scoredMode) {
-      case 'hide': code += '<size=0>'; break;
-      case 'tiny': code += '<sub><size=25%>'; break;
-      case 'styled': code += `<size=${s.scoredSizePct}%><${s.scoredColor.toUpperCase()}>`; break;
-      default: break;
-    }
+    // trailing tags style whatever "Scored!" text the game appends.
+    code += scoredSuffix(s);
 
     return code;
+  }
+
+  function effectiveForgeCode(s) {
+    if (typeof s.rawCode === 'string') {
+      return s.rawCode + scoredSuffix(s);
+    }
+    return buildCode(s);
   }
 
   // ------------------------------------------------------------------
@@ -5973,7 +6035,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if ((m = rest.match(/^<\/i>/i))) { st.italic = false; i += m[0].length; continue; }
       if ((m = rest.match(/^<sub>/i)))   { st.sub = true;  i += m[0].length; continue; }
       if ((m = rest.match(/^<\/sub>/i))) { st.sub = false; i += m[0].length; continue; }
-      if ((m = rest.match(/^<size=(\d+)%?>/i))) { st.sizePct = Number(m[1]) || 100; i += m[0].length; continue; }
+      if ((m = rest.match(/^<size=(\d+)%?>/i))) {
+        const parsedSize = Number(m[1]);
+        st.sizePct = Number.isFinite(parsedSize) ? parsedSize : 100;
+        i += m[0].length;
+        continue;
+      }
       if ((m = rest.match(/^<\/size>/i))) { st.sizePct = 100; i += m[0].length; continue; }
       if ((m = rest.match(/^<rotate=(-?\d+)>/i))) { st.rotate = Number(m[1]) || 0; i += m[0].length; continue; }
       if ((m = rest.match(/^<mark=(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)>/i))) { st.mark = m[1]; i += m[0].length; continue; }
@@ -5993,8 +6060,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if (st.mark) span.style.background = st.mark;
       let size = 18 * (st.sizePct / 100);
       if (st.sub) { size *= 0.65; span.style.verticalAlign = 'sub'; }
-      span.style.fontSize = Math.max(7, size) + 'px';
-      if (st.rotate) { span.style.display = 'inline-block'; span.style.transform = 'rotate(' + st.rotate + 'deg)'; }
+      if (st.sizePct <= 0) {
+        span.style.display = 'none';
+      } else {
+        span.style.fontSize = Math.max(7, size) + 'px';
+        if (st.rotate) { span.style.display = 'inline-block'; span.style.transform = 'rotate(' + st.rotate + 'deg)'; }
+      }
       line.appendChild(span);
       i++;
     }
@@ -6046,6 +6117,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         if (t.closest('.rgnf-modebar') || t.closest('.rgnf-actions-sec')
             || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
             || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-imposter-sec')
+            || t.closest('.rgnf-scored-sec')
             || t.closest('.rgnf-head')) return;
         syncEditableFieldsFromRaw(state.rawCode);
         state.rawCode = null;
@@ -6095,8 +6167,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
       // capturing text as rawCode flips us into raw mode (refreshPreview keys off it)
       setRawSnapshot(rawEdit.value);
       const rawPfx = _prefix();
-      pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
-      charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
+      const rawEffective = rawPfx + effectiveForgeCode(state);
+      pv.replaceChildren(renderRawTMP(rawEffective + ' Scored!'));
+      charSpan.textContent = `${rawEffective.length} chars`;
       const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
       letterSpan.textContent = `${[...plainLetters].length} letters`;
       saveJSON(stateKey(), state);
@@ -6114,10 +6187,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
         // clan-tag prefix applies in raw mode too. old hardcoded tags in the raw
         // name will preview doubled, fix by deleting them in the textarea.
         const rawPfx = _prefix();
-        pv.replaceChildren(renderRawTMP(rawPfx + state.rawCode));
+        const rawEffective = rawPfx + effectiveForgeCode(state);
+        pv.replaceChildren(renderRawTMP(rawEffective + ' Scored!'));
         if (rawEdit.value !== state.rawCode) rawEdit.value = state.rawCode;
         autosizeRawEdit();
-        charSpan.textContent = `${(rawPfx + state.rawCode).length} chars`;
+        charSpan.textContent = `${rawEffective.length} chars`;
         const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
         letterSpan.textContent = `${[...plainLetters].length} letters`;
         saveJSON(stateKey(), state);
@@ -6396,7 +6470,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     panel.appendChild(secTitle);
 
     // ---- Scored! ----
-    const secScored = el('div', { class: 'rgnf-sec' });
+    const secScored = el('div', { class: 'rgnf-sec rgnf-scored-sec' });
     secScored.appendChild(el('h4', { text: '"Scored!" text' }));
     const sRow = el('div', { class: 'rgnf-row' });
     [['default', 'Default'], ['hide', 'Hide'], ['tiny', 'Tiny'], ['styled', 'Styled']].forEach(([v, label]) => {
@@ -6723,9 +6797,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
         statusLine.className = 'rgnf-status';
         statusLine.textContent = '';
         try {
-          const codeApplied = _prefix() + (state.rawCode ? state.rawCode : buildCode(state));
+          const unprefixedCode = effectiveForgeCode(state);
+          const codeApplied = _prefix() + unprefixedCode;
           // reset target is unprefixed, checkbox owns the tag (double-tag fix)
-          _lastRawNickname = state.rawCode ? state.rawCode : buildCode(state);
+          _lastRawNickname = unprefixedCode;
           const result = await applyNicknameStable(codeApplied, _lastRawNickname);
           if (result.ok) {
             recordRecentApply(codeApplied, _lastRawNickname);
@@ -6752,7 +6827,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       class: 'rgnf-btn rgnf-btn-ghost', text: 'Copy code',
       onclick: async () => {
         try {
-          await navigator.clipboard.writeText(_prefix() + (state.rawCode ? state.rawCode : buildCode(state)));
+          await navigator.clipboard.writeText(_prefix() + effectiveForgeCode(state));
           copyBtn.textContent = 'Copied ✓';
           setTimeout(() => { copyBtn.textContent = 'Copy code'; }, 1200);
         } catch (e) {
