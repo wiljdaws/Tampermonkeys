@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      15.5-dev
+// @version      15.6-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -349,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2522,21 +2522,65 @@
         }
     }
 
+    // Current clients keep per-player MMR in a map that legacy whole-array
+    // writes do not touch. Prefer whichever representation has the newer
+    // timestamp so downgrades and mixed-version clans remain compatible.
+    function effectiveClanMemberStat(clan, memberOrUid) {
+        const member = typeof memberOrUid === "string"
+            ? (clan?.members ?? []).find(m => m.userId === memberOrUid)
+            : memberOrUid;
+        const uid = typeof memberOrUid === "string" ? memberOrUid : member?.userId;
+        const mapped = uid ? clan?.memberStats?.[uid] : null;
+        const legacyValid = typeof member?.mmr === "number";
+        const mappedValid = typeof mapped?.mmr === "number";
+        if (!mappedValid) {
+            return {
+                mmr: legacyValid ? member.mmr : null,
+                syncedAt: typeof member?.syncedAt === "number" ? member.syncedAt : null,
+            };
+        }
+        const mappedAt = typeof mapped.syncedAt === "number" ? mapped.syncedAt : 0;
+        const legacyAt = typeof member?.syncedAt === "number" ? member.syncedAt : 0;
+        if (!legacyValid || mappedAt >= legacyAt) {
+            return { mmr: mapped.mmr, syncedAt: mappedAt || null };
+        }
+        return { mmr: member.mmr, syncedAt: legacyAt || null };
+    }
+
+    function effectiveClanTotalMMR(clan) {
+        return (clan?.members ?? []).reduce((sum, member) => {
+            const mmr = effectiveClanMemberStat(clan, member).mmr;
+            return sum + (typeof mmr === "number" ? mmr : 0);
+        }, 0);
+    }
+
     function clanMMRWriteFields(liveClan, uid, myMMR, syncedAt) {
         const liveMembers = Array.isArray(liveClan?.members) ? liveClan.members : [];
         if (!liveMembers.some(m => m.userId === uid)) return null;
         const members = liveMembers.map(m =>
             m.userId === uid ? { ...m, mmr: myMMR, syncedAt } : m
         );
+        const memberStats = {
+            ...(liveClan.memberStats && typeof liveClan.memberStats === "object"
+                ? liveClan.memberStats
+                : {}),
+            [uid]: { mmr: myMMR, syncedAt },
+        };
+        const mergedClan = { ...liveClan, members, memberStats };
         return {
             members,
-            totalMMR: members.reduce((s, m) => s + (m.mmr ?? 0), 0),
+            memberStats,
+            totalMMR: effectiveClanTotalMMR(mergedClan),
         };
     }
 
     // refresh my ranked MMR in the clan doc + recompute totalMMR.
     // returns { tag } for the leaderboard name prefix. best-effort.
-    async function updateMyClanMMR(fb, data, { force = false, reason = "leaderboard" } = {}) {
+    async function updateMyClanMMR(
+        fb,
+        data,
+        { force = false, reason = "leaderboard" } = {}
+    ) {
         const uid = data.Id;
         try {
             // A cached null can outlive a stale/missed directory read. Match-end
@@ -2556,7 +2600,7 @@
             await loadEventConfig(fb);
             await loadClanRolePerms(fb);
 
-            const prevMine = (myClan.members ?? []).find(m => m.userId === uid)?.mmr;
+            const prevMine = effectiveClanMemberStat(myClan, uid).mmr;
             let synced = false;
             if (force || prevMine !== myMMR) {
                 try {
@@ -2569,18 +2613,28 @@
                     const clanRef = fb.doc(fb.db, "clans", clanId);
                     const syncedAt = Date.now();
                     let committedClan = null;
+                    let wroteClan = false;
                     const writeClanMMR = () => {
                         committedClan = null;
+                        wroteClan = false;
                         return fb.runTransaction(fb.db, async tx => {
+                            committedClan = null;
+                            wroteClan = false;
                             const liveSnap = await tx.get(clanRef);
                             if (!liveSnap.exists()) return;
                             const liveClan = liveSnap.data();
+                            const liveMine = effectiveClanMemberStat(liveClan, uid);
+                            if (!force && liveMine.mmr === myMMR) {
+                                committedClan = { ...liveClan, id: clanId };
+                                return;
+                            }
                             const fields = clanMMRWriteFields(liveClan, uid, myMMR, syncedAt);
                             if (!fields) return;
                             tx.set(clanRef,
                                 { ...fields, lastSyncAt: fb.serverTimestamp() },
                                 { merge: true });
                             committedClan = { ...liveClan, id: clanId, ...fields };
+                            wroteClan = true;
                         });
                     };
                     try {
@@ -2600,22 +2654,24 @@
                         return null;
                     }
                     myClan = sanitizeClanDoc(committedClan);
-                    synced = true;
-                    dbg(`Clan MMR sync committed (${reason}): ${prevMine ?? "unset"} -> ${myMMR}`);
+                    synced = wroteClan;
+                    if (wroteClan) {
+                        dbg(`Clan MMR sync committed (${reason}): ${prevMine ?? "unset"} -> ${myMMR}`);
 
-                    // one-time serverNow calibration per session
-                    if (serverNowOffset === null) {
-                        try {
-                            const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
-                            const ts = back.exists() ? back.data().lastSyncAt : null;
-                            if (ts?.toMillis) learnServerTime(ts.toMillis());
-                        } catch (e) {
-                            dbg("serverNow calibration read failed, will retry next session");
+                        // one-time serverNow calibration per session
+                        if (serverNowOffset === null) {
+                            try {
+                                const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
+                                const ts = back.exists() ? back.data().lastSyncAt : null;
+                                if (ts?.toMillis) learnServerTime(ts.toMillis());
+                            } catch (e) {
+                                dbg("serverNow calibration read failed, will retry next session");
+                            }
                         }
-                    }
 
-                    // throttled directory rebuild, instant local, Firestore at most every 3m
-                    await refreshDirectoryThrottled(fb);
+                        // throttled directory rebuild, instant local, Firestore at most every 3m
+                        await refreshDirectoryThrottled(fb);
+                    }
                 } catch (writeErr) {
                     // best-effort, never strip the tag on failure
                     console.warn("[RG HUD] Clan MMR write failed (tag still applies):", writeErr);
@@ -3144,8 +3200,9 @@
         if (!baseline) return 0;
         return (clan.members ?? []).reduce((sum, m) => {
             const base = baseline[m.userId];
-            if (base == null || typeof m.mmr !== "number") return sum;
-            return sum + (m.mmr - base);
+            const mmr = effectiveClanMemberStat(clan, m).mmr;
+            if (base == null || typeof mmr !== "number") return sum;
+            return sum + (mmr - base);
         }, 0);
     }
 
@@ -3154,8 +3211,9 @@
         if (!baseline) return null;
         const base = baseline[uid];
         const me = (clan.members ?? []).find(m => m.userId === uid);
-        if (base == null || !me || typeof me.mmr !== "number") return null;
-        return me.mmr - base;
+        const mmr = effectiveClanMemberStat(clan, me).mmr;
+        if (base == null || !me || typeof mmr !== "number") return null;
+        return mmr - base;
     }
 
     // always includes seconds so the 1s tick has something to change
@@ -3447,6 +3505,10 @@
                         return;
                     }
                     myClan = sanitizeClanDoc({ id: snap.id, ...snap.data() });
+                    // Legacy clients may replace the members array with a stale
+                    // copy. Recompute this client's directory entry from the
+                    // protected per-member map without another Firestore read.
+                    patchMyClanInDirectory();
                     refreshClanViewIfOpen();
                     // v13.6: repaint main stats too so Clash mini-bar updates live
                     if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
@@ -3530,7 +3592,7 @@
         entry.tag = myClan.tag ?? "";
         entry.memberCount = (myClan.members ?? []).length;
         entry.memberIds = (myClan.members ?? []).map(m => m.userId);
-        entry.totalMMR = myClan.totalMMR ?? 0;
+        entry.totalMMR = effectiveClanTotalMMR(myClan);
         entry.eventScore = computeClanEventScore(myClan);
         entry.eventId = myClan.eventId ?? null;
         applyTitle(); // clan-lead flip
@@ -3892,6 +3954,7 @@
             const clans = [];
             snap.forEach(docSnap => {
                 const d = docSnap.data();
+                const clan = { ...d, id: docSnap.id };
                 clans.push({
                     id: docSnap.id,
                     name: d.name,
@@ -3899,9 +3962,9 @@
                     tagStyle: d.tagStyle || null,
                     memberCount: (d.members ?? []).length,
                     memberIds: (d.members ?? []).map(m => m.userId),
-                    totalMMR: d.totalMMR ?? 0,
+                    totalMMR: effectiveClanTotalMMR(clan),
                     // 0 if their baseline is stale/absent
-                    eventScore: computeClanEventScore({ ...d, id: docSnap.id }),
+                    eventScore: computeClanEventScore(clan),
                     eventId: d.eventId ?? null,
                 });
             });
@@ -3940,14 +4003,17 @@
         }
 
         try {
+            const initialMMR = myRankedMMR();
+            const syncedAt = Date.now();
             const clan = {
                 name,
                 tag: tag || "",
                 tagStyle: null,
                 leaderId: uid,
-                members: [{ userId: uid, name: myName(), role: "leader" }],
+                members: [{ userId: uid, name: myName(), role: "leader", mmr: initialMMR, syncedAt }],
+                memberStats: { [uid]: { mmr: initialMMR, syncedAt } },
                 joinRequests: [],
-                totalMMR: myRankedMMR(),
+                totalMMR: initialMMR,
                 createdAt: new Date().toISOString(),
             };
             const ref = await fb.addDoc(fb.collection(fb.db, "clans"), clan);
@@ -4639,8 +4705,9 @@
         const contribFor = (member) => {
             if (!eventActive) return null;
             const base = eventBaselines[member.userId];
-            if (base == null || typeof member.mmr !== "number") return null;
-            return member.mmr - base;
+            const mmr = effectiveClanMemberStat(myClan, member).mmr;
+            if (base == null || typeof mmr !== "number") return null;
+            return mmr - base;
         };
 
         const memberRows = (myClan.members ?? [])
@@ -4649,9 +4716,10 @@
             .map(m => {
                 const actable = canManage && m.userId !== uid && m.role !== "leader"
                     && (ROLE_RANK[m.role] ?? 0) < (ROLE_RANK[myRole] ?? 0);
+                const stat = effectiveClanMemberStat(myClan, m);
                 const contrib = contribFor(m);
                 // shows staleness so "+0" vs "last synced 2h ago" is clear
-                const ageMs = typeof m.syncedAt === "number" ? Date.now() - m.syncedAt : null;
+                const ageMs = typeof stat.syncedAt === "number" ? Date.now() - stat.syncedAt : null;
                 const ageLabel = ageMs == null ? null
                     : ageMs < 90e3 ? "just now"
                     : ageMs < 3600e3 ? `${Math.round(ageMs / 60e3)}m ago`
@@ -4669,7 +4737,7 @@
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;gap:6px;">
                     <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                         ${escapeHtml(m.name)}
-                        ${typeof m.mmr === "number" ? `<span style="opacity:.5;font-size:10px;">${m.mmr}</span>` : ""}
+                        ${typeof stat.mmr === "number" ? `<span style="opacity:.5;font-size:10px;">${stat.mmr}</span>` : ""}
                     </span>
                     <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
                         ${contribHtml}
@@ -4706,7 +4774,7 @@
                 </span>
             </div>
             <div style="font-size:11px;opacity:.75;margin:2px 0 6px;">
-                Total MMR: <span style="color:#00ff66;">${myClan.totalMMR ?? 0}</span>
+                Total MMR: <span style="color:#00ff66;">${effectiveClanTotalMMR(myClan)}</span>
                 &nbsp;•&nbsp; ${(myClan.members ?? []).length}/${clanMaxMembers()} members
             </div>
             <div id="rgMembersHeader" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:2px 0;margin-top:2px;">
