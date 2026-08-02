@@ -1,0 +1,35 @@
+{
+  "name": "rgleaderboard-firebase",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Versioned Firestore rules, emulator tests, snapshots, and migration planning for rgleaderboard.",
+  "scripts": {
+    "test": "npm run test:core && npm run test:contracts",
+    "test:core": "npm run test:rules && npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots",
+    "test:rules": "npm run test:rules:compatibility && npm run test:rules:final",
+    "test:rules:compatibility": "node scripts/run-emulator-test.mjs --config firebase.json -- \"RULES_MODE=compatibility node --test tests/firestore-rules.test.mjs\"",
+    "test:rules:final": "node scripts/run-emulator-test.mjs --config firebase.json -- \"RULES_MODE=final node --test tests/firestore-rules.test.mjs\"",
+    "test:leaderboard-popup": "node scripts/run-emulator-test.mjs --config firebase.json -- \"node --test tests/leaderboard-popup.test.mjs\"",
+    "test:hud-client": "node --test tests/hud-client-audit.test.mjs",
+    "test:hud-races": "node scripts/run-emulator-test.mjs --config firebase.json -- \"node --test tests/hud-races.test.mjs\"",
+    "test:migrations": "node --test tests/migration-plan.test.mjs tests/migration-apply.test.mjs",
+    "test:snapshots": "node --test tests/snapshot-tools.test.mjs",
+    "test:contracts": "node --test tests/contract.test.mjs tests/operation-budgets.test.mjs && node scripts/run-emulator-test.mjs --config firebase.json -- \"node --test tests/integration-regressions.test.mjs\"",
+    "plan:migrations": "node scripts/plan-migrations.mjs --fixture tests/fixtures/firestore-shapes.json",
+    "apply:migrations": "node scripts/apply-migrations.mjs",
+    "snapshot:production": "node scripts/snapshot-production.mjs",
+    "verify:baseline": "node scripts/verify-baseline.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "firebase": "^12.17.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "firebase-tools": "^15.25.1",
+    "jsdom": "^27.0.1"
+  }
+}

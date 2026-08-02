@@ -1,0 +1,15 @@
+node_modules/
+.firebase/
+emulator-data/
+.snapshots/
+.migration-state/
+.migration-plans/
+.migration-approvals/
+
+*.log
+*-debug.log
+.env
+.env.*
+!.env.example
+*credentials*.json
+*service-account*.json

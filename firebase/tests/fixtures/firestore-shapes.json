@@ -1,0 +1,420 @@
+{
+  "metadata": {
+    "source": "Sanitized schema-only fixture based on the 2026-08-01 read-only audit",
+    "containsProductionValues": false,
+    "leaderboardShapeCount": 11,
+    "submissionShapeCount": 3,
+    "clanCount": 8
+  },
+  "leaderboard": [
+    {
+      "id": "auto-1",
+      "sourceUserId": "player-a",
+      "playlist": "1v1",
+      "name": "Alpha",
+      "mmr": 1200,
+      "deviceId": "device-a",
+      "versionNum": 14.3,
+      "updatedAt": "2026-08-01T10:00:00.000Z"
+    },
+    {
+      "id": "auto-2",
+      "sourceUserId": "player-a",
+      "playlist": "2v2",
+      "name": "Alpha",
+      "mmr": 1300,
+      "flag": "US",
+      "deviceId": "device-a",
+      "versionNum": 14.3,
+      "updatedAt": "2026-08-01T10:01:00.000Z"
+    },
+    {
+      "id": "auto-3",
+      "sourceUserId": "player-a",
+      "playlist": "3v3",
+      "name": "Alpha",
+      "mmr": 1400,
+      "icons": "champion",
+      "iconSize": 18,
+      "deviceId": "device-a",
+      "versionNum": 14.3,
+      "updatedAt": "2026-08-01T10:02:00.000Z"
+    },
+    {
+      "id": "auto-4",
+      "sourceUserId": "player-a",
+      "playlist": "wins",
+      "name": "Alpha",
+      "wins": 30,
+      "matches": 50,
+      "deviceId": "device-a",
+      "versionNum": 14.3,
+      "updatedAt": "2026-08-01T10:03:00.000Z"
+    },
+    {
+      "id": "duplicate-old",
+      "sourceUserId": "player-b",
+      "playlist": "1v1",
+      "name": "Bravo",
+      "mmr": 900,
+      "deviceId": "device-b",
+      "versionNum": 14.2,
+      "updatedAt": "2026-07-31T09:00:00.000Z"
+    },
+    {
+      "id": "duplicate-new",
+      "sourceUserId": "player-b",
+      "playlist": "1v1",
+      "name": "Bravo",
+      "mmr": 950,
+      "glowColor": "#00bfff",
+      "glowStrength": 2,
+      "deviceId": "device-b",
+      "versionNum": 14.3,
+      "updatedAt": "2026-08-01T11:00:00.000Z"
+    },
+    {
+      "id": "manual-mmr",
+      "playlist": "1v1",
+      "name": "Manual One",
+      "mmr": 1500,
+      "flag": "GB"
+    },
+    {
+      "id": "manual-wins",
+      "playlist": "wins",
+      "name": "Manual Wins",
+      "wins": 75,
+      "matches": 100
+    },
+    {
+      "id": "legacy-sourced",
+      "sourceUserId": "player-c",
+      "playlist": "2v2",
+      "name": "Charlie",
+      "mmr": 1100,
+      "updatedAt": "2026-07-20T08:00:00.000Z"
+    },
+    {
+      "id": "player-d_3v3",
+      "sourceUserId": "player-d",
+      "playlist": "3v3",
+      "name": "[TAG] Delta",
+      "mmr": 1600,
+      "deviceId": "device-d",
+      "scriptVersion": "14.3",
+      "versionNum": 14.3,
+      "updatedAt": "2026-08-01T12:00:00.000Z"
+    },
+    {
+      "id": "styled-source",
+      "sourceUserId": "player-e",
+      "playlist": "1v1",
+      "name": "Echo",
+      "mmr": 1800,
+      "flag": "CA",
+      "icons": "founder",
+      "iconSize": 20,
+      "glowColor": "#ffffff",
+      "glowStrength": 4,
+      "deviceId": "device-e",
+      "versionNum": 14.3,
+      "updatedAt": "2026-08-01T13:00:00.000Z"
+    }
+  ],
+  "script_submissions": [
+    {
+      "id": "player-a",
+      "sourceUserId": "player-a",
+      "nickname": "Alpha",
+      "displayName": "Alpha",
+      "xp": 1000,
+      "ratings": {
+        "Competitive1v1": 1200,
+        "Competitive2v2": 1300,
+        "Competitive3v3": 1400,
+        "Casual": 500
+      },
+      "stats": {
+        "Competitive1v1": {
+          "wins": 10,
+          "matchesPlayed": 20
+        }
+      },
+      "deviceId": "device-a",
+      "versionNum": 14.3
+    },
+    {
+      "id": "player-b",
+      "nickname": "Bravo",
+      "ratings": {
+        "Competitive1v1": 950
+      },
+      "stats": {
+        "Competitive1v1": {
+          "wins": 5,
+          "matchesPlayed": 8
+        }
+      },
+      "deviceId": "device-b",
+      "versionNum": 14.2
+    },
+    {
+      "id": "player-d",
+      "sourceUserId": "player-d",
+      "nickname": "Delta",
+      "displayName": "Delta",
+      "skin": "default",
+      "xp": 2500,
+      "ratings": {
+        "Competitive3v3": 1600
+      },
+      "stats": {
+        "Competitive3v3": {
+          "wins": 25,
+          "matchesPlayed": 40
+        }
+      },
+      "deviceId": "device-d",
+      "scriptVersion": "14.3",
+      "versionNum": 14.3
+    }
+  ],
+  "clans": [
+    {
+      "id": "clan-1",
+      "name": "Clan One",
+      "tag": "ONE",
+      "leaderId": "member-1",
+      "members": [
+        {
+          "userId": "member-1",
+          "name": "Member One",
+          "role": "leader",
+          "mmr": 4000,
+          "syncedAt": 1785590000000
+        }
+      ],
+      "eventBaseline": {
+        "member-1": 3900
+      },
+      "totalMMR": 4000
+    },
+    {
+      "id": "clan-2",
+      "name": "Clan Two",
+      "tag": "TWO",
+      "leaderId": "member-2",
+      "members": [
+        {
+          "userId": "member-2",
+          "name": "Member Two",
+          "role": "leader",
+          "mmr": 5000
+        },
+        {
+          "userId": "member-3",
+          "name": "Member Three",
+          "role": "coleader",
+          "mmr": 4800
+        },
+        {
+          "userId": "member-4",
+          "name": "Member Four",
+          "role": "elder",
+          "mmr": 4500
+        },
+        {
+          "userId": "member-5",
+          "name": "Member Five",
+          "role": "member",
+          "mmr": 4300
+        },
+        {
+          "userId": "member-6",
+          "name": "Member Six",
+          "role": "member",
+          "mmr": 4100
+        }
+      ],
+      "eventBaseline": {
+        "member-2": 4900,
+        "member-3": 4700,
+        "member-4": 4400,
+        "member-5": 4200,
+        "member-6": 4000
+      },
+      "totalMMR": 22700,
+      "tagStyle": {
+        "mode": "solid",
+        "color": "#00bfff",
+        "bold": true
+      }
+    },
+    {
+      "id": "clan-3",
+      "name": "Clan Three",
+      "tag": "THR",
+      "leaderId": "member-7",
+      "members": [
+        {
+          "userId": "member-7",
+          "name": "Member Seven",
+          "role": "leader",
+          "mmr": 5100
+        },
+        {
+          "userId": "member-8",
+          "name": "Member Eight",
+          "role": "member",
+          "mmr": 3900
+        },
+        {
+          "userId": "member-9",
+          "name": "Member Nine",
+          "role": "member",
+          "mmr": 3700
+        },
+        {
+          "userId": "member-10",
+          "name": "Member Ten",
+          "role": "member",
+          "mmr": 3500
+        }
+      ],
+      "eventBaseline": {},
+      "totalMMR": 16200
+    },
+    {
+      "id": "clan-4",
+      "name": "Clan Four",
+      "tag": "FOR",
+      "leaderId": "member-11",
+      "members": [
+        {
+          "userId": "member-11",
+          "name": "Member Eleven",
+          "role": "leader",
+          "mmr": 5200
+        },
+        {
+          "userId": "member-12",
+          "name": "Member Twelve",
+          "role": "coleader",
+          "mmr": 5000
+        },
+        {
+          "userId": "member-13",
+          "name": "Member Thirteen",
+          "role": "elder",
+          "mmr": 4800
+        },
+        {
+          "userId": "member-14",
+          "name": "Member Fourteen",
+          "role": "member",
+          "mmr": 4600
+        },
+        {
+          "userId": "member-15",
+          "name": "Member Fifteen",
+          "role": "member",
+          "mmr": 4400
+        }
+      ],
+      "eventBaseline": {},
+      "totalMMR": 24000
+    },
+    {
+      "id": "clan-5",
+      "name": "Clan Five",
+      "tag": "FIV",
+      "leaderId": "member-16",
+      "members": [
+        {
+          "userId": "member-16",
+          "name": "Member Sixteen",
+          "role": "leader",
+          "mmr": 3200
+        }
+      ],
+      "eventBaseline": {},
+      "totalMMR": 3200
+    },
+    {
+      "id": "clan-6",
+      "name": "Clan Six",
+      "tag": "SIX",
+      "leaderId": "member-17",
+      "members": [
+        {
+          "userId": "member-17",
+          "name": "Member Seventeen",
+          "role": "leader",
+          "mmr": 3300
+        }
+      ],
+      "eventBaseline": {},
+      "totalMMR": 3300
+    },
+    {
+      "id": "clan-7",
+      "name": "Clan Seven",
+      "tag": "SEV",
+      "leaderId": "member-18",
+      "members": [
+        {
+          "userId": "member-18",
+          "name": "Member Eighteen",
+          "role": "leader",
+          "mmr": 3400
+        }
+      ],
+      "eventBaseline": {},
+      "totalMMR": 3400
+    },
+    {
+      "id": "clan-8",
+      "name": "Clan Eight",
+      "tag": "EIG",
+      "leaderId": "member-19",
+      "members": [
+        {
+          "userId": "member-19",
+          "name": "Member Nineteen",
+          "role": "leader",
+          "mmr": 3500
+        }
+      ],
+      "eventBaseline": {},
+      "totalMMR": 3500
+    }
+  ],
+  "clans_directory": {
+    "id": "index",
+    "clans": [
+      {
+        "id": "clan-1",
+        "name": "Clan One",
+        "tag": "ONE",
+        "memberCount": 1,
+        "memberIds": ["member-1"],
+        "totalMMR": 4000
+      },
+      {
+        "id": "clan-2",
+        "name": "Clan Two",
+        "tag": "TWO",
+        "memberCount": 5,
+        "memberIds": [
+          "member-2",
+          "member-3",
+          "member-4",
+          "member-5",
+          "member-6"
+        ],
+        "totalMMR": 22700
+      }
+    ]
+  }
+}
