@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      14.9
+// @version      15.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -349,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "14.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2554,17 +2554,41 @@
         }, 0);
     }
 
-    function clanMMRWriteFields(liveClan, uid, myMMR, syncedAt) {
+    function clanHasDeviceId(clan, uid, deviceId) {
+        if (!deviceId) return true;
+        const member = (clan?.members ?? []).find(candidate => candidate.userId === uid);
+        const mapped = clan?.memberStats?.[uid];
+        return member?.deviceId === deviceId
+            || (Array.isArray(member?.deviceIds) && member.deviceIds.includes(deviceId))
+            || mapped?.deviceId === deviceId
+            || (Array.isArray(mapped?.deviceIds) && mapped.deviceIds.includes(deviceId));
+    }
+
+    function clanMMRWriteFields(liveClan, uid, myMMR, syncedAt, deviceId = null) {
         const liveMembers = Array.isArray(liveClan?.members) ? liveClan.members : [];
         if (!liveMembers.some(m => m.userId === uid)) return null;
         const members = liveMembers.map(m =>
-            m.userId === uid ? { ...m, mmr: myMMR, syncedAt } : m
+            m.userId === uid
+                ? { ...m, mmr: myMMR, syncedAt, ...(deviceId ? { deviceId } : {}) }
+                : m
         );
+        const existingStats = liveClan.memberStats?.[uid] ?? {};
+        const deviceIds = deviceId
+            ? [...new Set([
+                ...(Array.isArray(existingStats.deviceIds) ? existingStats.deviceIds : []),
+                deviceId,
+            ])]
+            : existingStats.deviceIds;
         const memberStats = {
             ...(liveClan.memberStats && typeof liveClan.memberStats === "object"
                 ? liveClan.memberStats
                 : {}),
-            [uid]: { mmr: myMMR, syncedAt },
+            [uid]: {
+                ...existingStats,
+                mmr: myMMR,
+                syncedAt,
+                ...(deviceIds ? { deviceIds } : {}),
+            },
         };
         const mergedClan = { ...liveClan, members, memberStats };
         return {
@@ -2601,8 +2625,10 @@
             await loadClanRolePerms(fb);
 
             const prevMine = effectiveClanMemberStat(myClan, uid).mmr;
+            const deviceId = getDeviceId();
+            const deviceNeedsLink = !clanHasDeviceId(myClan, uid, deviceId);
             let synced = false;
-            if (force || prevMine !== myMMR) {
+            if (force || prevMine !== myMMR || deviceNeedsLink) {
                 try {
                     // syncedAt: client ms on my member entry so teammates get
                     // per-member freshness ("2m ago"). serverTimestamp() isn't
@@ -2611,29 +2637,55 @@
                     // A plain setDoc used our stale in-memory members array and
                     // could erase somebody who had just been approved.
                     const clanRef = fb.doc(fb.db, "clans", clanId);
+                    const directoryRef = fb.doc(fb.db, "clans_directory", "index");
                     const syncedAt = Date.now();
                     let committedClan = null;
+                    let committedDirectory = null;
                     let wroteClan = false;
                     const writeClanMMR = () => {
                         committedClan = null;
+                        committedDirectory = null;
                         wroteClan = false;
                         return fb.runTransaction(fb.db, async tx => {
                             committedClan = null;
+                            committedDirectory = null;
                             wroteClan = false;
+                            // A device only does this on its first clan sync.
+                            // Saving both together stops two accounts racing.
+                            const directorySnap = deviceNeedsLink
+                                ? await tx.get(directoryRef)
+                                : null;
                             const liveSnap = await tx.get(clanRef);
                             if (!liveSnap.exists()) return;
                             const liveClan = liveSnap.data();
                             const liveMine = effectiveClanMemberStat(liveClan, uid);
-                            if (!force && liveMine.mmr === myMMR) {
+                            if (!force && liveMine.mmr === myMMR
+                                && clanHasDeviceId(liveClan, uid, deviceId)) {
                                 committedClan = { ...liveClan, id: clanId };
                                 return;
                             }
-                            const fields = clanMMRWriteFields(liveClan, uid, myMMR, syncedAt);
+                            const fields = clanMMRWriteFields(
+                                liveClan,
+                                uid,
+                                myMMR,
+                                syncedAt,
+                                deviceId
+                            );
                             if (!fields) return;
                             tx.set(clanRef,
                                 { ...fields, lastSyncAt: fb.serverTimestamp() },
                                 { merge: true });
                             committedClan = { ...liveClan, id: clanId, ...fields };
+                            if (deviceNeedsLink && directorySnap) {
+                                const liveDirectory = directorySnap.exists()
+                                    ? (directorySnap.data().clans ?? [])
+                                    : [];
+                                committedDirectory = putClanInDirectory(
+                                    liveDirectory,
+                                    clanDirectoryEntry(clanId, committedClan)
+                                );
+                                tx.set(directoryRef, { clans: committedDirectory });
+                            }
                             wroteClan = true;
                         });
                     };
@@ -2654,6 +2706,7 @@
                         return null;
                     }
                     myClan = sanitizeClanDoc(committedClan);
+                    if (committedDirectory) clanDirectory = committedDirectory;
                     synced = wroteClan;
                     if (wroteClan) {
                         dbg(`Clan MMR sync committed (${reason}): ${prevMine ?? "unset"} -> ${myMMR}`);
@@ -3086,6 +3139,7 @@
                     endTime: d.endTime?.toMillis ? d.endTime.toMillis() : (d.endTime ?? 0),
                     // applies outside the event window too
                     maxMembers: (typeof d.maxMembers === "number") ? d.maxMembers : null,
+                    useClanReservations: d.useClanReservations === true,
                     perms: { ...EVENT_PERM_DEFAULTS, ...storedPerms },
                 };
             } else {
@@ -3439,6 +3493,152 @@
         return cachedDisplayNames.get(myUserId()) || cleanName(lastKnownPlayerData?.Nickname) || "Unknown";
     }
 
+    function clanReservationsEnabled() {
+        return eventConfig?.useClanReservations === true;
+    }
+
+    function normalizeClanName(value) {
+        return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+    }
+
+    async function clanNameReservationId(name) {
+        const bytes = new TextEncoder().encode(normalizeClanName(name));
+        const hash = await crypto.subtle.digest("SHA-256", bytes);
+        return [...new Uint8Array(hash)]
+            .map(value => value.toString(16).padStart(2, "0"))
+            .join("");
+    }
+
+    function clanMemberDeviceIds(clan, uid) {
+        const ids = new Set();
+        const member = (clan?.members ?? []).find(candidate => candidate.userId === uid);
+        const stats = clan?.memberStats?.[uid];
+        if (member?.deviceId) ids.add(member.deviceId);
+        for (const deviceId of Array.isArray(member?.deviceIds) ? member.deviceIds : []) {
+            if (deviceId) ids.add(deviceId);
+        }
+        if (stats?.deviceId) ids.add(stats.deviceId);
+        for (const deviceId of Array.isArray(stats?.deviceIds) ? stats.deviceIds : []) {
+            if (deviceId) ids.add(deviceId);
+        }
+        return [...ids];
+    }
+
+    function clanDeviceIds(clan) {
+        const ids = new Set();
+        for (const member of clan?.members ?? []) {
+            for (const deviceId of clanMemberDeviceIds(clan, member.userId)) {
+                if (deviceId) ids.add(deviceId);
+            }
+        }
+        return [...ids];
+    }
+
+    function clanMembershipRecord(clanId, role, deviceIds) {
+        return {
+            clanId,
+            role,
+            deviceIds: [...new Set((deviceIds ?? []).filter(Boolean))],
+            updatedAt: new Date().toISOString(),
+        };
+    }
+
+    // Use the directory to check clan membership.
+    // Hide duplicate clans without deleting anything.
+    function canonicalClanDirectory(clans) {
+        const chosen = new Map();
+        for (const clan of Array.isArray(clans) ? clans : []) {
+            if (!clan || typeof clan.id !== "string") continue;
+            const name = String(clan.name ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+            const tag = String(clan.tag ?? "").trim().toLowerCase();
+            const key = name && tag ? `${tag}\u0000${name}` : `id\u0000${clan.id}`;
+            const current = chosen.get(key);
+            if (!current) {
+                chosen.set(key, clan);
+                continue;
+            }
+            // Keep the lowest id so changing scores can't swap the chosen copy.
+            if (clan.id.localeCompare(current.id) < 0) chosen.set(key, clan);
+        }
+        return [...chosen.values()];
+    }
+
+    function findDirectoryMembership(clans, identity, exceptClanId = null) {
+        const uid = typeof identity === "string" ? identity : identity?.userId;
+        const deviceId = typeof identity === "object" ? identity?.deviceId : null;
+        if (!uid && !deviceId) return null;
+        const matches = (Array.isArray(clans) ? clans : []).filter(clan =>
+            clan?.id !== exceptClanId
+            && ((uid && (clan?.memberIds ?? []).includes(uid))
+                || (deviceId && (clan?.deviceIds ?? []).includes(deviceId)))
+        );
+        const match = canonicalClanDirectory(matches)[0] ?? null;
+        if (!match) return null;
+        return {
+            ...match,
+            membershipMatch: uid && (match.memberIds ?? []).includes(uid)
+                ? "player"
+                : "device",
+        };
+    }
+
+    function clanDirectoryEntry(id, clan) {
+        const deviceIds = new Set();
+        for (const member of clan.members ?? []) {
+            if (typeof member.deviceId === "string" && member.deviceId) {
+                deviceIds.add(member.deviceId);
+            }
+            for (const value of Array.isArray(member.deviceIds) ? member.deviceIds : []) {
+                if (typeof value === "string" && value) deviceIds.add(value);
+            }
+            const mapped = clan.memberStats?.[member.userId];
+            if (typeof mapped?.deviceId === "string" && mapped.deviceId) {
+                deviceIds.add(mapped.deviceId);
+            }
+            for (const value of Array.isArray(mapped?.deviceIds) ? mapped.deviceIds : []) {
+                if (typeof value === "string" && value) deviceIds.add(value);
+            }
+        }
+        return {
+            id,
+            name: clan.name,
+            tag: clan.tag ?? "",
+            tagStyle: clan.tagStyle || null,
+            leaderId: clan.leaderId ?? null,
+            createdAt: clan.createdAt ?? null,
+            memberCount: (clan.members ?? []).length,
+            memberIds: (clan.members ?? []).map(member => member.userId),
+            deviceIds: [...deviceIds],
+            totalMMR: effectiveClanTotalMMR(clan),
+            eventScore: computeClanEventScore(clan),
+            eventId: clan.eventId ?? null,
+        };
+    }
+
+    function putClanInDirectory(clans, entry) {
+        return canonicalClanDirectory([
+            ...(Array.isArray(clans) ? clans : []).filter(clan => clan?.id !== entry.id),
+            entry,
+        ]);
+    }
+
+    function removeClanFromDirectory(clans, clanId) {
+        return canonicalClanDirectory(
+            (Array.isArray(clans) ? clans : []).filter(clan => clan?.id !== clanId)
+        );
+    }
+
+    function clanMembershipMessage(displayName, clan, isCurrentPlayer = false) {
+        const label = clan
+            ? `${clan.tag ? `[${clan.tag}] ` : ""}${clan.name || "another clan"}`
+            : "another clan";
+        const instruction = isCurrentPlayer ? "You must" : "They must";
+        if (clan?.membershipMatch === "device") {
+            return `This ATLAS device is already linked to ${label}. ${displayName || "This account"} cannot join or create a clan until the account in that clan leaves.`;
+        }
+        return `${displayName || "This player"} is already in ${label}. ${instruction} leave that clan before joining or creating another clan.`;
+    }
+
     function canManageRequests(role) {
         return rolePerm(role, "approve");
     }
@@ -3563,13 +3763,39 @@
 
         try {
             const dirSnap = await fb.getDoc(fb.doc(fb.db, "clans_directory", "index"));
-            clanDirectory = dirSnap.exists() ? (dirSnap.data().clans ?? []) : [];
+            clanDirectory = canonicalClanDirectory(
+                dirSnap.exists() ? (dirSnap.data().clans ?? []) : []
+            );
 
             myClan = null;
-            const mine = clanDirectory.find(c => (c.memberIds ?? []).includes(uid));
+            const mine = findDirectoryMembership(clanDirectory, uid);
             if (mine) {
                 const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", mine.id));
                 if (clanSnap.exists()) myClan = sanitizeClanDoc({ id: mine.id, ...clanSnap.data() });
+            }
+            if (myClan) {
+                const deviceId = getDeviceId();
+                if (clanReservationsEnabled()
+                    || !clanHasDeviceId(myClan, uid, deviceId)) {
+                    const linkResult = await linkCurrentClanDevice(
+                        fb,
+                        myClan,
+                        uid,
+                        deviceId
+                    );
+                    if (linkResult?.clan) myClan = sanitizeClanDoc(linkResult.clan);
+                    if (linkResult?.directory) clanDirectory = linkResult.directory;
+                    if (linkResult?.conflict) {
+                        const sameClan = linkResult.conflict.id === myClan.id;
+                        await showDialog({
+                            message: sameClan
+                                ? `This ATLAS device is already linked to another account in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. One of the accounts must leave the clan.`
+                                : `This ATLAS device is already linked to ${linkResult.conflict.tag ? `[${linkResult.conflict.tag}] ` : ""}${linkResult.conflict.name}. This account is also in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. Leave one clan before using another account on this device.`,
+                            okLabel: "OK",
+                            cancelLabel: "Close",
+                        });
+                    }
+                }
             }
             clanLoaded = true;
             clanLoadedForAccount = uid;
@@ -3579,6 +3805,131 @@
         }
     }
 
+    async function linkCurrentClanDevice(fb, clan, uid, deviceId) {
+        const clanRef = fb.doc(fb.db, "clans", clan.id);
+        const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+        const useReservations = clanReservationsEnabled();
+        const membershipRef = useReservations
+            ? fb.doc(fb.db, "clan_memberships", uid)
+            : null;
+        const deviceRef = useReservations
+            ? fb.doc(fb.db, "clan_devices", deviceId)
+            : null;
+        let result = { clan, directory: null, conflict: null };
+        await fb.runTransaction(fb.db, async tx => {
+            result = { clan, directory: null, conflict: null };
+            const directorySnap = await tx.get(directoryRef);
+            const clanSnap = await tx.get(clanRef);
+            const membershipSnap = useReservations
+                ? await tx.get(membershipRef)
+                : null;
+            const deviceSnap = useReservations
+                ? await tx.get(deviceRef)
+                : null;
+            if (!clanSnap.exists()) {
+                result = { clan: null, directory: null, conflict: null };
+                return;
+            }
+            const liveClan = { id: clan.id, ...clanSnap.data() };
+            const member = (liveClan.members ?? []).find(candidate => candidate.userId === uid);
+            if (!member) {
+                result = { clan: null, directory: null, conflict: null };
+                return;
+            }
+            const liveDirectory = directorySnap.exists()
+                ? (directorySnap.data().clans ?? [])
+                : [];
+            const conflict = findDirectoryMembership(
+                liveDirectory,
+                { userId: null, deviceId }
+            );
+            const lockedClanId = membershipSnap?.exists()
+                ? membershipSnap.data().clanId
+                : (deviceSnap?.exists() ? deviceSnap.data().clanId : null);
+            const lockedConflict = lockedClanId && lockedClanId !== clan.id
+                ? {
+                    ...(liveDirectory.find(entry => entry?.id === lockedClanId)
+                        ?? { id: lockedClanId, name: "another clan", tag: "" }),
+                    membershipMatch: membershipSnap?.exists() ? "player" : "device",
+                }
+                : null;
+            const liveHasDevice = clanHasDeviceId(liveClan, uid, deviceId);
+            if (lockedConflict
+                || (conflict && !(conflict.id === clan.id && liveHasDevice))) {
+                result = {
+                    clan: liveClan,
+                    directory: null,
+                    conflict: lockedConflict ?? conflict,
+                };
+                return;
+            }
+            const reservationReady = !useReservations
+                || (membershipSnap?.data()?.clanId === clan.id
+                    && deviceSnap?.data()?.clanId === clan.id);
+            if (liveHasDevice && conflict?.id === clan.id && reservationReady) {
+                result = {
+                    clan: liveClan,
+                    directory: canonicalClanDirectory(liveDirectory),
+                    conflict: null,
+                };
+                return;
+            }
+            const members = (liveClan.members ?? []).map(candidate =>
+                candidate.userId === uid
+                    ? { ...candidate, deviceId }
+                    : candidate
+            );
+            const existingStats = liveClan.memberStats?.[uid] ?? {};
+            const deviceIds = [...new Set([
+                ...(Array.isArray(existingStats.deviceIds) ? existingStats.deviceIds : []),
+                deviceId,
+            ])];
+            const memberStats = {
+                ...(liveClan.memberStats ?? {}),
+                [uid]: { ...existingStats, deviceIds },
+            };
+            const reservationFields = useReservations
+                ? {
+                    memberIds: members.map(candidate => candidate.userId),
+                    deviceIds: clanDeviceIds({ ...liveClan, members, memberStats }),
+                }
+                : {};
+            const linkedClan = {
+                ...liveClan,
+                members,
+                memberStats,
+                ...reservationFields,
+            };
+            const directory = putClanInDirectory(
+                liveDirectory,
+                clanDirectoryEntry(clan.id, linkedClan)
+            );
+            tx.set(clanRef, {
+                members,
+                memberStats,
+                ...reservationFields,
+            }, { merge: true });
+            tx.set(directoryRef, { clans: directory });
+            if (useReservations) {
+                tx.set(
+                    membershipRef,
+                    clanMembershipRecord(
+                        clan.id,
+                        member.role ?? "member",
+                        [...clanMemberDeviceIds(linkedClan, uid), deviceId]
+                    )
+                );
+                tx.set(deviceRef, {
+                    clanId: clan.id,
+                    userId: uid,
+                    updatedAt: new Date().toISOString(),
+                });
+            }
+            result = { clan: linkedClan, directory, conflict: null };
+        });
+        return result;
+    }
+
     // refreshDirectory reads EVERY clan doc + 1 write. fine for structural
     // changes (create/join/kick/leave). routine per-match MMR ticks go
     // through refreshDirectoryThrottled.
@@ -3586,15 +3937,10 @@
     // zero-read patch of my own entry in the in-memory directory
     function patchMyClanInDirectory() {
         if (!myClan) return;
-        const entry = clanDirectory.find(c => c.id === myClan.id);
-        if (!entry) return;
-        entry.name = myClan.name;
-        entry.tag = myClan.tag ?? "";
-        entry.memberCount = (myClan.members ?? []).length;
-        entry.memberIds = (myClan.members ?? []).map(m => m.userId);
-        entry.totalMMR = effectiveClanTotalMMR(myClan);
-        entry.eventScore = computeClanEventScore(myClan);
-        entry.eventId = myClan.eventId ?? null;
+        clanDirectory = putClanInDirectory(
+            clanDirectory,
+            clanDirectoryEntry(myClan.id, myClan)
+        );
         applyTitle(); // clan-lead flip
     }
 
@@ -3951,23 +4297,13 @@
     async function refreshDirectory(fb) {
         try {
             const snap = await fb.getDocs(fb.collection(fb.db, "clans"));
-            const clans = [];
+            const discoveredClans = [];
             snap.forEach(docSnap => {
                 const d = docSnap.data();
                 const clan = { ...d, id: docSnap.id };
-                clans.push({
-                    id: docSnap.id,
-                    name: d.name,
-                    tag: d.tag ?? "",
-                    tagStyle: d.tagStyle || null,
-                    memberCount: (d.members ?? []).length,
-                    memberIds: (d.members ?? []).map(m => m.userId),
-                    totalMMR: effectiveClanTotalMMR(clan),
-                    // 0 if their baseline is stale/absent
-                    eventScore: computeClanEventScore(clan),
-                    eventId: d.eventId ?? null,
-                });
+                discoveredClans.push(clanDirectoryEntry(docSnap.id, clan));
             });
+            const clans = canonicalClanDirectory(discoveredClans);
             await fb.setDoc(fb.doc(fb.db, "clans_directory", "index"), { clans });
             clanDirectory = clans;
         } catch (e) {
@@ -3996,30 +4332,166 @@
             return;
         }
 
-        // best-effort uniqueness check
-        if (clanDirectory.some(c => c.name.toLowerCase() === name.toLowerCase())) {
-            showToast("A clan with that name already exists.");
-            return;
-        }
-
         try {
             const initialMMR = myRankedMMR();
             const syncedAt = Date.now();
+            const createdAt = new Date().toISOString();
+            const deviceId = getDeviceId();
+            const useReservations = clanReservationsEnabled();
+            const nameKey = useReservations
+                ? await clanNameReservationId(name)
+                : null;
+            const tagKey = useReservations ? sanitizeClanTag(tag) : null;
             const clan = {
                 name,
                 tag: tag || "",
                 tagStyle: null,
                 leaderId: uid,
-                members: [{ userId: uid, name: myName(), role: "leader", mmr: initialMMR, syncedAt }],
-                memberStats: { [uid]: { mmr: initialMMR, syncedAt } },
+                members: [{ userId: uid, name: myName(), role: "leader", mmr: initialMMR, syncedAt, deviceId }],
+                memberStats: { [uid]: { mmr: initialMMR, syncedAt, deviceIds: [deviceId] } },
                 joinRequests: [],
                 totalMMR: initialMMR,
-                createdAt: new Date().toISOString(),
+                createdAt,
+                scriptVersion: SCRIPT_VERSION,
+                versionNum: SCRIPT_VERSION_NUM,
+                ...(useReservations ? {
+                    nameKey,
+                    tagKey,
+                    normalizedName: normalizeClanName(name),
+                    deviceId,
+                    memberIds: [uid],
+                    deviceIds: [deviceId],
+                } : {}),
             };
-            const ref = await fb.addDoc(fb.collection(fb.db, "clans"), clan);
-            dbg(`Clan created: name="${name}" tag="${tag || ""}" id=${ref.id}`);
-            myClan = { id: ref.id, ...clan };
-            await refreshDirectory(fb);
+            const clanRef = fb.doc(fb.collection(fb.db, "clans"));
+            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+            const nameRef = useReservations
+                ? fb.doc(fb.db, "clan_name_keys", nameKey)
+                : null;
+            const tagRef = useReservations
+                ? fb.doc(fb.db, "clan_tag_keys", tagKey)
+                : null;
+            const membershipRef = useReservations
+                ? fb.doc(fb.db, "clan_memberships", uid)
+                : null;
+            const deviceRef = useReservations
+                ? fb.doc(fb.db, "clan_devices", deviceId)
+                : null;
+            let outcome = "created";
+            let existingMembership = null;
+            let committedDirectory = null;
+
+            // Save both together so double-clicks can't create extra clans.
+            await fb.runTransaction(fb.db, async tx => {
+                outcome = "created";
+                existingMembership = null;
+                committedDirectory = null;
+                const directorySnap = await tx.get(directoryRef);
+                const membershipSnap = useReservations
+                    ? await tx.get(membershipRef)
+                    : null;
+                const deviceSnap = useReservations
+                    ? await tx.get(deviceRef)
+                    : null;
+                const nameSnap = useReservations
+                    ? await tx.get(nameRef)
+                    : null;
+                const tagSnap = useReservations
+                    ? await tx.get(tagRef)
+                    : null;
+                const liveDirectory = directorySnap.exists()
+                    ? (directorySnap.data().clans ?? [])
+                    : [];
+                existingMembership = findDirectoryMembership(
+                    liveDirectory,
+                    { userId: uid, deviceId }
+                );
+                const lockedClanId = membershipSnap?.exists()
+                    ? membershipSnap.data().clanId
+                    : (deviceSnap?.exists() ? deviceSnap.data().clanId : null);
+                if (!existingMembership && lockedClanId) {
+                    const locked = liveDirectory.find(entry => entry?.id === lockedClanId);
+                    existingMembership = {
+                        ...(locked ?? { id: lockedClanId, name: "another clan", tag: "" }),
+                        membershipMatch: membershipSnap?.exists() ? "player" : "device",
+                    };
+                }
+                if (existingMembership) {
+                    outcome = "already-in-clan";
+                    return;
+                }
+                if (nameSnap?.exists()) {
+                    outcome = "name-taken";
+                    return;
+                }
+                if (tagSnap?.exists()) {
+                    outcome = "tag-taken";
+                    return;
+                }
+                const normalizedName = normalizeClanName(name);
+                const normalizedTag = sanitizeClanTag(tag);
+                if (liveDirectory.some(entry =>
+                    normalizeClanName(entry?.name) === normalizedName
+                )) {
+                    outcome = "name-taken";
+                    return;
+                }
+                if (normalizedTag && liveDirectory.some(entry =>
+                    sanitizeClanTag(entry?.tag) === normalizedTag
+                )) {
+                    outcome = "tag-taken";
+                    return;
+                }
+                committedDirectory = putClanInDirectory(
+                    liveDirectory,
+                    clanDirectoryEntry(clanRef.id, clan)
+                );
+                tx.set(clanRef, clan);
+                tx.set(directoryRef, { clans: committedDirectory });
+                if (useReservations) {
+                    tx.set(nameRef, {
+                        clanId: clanRef.id,
+                        name,
+                        normalizedName: normalizeClanName(name),
+                    });
+                    tx.set(tagRef, {
+                        clanId: clanRef.id,
+                        tag: sanitizeClanTag(tag),
+                    });
+                    tx.set(
+                        membershipRef,
+                        clanMembershipRecord(clanRef.id, "leader", [deviceId])
+                    );
+                    tx.set(deviceRef, {
+                        clanId: clanRef.id,
+                        userId: uid,
+                        updatedAt: new Date().toISOString(),
+                    });
+                }
+            });
+
+            if (outcome === "already-in-clan") {
+                await showDialog({
+                    message: clanMembershipMessage(myName(), existingMembership, true),
+                    okLabel: "OK",
+                    cancelLabel: "Close",
+                });
+                await loadClanData(true);
+                renderClanView();
+                return;
+            }
+            if (outcome === "name-taken") {
+                showToast("A clan with that name already exists.");
+                return;
+            }
+            if (outcome === "tag-taken") {
+                showToast("That clan tag is already taken.");
+                return;
+            }
+
+            dbg(`Clan created: name="${name}" tag="${tag || ""}" id=${clanRef.id}`);
+            myClan = { id: clanRef.id, ...clan };
+            clanDirectory = committedDirectory ?? clanDirectory;
             renderClanView();
         } catch (e) {
             pushError(e, "createClan");
@@ -4041,10 +4513,29 @@
 
         try {
             const clanRef = fb.doc(fb.db, "clans", clanId);
+            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
             const requestName = myName();
+            const deviceId = getDeviceId();
+            const useReservations = clanReservationsEnabled();
+            const membershipRef = useReservations
+                ? fb.doc(fb.db, "clan_memberships", uid)
+                : null;
+            const deviceRef = useReservations
+                ? fb.doc(fb.db, "clan_devices", deviceId)
+                : null;
             let outcome = "sent";
+            let existingMembership = null;
             await fb.runTransaction(fb.db, async tx => {
+                outcome = "sent";
+                existingMembership = null;
+                const directorySnap = await tx.get(directoryRef);
                 const clanSnap = await tx.get(clanRef);
+                const membershipSnap = useReservations
+                    ? await tx.get(membershipRef)
+                    : null;
+                const deviceSnap = useReservations
+                    ? await tx.get(deviceRef)
+                    : null;
                 if (!clanSnap.exists()) {
                     outcome = "missing";
                     return;
@@ -4054,16 +4545,50 @@
                     outcome = "member";
                     return;
                 }
+                const liveDirectory = directorySnap.exists()
+                    ? (directorySnap.data().clans ?? [])
+                    : [];
+                existingMembership = findDirectoryMembership(
+                    liveDirectory,
+                    { userId: uid, deviceId }
+                );
+                const lockedClanId = membershipSnap?.exists()
+                    ? membershipSnap.data().clanId
+                    : (deviceSnap?.exists() ? deviceSnap.data().clanId : null);
+                if (!existingMembership && lockedClanId) {
+                    const locked = liveDirectory.find(entry => entry?.id === lockedClanId);
+                    existingMembership = {
+                        ...(locked ?? { id: lockedClanId, name: "another clan", tag: "" }),
+                        membershipMatch: membershipSnap?.exists() ? "player" : "device",
+                    };
+                }
+                if (existingMembership) {
+                    outcome = "already-in-clan";
+                    return;
+                }
                 if ((clan.members ?? []).length >= clanMaxMembers()) {
                     outcome = "full";
                     return;
                 }
-                if ((clan.joinRequests ?? []).some(r => r.userId === uid)) {
+                const currentRequests = clan.joinRequests ?? [];
+                const pendingIndex = currentRequests.findIndex(r => r.userId === uid);
+                if (pendingIndex >= 0) {
+                    if (currentRequests[pendingIndex].deviceId !== deviceId) {
+                        const joinRequests = currentRequests.map((request, index) =>
+                            index === pendingIndex
+                                ? { ...request, name: requestName, deviceId }
+                                : request
+                        );
+                        tx.set(clanRef, { joinRequests }, { merge: true });
+                    }
                     outcome = "pending";
                     return;
                 }
                 outcome = "sent";
-                const joinRequests = [...(clan.joinRequests ?? []), { userId: uid, name: requestName }];
+                const joinRequests = [
+                    ...currentRequests,
+                    { userId: uid, name: requestName, deviceId },
+                ];
                 tx.set(clanRef, { joinRequests }, { merge: true });
             });
             if (outcome === "missing") {
@@ -4073,6 +4598,16 @@
             if (outcome === "member") {
                 await loadClanData(true);
                 showToast("You're already in this clan.");
+                renderClanView();
+                return;
+            }
+            if (outcome === "already-in-clan") {
+                await showDialog({
+                    message: clanMembershipMessage(requestName, existingMembership, true),
+                    okLabel: "OK",
+                    cancelLabel: "Close",
+                });
+                await loadClanData(true);
                 renderClanView();
                 return;
             }
@@ -4111,11 +4646,22 @@
         try {
             const clanId = myClan.id;
             const clanRef = fb.doc(fb.db, "clans", clanId);
+            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+            const useReservations = clanReservationsEnabled();
+            const membershipRef = useReservations
+                ? fb.doc(fb.db, "clan_memberships", userId)
+                : null;
             const actorUid = myUserId();
             let committedClan = null;
+            let committedDirectory = null;
+            let existingMembership = null;
+            let requestDisplayName = "This player";
             let outcome = approve ? "approved" : "denied";
             await fb.runTransaction(fb.db, async tx => {
                 committedClan = null;
+                committedDirectory = null;
+                existingMembership = null;
+                const directorySnap = approve ? await tx.get(directoryRef) : null;
                 const clanSnap = await tx.get(clanRef);
                 if (!clanSnap.exists()) {
                     outcome = "missing";
@@ -4133,6 +4679,39 @@
                     outcome = "handled";
                     return;
                 }
+                requestDisplayName = req.name || "This player";
+                const deviceRef = useReservations && req.deviceId
+                    ? fb.doc(fb.db, "clan_devices", req.deviceId)
+                    : null;
+                const membershipSnap = approve && useReservations
+                    ? await tx.get(membershipRef)
+                    : null;
+                const deviceSnap = approve && deviceRef
+                    ? await tx.get(deviceRef)
+                    : null;
+                const liveDirectory = directorySnap?.exists()
+                    ? (directorySnap.data().clans ?? [])
+                    : [];
+                if (approve) {
+                    existingMembership = findDirectoryMembership(
+                        liveDirectory,
+                        { userId, deviceId: req.deviceId }
+                    );
+                    const lockedClanId = membershipSnap?.exists()
+                        ? membershipSnap.data().clanId
+                        : (deviceSnap?.exists() ? deviceSnap.data().clanId : null);
+                    if (!existingMembership && lockedClanId) {
+                        const locked = liveDirectory.find(entry => entry?.id === lockedClanId);
+                        existingMembership = {
+                            ...(locked ?? { id: lockedClanId, name: "another clan", tag: "" }),
+                            membershipMatch: membershipSnap?.exists() ? "player" : "device",
+                        };
+                    }
+                    if (existingMembership) {
+                        outcome = "already-in-clan";
+                        return;
+                    }
+                }
                 if (approve && liveMembers.length >= clanMaxMembers()) {
                     outcome = "full";
                     return;
@@ -4140,16 +4719,82 @@
                 const joinRequests = (liveClan.joinRequests ?? []).filter(r => r.userId !== userId);
                 let members = liveMembers;
                 if (approve && !members.some(m => m.userId === userId)) {
-                    members = [...members, { userId: req.userId, name: req.name, role: "member" }];
+                    members = [
+                        ...members,
+                        {
+                            userId: req.userId,
+                            name: req.name,
+                            role: "member",
+                            ...(req.deviceId ? { deviceId: req.deviceId } : {}),
+                        },
+                    ];
                 }
-                tx.set(clanRef, { joinRequests, members }, { merge: true });
-                committedClan = { ...liveClan, id: clanId, joinRequests, members };
+                let memberStats = liveClan.memberStats;
+                if (approve && req.deviceId) {
+                    const existingStats = liveClan.memberStats?.[userId] ?? {};
+                    const deviceIds = [...new Set([
+                        ...(Array.isArray(existingStats.deviceIds) ? existingStats.deviceIds : []),
+                        req.deviceId,
+                    ])];
+                    memberStats = {
+                        ...(liveClan.memberStats ?? {}),
+                        [userId]: { ...existingStats, deviceIds },
+                    };
+                }
+                const nextClan = {
+                    ...liveClan,
+                    id: clanId,
+                    joinRequests,
+                    members,
+                    ...(memberStats ? { memberStats } : {}),
+                };
+                const reservationFields = approve && useReservations
+                    ? {
+                        memberIds: members.map(member => member.userId),
+                        deviceIds: clanDeviceIds(nextClan),
+                    }
+                    : {};
+                tx.set(clanRef, {
+                    joinRequests,
+                    members,
+                    ...(memberStats ? { memberStats } : {}),
+                    ...reservationFields,
+                }, { merge: true });
+                committedClan = { ...nextClan, ...reservationFields };
+                if (approve) {
+                    committedDirectory = putClanInDirectory(
+                        liveDirectory,
+                        clanDirectoryEntry(clanId, committedClan)
+                    );
+                    tx.set(directoryRef, { clans: committedDirectory });
+                    if (useReservations) {
+                        const deviceIds = req.deviceId ? [req.deviceId] : [];
+                        tx.set(
+                            membershipRef,
+                            clanMembershipRecord(clanId, "member", deviceIds)
+                        );
+                        if (deviceRef) {
+                            tx.set(deviceRef, {
+                                clanId,
+                                userId,
+                                updatedAt: new Date().toISOString(),
+                            });
+                        }
+                    }
+                }
                 outcome = approve ? "approved" : "denied";
             });
             if (!committedClan) {
                 if (outcome === "missing") showToast("That clan no longer exists.");
                 else if (outcome === "forbidden") showToast("Your current role can't approve join requests.");
                 else if (outcome === "full") showToast("That clan is full.");
+                else if (outcome === "already-in-clan") {
+                    await showDialog({
+                        message: clanMembershipMessage(requestDisplayName, existingMembership),
+                        okLabel: "OK",
+                        cancelLabel: "Close",
+                    });
+                }
                 else showToast("That request was already handled.");
                 await loadClanData(true);
                 renderClanView();
@@ -4158,7 +4803,7 @@
 
             dbg(`Join request ${approve ? "approved" : "denied"} for ${userId}`);
             myClan = sanitizeClanDoc(committedClan);
-            await refreshDirectory(fb);
+            if (committedDirectory) clanDirectory = committedDirectory;
             renderClanView();
         } catch (e) {
             pushError(e, "approveRequest");
@@ -4178,17 +4823,76 @@
         }
 
         try {
-            const target = (myClan.members ?? []).find(m => m.userId === userId);
-            if (!target || target.role === "leader") return;
-            // must have perm AND outrank the target (elder can't kick elder)
-            const me = (myClan.members ?? []).find(m => m.userId === myUid);
-            if (!me || !rolePerm(me.role, "kick")) return;
-            if ((ROLE_RANK[target.role] ?? 0) >= (ROLE_RANK[me.role] ?? 0)) return;
-
-            const members = (myClan.members ?? []).filter(m => m.userId !== userId);
-            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
+            const clanId = myClan.id;
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+            const useReservations = clanReservationsEnabled();
+            const membershipRef = useReservations
+                ? fb.doc(fb.db, "clan_memberships", userId)
+                : null;
+            let outcome = "kicked";
+            let committedClan = null;
+            let committedDirectory = null;
+            await fb.runTransaction(fb.db, async tx => {
+                outcome = "kicked";
+                committedClan = null;
+                committedDirectory = null;
+                const directorySnap = await tx.get(directoryRef);
+                const clanSnap = await tx.get(clanRef);
+                if (!clanSnap.exists()) {
+                    outcome = "missing";
+                    return;
+                }
+                const liveClan = clanSnap.data();
+                const target = (liveClan.members ?? []).find(m => m.userId === userId);
+                const actor = (liveClan.members ?? []).find(m => m.userId === myUid);
+                if (!target) {
+                    outcome = "handled";
+                    return;
+                }
+                if (target.role === "leader" || !actor || !rolePerm(actor.role, "kick")
+                    || (ROLE_RANK[target.role] ?? 0) >= (ROLE_RANK[actor.role] ?? 0)) {
+                    outcome = "forbidden";
+                    return;
+                }
+                const members = (liveClan.members ?? []).filter(m => m.userId !== userId);
+                const deviceIds = clanMemberDeviceIds(liveClan, userId);
+                const reservationFields = useReservations
+                    ? {
+                        memberIds: members.map(member => member.userId),
+                        deviceIds: clanDeviceIds({ ...liveClan, members }),
+                    }
+                    : {};
+                committedClan = {
+                    ...liveClan,
+                    id: clanId,
+                    members,
+                    ...reservationFields,
+                };
+                committedDirectory = putClanInDirectory(
+                    directorySnap.exists() ? (directorySnap.data().clans ?? []) : [],
+                    clanDirectoryEntry(clanId, committedClan)
+                );
+                tx.set(clanRef, { members, ...reservationFields }, { merge: true });
+                tx.set(directoryRef, { clans: committedDirectory });
+                if (useReservations) {
+                    tx.delete(membershipRef);
+                    for (const deviceId of deviceIds) {
+                        tx.delete(fb.doc(fb.db, "clan_devices", deviceId));
+                    }
+                }
+            });
+            if (!committedClan) {
+                if (outcome === "missing") showToast("That clan no longer exists.");
+                else if (outcome === "handled") showToast("That player is no longer in the clan.");
+                else showToast("You can't remove that player.");
+                await loadClanData(true);
+                renderClanView();
+                return;
+            }
             dbg(`Clan kick: ${userId} removed, msgLen=${(message ?? "").length}`);
-            myClan.members = members;
+            myClan = sanitizeClanDoc(committedClan);
+            clanDirectory = committedDirectory;
 
             // one-time notice picked up + cleared by the kicked player's HUD
             const notice = {
@@ -4199,7 +4903,6 @@
             };
             await fb.setDoc(fb.doc(fb.db, "clan_notices", userId), notice);
 
-            await refreshDirectory(fb);
             renderClanView();
         } catch (e) {
             pushError(e, "kickMember");
@@ -4237,7 +4940,7 @@
                 await fb.deleteDoc(ref);
             }
         } catch (e) {
-            // Notices should never block the rest of ATLAS.
+            // notices are best-effort, don't spam the user
             dbg("checkClanNotices failed (non-fatal): " + (e && e.message ? e.message : e));
         }
     }
@@ -4281,13 +4984,59 @@
         }
 
         try {
-            const members = (myClan.members ?? []).map(m =>
-                m.userId === userId ? { ...m, role: newRole } : m
-            );
-            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
-            dbg(`Clan role change: ${userId} ${target.role} -> ${newRole}`);
-            myClan.members = members;
-            await refreshDirectory(fb);
+            const clanId = myClan.id;
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const useReservations = clanReservationsEnabled();
+            const membershipRef = useReservations
+                ? fb.doc(fb.db, "clan_memberships", userId)
+                : null;
+            let committedClan = null;
+            let oldRole = target.role;
+            await fb.runTransaction(fb.db, async tx => {
+                committedClan = null;
+                const clanSnap = await tx.get(clanRef);
+                if (useReservations) await tx.get(membershipRef);
+                if (!clanSnap.exists()) return;
+                const liveClan = clanSnap.data();
+                const actor = (liveClan.members ?? []).find(member =>
+                    member.userId === myUid
+                );
+                const liveTarget = (liveClan.members ?? []).find(member =>
+                    member.userId === userId
+                );
+                if (!actor
+                    || !liveTarget
+                    || !canSetRole(actor.role, liveTarget.role, newRole)) {
+                    return;
+                }
+                oldRole = liveTarget.role;
+                const members = (liveClan.members ?? []).map(member =>
+                    member.userId === userId
+                        ? { ...member, role: newRole }
+                        : member
+                );
+                tx.set(clanRef, {
+                    members,
+                    versionNum: SCRIPT_VERSION_NUM,
+                }, { merge: true });
+                if (useReservations) {
+                    tx.set(
+                        membershipRef,
+                        clanMembershipRecord(
+                            clanId,
+                            newRole,
+                            clanMemberDeviceIds(liveClan, userId)
+                        )
+                    );
+                }
+                committedClan = { ...liveClan, id: clanId, members };
+            });
+            if (!committedClan) {
+                showToast("That role could not be changed.");
+                return;
+            }
+            dbg(`Clan role change: ${userId} ${oldRole} -> ${newRole}`);
+            myClan = sanitizeClanDoc(committedClan);
             renderClanView();
         } catch (e) {
             pushError(e, "setMemberRole");
@@ -4307,18 +5056,145 @@
             return;
         }
 
-        // uniqueness, ignore our own clan
-        const nameClash = clanDirectory.some(c => c.id !== myClan.id && (c.name ?? "").toLowerCase() === newName.toLowerCase());
-        const tagClash = clanDirectory.some(c => c.id !== myClan.id && (c.tag ?? "").toLowerCase() === newTag.toLowerCase());
+        const nameClash = clanDirectory.some(c =>
+            c.id !== myClan.id
+            && normalizeClanName(c.name) === normalizeClanName(newName)
+        );
+        const tagClash = clanDirectory.some(c =>
+            c.id !== myClan.id
+            && sanitizeClanTag(c.tag) === sanitizeClanTag(newTag)
+        );
         if (nameClash) { showToast("A clan with that name already exists."); return; }
         if (tagClash) { showToast("That tag is already taken."); return; }
 
         try {
-            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { name: newName, tag: newTag }, { merge: true });
+            const clanId = myClan.id;
+            const actorUid = myUserId();
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+            const useReservations = clanReservationsEnabled();
+            let outcome = "updated";
+            let committedClan = null;
+            let committedDirectory = null;
+            await fb.runTransaction(fb.db, async tx => {
+                outcome = "updated";
+                committedClan = null;
+                committedDirectory = null;
+                const directorySnap = await tx.get(directoryRef);
+                const clanSnap = await tx.get(clanRef);
+                if (!clanSnap.exists()) {
+                    outcome = "missing";
+                    return;
+                }
+                const liveClan = clanSnap.data();
+                const actor = (liveClan.members ?? []).find(member =>
+                    member.userId === actorUid
+                );
+                if (!actor || !rolePerm(actor.role, "editClanInfo")) {
+                    outcome = "forbidden";
+                    return;
+                }
+                const liveDirectory = directorySnap.exists()
+                    ? (directorySnap.data().clans ?? [])
+                    : [];
+                if (liveDirectory.some(entry =>
+                    entry?.id !== clanId
+                    && normalizeClanName(entry?.name) === normalizeClanName(newName)
+                )) {
+                    outcome = "name-taken";
+                    return;
+                }
+                if (liveDirectory.some(entry =>
+                    entry?.id !== clanId
+                    && sanitizeClanTag(entry?.tag) === sanitizeClanTag(newTag)
+                )) {
+                    outcome = "tag-taken";
+                    return;
+                }
+
+                let oldNameRef = null;
+                let newNameRef = null;
+                let oldTagRef = null;
+                let newTagRef = null;
+                if (useReservations) {
+                    const oldNameKey = await clanNameReservationId(liveClan.name);
+                    const newNameKey = await clanNameReservationId(newName);
+                    oldNameRef = fb.doc(fb.db, "clan_name_keys", oldNameKey);
+                    newNameRef = fb.doc(fb.db, "clan_name_keys", newNameKey);
+                    oldTagRef = fb.doc(
+                        fb.db,
+                        "clan_tag_keys",
+                        sanitizeClanTag(liveClan.tag)
+                    );
+                    newTagRef = fb.doc(
+                        fb.db,
+                        "clan_tag_keys",
+                        sanitizeClanTag(newTag)
+                    );
+                    const newNameSnap = await tx.get(newNameRef);
+                    const newTagSnap = await tx.get(newTagRef);
+                    if (newNameSnap.exists()
+                        && newNameSnap.data().clanId !== clanId) {
+                        outcome = "name-taken";
+                        return;
+                    }
+                    if (newTagSnap.exists()
+                        && newTagSnap.data().clanId !== clanId) {
+                        outcome = "tag-taken";
+                        return;
+                    }
+                }
+
+                committedClan = {
+                    ...liveClan,
+                    id: clanId,
+                    name: newName,
+                    tag: sanitizeClanTag(newTag),
+                    ...(useReservations ? {
+                        nameKey: newNameRef.id,
+                        tagKey: newTagRef.id,
+                        normalizedName: normalizeClanName(newName),
+                    } : {}),
+                };
+                committedDirectory = putClanInDirectory(
+                    liveDirectory,
+                    clanDirectoryEntry(clanId, committedClan)
+                );
+                tx.set(clanRef, {
+                    name: newName,
+                    tag: sanitizeClanTag(newTag),
+                    versionNum: SCRIPT_VERSION_NUM,
+                    ...(useReservations ? {
+                        nameKey: newNameRef.id,
+                        tagKey: newTagRef.id,
+                        normalizedName: normalizeClanName(newName),
+                    } : {}),
+                }, { merge: true });
+                tx.set(directoryRef, { clans: committedDirectory });
+                if (useReservations) {
+                    if (oldNameRef.path !== newNameRef.path) tx.delete(oldNameRef);
+                    if (oldTagRef.path !== newTagRef.path) tx.delete(oldTagRef);
+                    tx.set(newNameRef, {
+                        clanId,
+                        name: newName,
+                        normalizedName: normalizeClanName(newName),
+                    });
+                    tx.set(newTagRef, {
+                        clanId,
+                        tag: sanitizeClanTag(newTag),
+                    });
+                }
+            });
+            if (!committedClan) {
+                if (outcome === "missing") showToast("That clan no longer exists.");
+                else if (outcome === "forbidden") showToast("You can't edit this clan.");
+                else if (outcome === "name-taken") showToast("A clan with that name already exists.");
+                else if (outcome === "tag-taken") showToast("That tag is already taken.");
+                return;
+            }
             dbg(`Clan edited: name="${newName}" tag="${newTag}"`);
-            myClan.name = newName;
-            myClan.tag = newTag;
-            await refreshDirectory(fb);
+            myClan = sanitizeClanDoc(committedClan);
+            clanDirectory = committedDirectory;
             showToast("Clan updated! Tag refreshes on members' next match.");
             renderClanView();
         } catch (e) {
@@ -4376,16 +5252,111 @@
         }
 
         try {
-            const members = (myClan.members ?? []).map(m => {
-                if (m.userId === userId) return { ...m, role: "leader" };
-                if (m.userId === myUid) return { ...m, role: "coleader" };
-                return m;
+            const clanId = myClan.id;
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+            const useReservations = clanReservationsEnabled();
+            const oldLeaderRef = useReservations
+                ? fb.doc(fb.db, "clan_memberships", myUid)
+                : null;
+            const newLeaderRef = useReservations
+                ? fb.doc(fb.db, "clan_memberships", userId)
+                : null;
+            let outcome = "transferred";
+            let committedClan = null;
+            let committedDirectory = null;
+            await fb.runTransaction(fb.db, async tx => {
+                outcome = "transferred";
+                committedClan = null;
+                committedDirectory = null;
+                const directorySnap = await tx.get(directoryRef);
+                const clanSnap = await tx.get(clanRef);
+                if (useReservations) {
+                    await tx.get(oldLeaderRef);
+                    await tx.get(newLeaderRef);
+                }
+                if (!clanSnap.exists()) {
+                    outcome = "missing";
+                    return;
+                }
+                const liveClan = clanSnap.data();
+                const actor = (liveClan.members ?? []).find(member =>
+                    member.userId === myUid
+                );
+                const target = (liveClan.members ?? []).find(member =>
+                    member.userId === userId
+                );
+                if (liveClan.leaderId !== myUid
+                    || !actor
+                    || !target
+                    || !rolePerm(actor.role, "transfer")) {
+                    outcome = "forbidden";
+                    return;
+                }
+                const members = (liveClan.members ?? []).map(member => {
+                    if (member.userId === userId) return { ...member, role: "leader" };
+                    if (member.userId === myUid) return { ...member, role: "coleader" };
+                    return member;
+                });
+                const newLeaderDevices = clanMemberDeviceIds(liveClan, userId);
+                if (useReservations && !newLeaderDevices.length) {
+                    outcome = "target-device-missing";
+                    return;
+                }
+                committedClan = {
+                    ...liveClan,
+                    id: clanId,
+                    members,
+                    leaderId: userId,
+                    ...(useReservations && newLeaderDevices[0]
+                        ? { deviceId: newLeaderDevices[0] }
+                        : {}),
+                };
+                committedDirectory = putClanInDirectory(
+                    directorySnap.exists() ? (directorySnap.data().clans ?? []) : [],
+                    clanDirectoryEntry(clanId, committedClan)
+                );
+                tx.set(clanRef, {
+                    members,
+                    leaderId: userId,
+                    versionNum: SCRIPT_VERSION_NUM,
+                    ...(useReservations && newLeaderDevices[0]
+                        ? { deviceId: newLeaderDevices[0] }
+                        : {}),
+                }, { merge: true });
+                tx.set(directoryRef, { clans: committedDirectory });
+                if (useReservations) {
+                    tx.set(
+                        oldLeaderRef,
+                        clanMembershipRecord(
+                            clanId,
+                            "coleader",
+                            clanMemberDeviceIds(liveClan, myUid)
+                        )
+                    );
+                    tx.set(
+                        newLeaderRef,
+                        clanMembershipRecord(
+                            clanId,
+                            "leader",
+                            newLeaderDevices
+                        )
+                    );
+                }
             });
-            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members, leaderId: userId }, { merge: true });
+            if (!committedClan) {
+                if (outcome === "missing") {
+                    showToast("That clan no longer exists.");
+                } else if (outcome === "target-device-missing") {
+                    showToast("That player needs to open the latest ATLAS before becoming leader.");
+                } else {
+                    showToast("Leadership could not be transferred.");
+                }
+                return;
+            }
             dbg(`Clan leadership transferred to ${userId}`);
-            myClan.members = members;
-            myClan.leaderId = userId;
-            await refreshDirectory(fb);
+            myClan = sanitizeClanDoc(committedClan);
+            clanDirectory = committedDirectory;
             renderClanView();
         } catch (e) {
             pushError(e, "transferLeadership");
@@ -4529,33 +5500,113 @@
         }
 
         try {
-            const isLeader = myClan.leaderId === uid;
-            const isSoloLeader = isLeader && (myClan.members ?? []).length === 1;
-            // disband would erase every contribution the clan has scored
-            if (isSoloLeader && !eventPerm("allowDisband")) {
-                showToast("Disbanding is locked during this event.");
+            const clanId = myClan.id;
+            const clanRef = fb.doc(fb.db, "clans", clanId);
+            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+            const useReservations = clanReservationsEnabled();
+            const membershipRef = useReservations
+                ? fb.doc(fb.db, "clan_memberships", uid)
+                : null;
+            let outcome = "left";
+            let committedDirectory = null;
+            await fb.runTransaction(fb.db, async tx => {
+                outcome = "left";
+                committedDirectory = null;
+                const directorySnap = await tx.get(directoryRef);
+                const clanSnap = await tx.get(clanRef);
+                if (!clanSnap.exists()) {
+                    outcome = "missing";
+                    return;
+                }
+                const liveClan = clanSnap.data();
+                const liveMembers = liveClan.members ?? [];
+                const member = liveMembers.find(candidate => candidate.userId === uid);
+                if (!member) {
+                    outcome = "handled";
+                    return;
+                }
+                const isLeader = liveClan.leaderId === uid;
+                const isSoloLeader = isLeader && liveMembers.length === 1;
+                const deviceIds = clanMemberDeviceIds(liveClan, uid);
+                if (!isLeader && !eventPerm("allowLeave")) {
+                    outcome = "leave-locked";
+                    return;
+                }
+                if (isSoloLeader && !eventPerm("allowDisband")) {
+                    outcome = "disband-locked";
+                    return;
+                }
+                if (isSoloLeader && !rolePerm(member.role, "disband")) {
+                    outcome = "disband-disabled";
+                    return;
+                }
+                if (isLeader && liveMembers.length > 1) {
+                    outcome = "transfer-first";
+                    return;
+                }
+                const liveDirectory = directorySnap.exists()
+                    ? (directorySnap.data().clans ?? [])
+                    : [];
+                if (isLeader) {
+                    outcome = "disbanded";
+                    committedDirectory = removeClanFromDirectory(liveDirectory, clanId);
+                    if (useReservations) {
+                        const nameKey = await clanNameReservationId(liveClan.name);
+                        tx.delete(fb.doc(fb.db, "clan_name_keys", nameKey));
+                        tx.delete(fb.doc(
+                            fb.db,
+                            "clan_tag_keys",
+                            sanitizeClanTag(liveClan.tag)
+                        ));
+                    }
+                    tx.delete(clanRef);
+                } else {
+                    const members = liveMembers.filter(candidate => candidate.userId !== uid);
+                    const reservationFields = useReservations
+                        ? {
+                            memberIds: members.map(member => member.userId),
+                            deviceIds: clanDeviceIds({ ...liveClan, members }),
+                        }
+                        : {};
+                    const nextClan = {
+                        ...liveClan,
+                        id: clanId,
+                        members,
+                        ...reservationFields,
+                    };
+                    committedDirectory = putClanInDirectory(
+                        liveDirectory,
+                        clanDirectoryEntry(clanId, nextClan)
+                    );
+                    tx.set(clanRef, {
+                        members,
+                        ...reservationFields,
+                    }, { merge: true });
+                }
+                tx.set(directoryRef, { clans: committedDirectory });
+                if (useReservations) {
+                    tx.delete(membershipRef);
+                    for (const deviceId of deviceIds) {
+                        tx.delete(fb.doc(fb.db, "clan_devices", deviceId));
+                    }
+                }
+            });
+            if (!committedDirectory) {
+                if (outcome === "leave-locked") showToast("Can't leave during an active event -- ask leader to kick.");
+                else if (outcome === "disband-locked") showToast("Disbanding is locked during this event.");
+                else if (outcome === "disband-disabled") showToast("Disbanding is currently disabled.");
+                else if (outcome === "transfer-first") showToast("Transfer leadership or remove others before leaving.");
+                else showToast("You are no longer in that clan.");
+                await loadClanData(true);
+                renderClanView();
                 return;
             }
-            if (isSoloLeader && !rolePerm(myClanRole(), "disband")) {
-                showToast("Disbanding is currently disabled.");
-                return;
-            }
-            if (isLeader && (myClan.members ?? []).length > 1) {
-                showToast("Transfer leadership or remove others before leaving.");
-                return;
-            }
-            if (isLeader) {
-                // solo leader = disband
-                dbg(`Clan disbanded (solo leader): ${myClan.id}`);
-                detachClanListener();
-                await fb.deleteDoc(fb.doc(fb.db, "clans", myClan.id));
-            } else {
-                dbg(`Clan left: ${myClan.id}`);
-                const members = (myClan.members ?? []).filter(m => m.userId !== uid);
-                await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { members }, { merge: true });
-            }
+            dbg(outcome === "disbanded"
+                ? `Clan disbanded (solo leader): ${clanId}`
+                : `Clan left: ${clanId}`);
+            detachClanListener();
             myClan = null;
-            await refreshDirectory(fb);
+            clanDirectory = committedDirectory;
             renderClanView();
         } catch (e) {
             pushError(e, "leaveClan");
@@ -4682,7 +5733,8 @@
             if (tagEl.value !== clean) tagEl.value = clean;
         });
 
-        document.getElementById("rgClanCreateGo").onclick = () => {
+        const createButton = document.getElementById("rgClanCreateGo");
+        createButton.onclick = async () => {
             const name = nameEl.value.trim();
             const tag = sanitizeClanTag(tagEl.value);
             if (name.length === 0 || name.length > 24) { errEl.textContent = "Name must be 1-24 characters."; return; }
@@ -4692,7 +5744,16 @@
             if (clanDirectory.some(c => (c.tag ?? "").toLowerCase() === tag.toLowerCase())) {
                 errEl.textContent = "That tag is already taken."; return;
             }
-            createClan(name, tag);
+            createButton.disabled = true;
+            createButton.textContent = "Creating...";
+            try {
+                await createClan(name, tag);
+            } finally {
+                if (createButton.isConnected) {
+                    createButton.disabled = false;
+                    createButton.textContent = "Create";
+                }
+            }
         };
         document.getElementById("rgClanCreateCancel").onclick = renderClanView;
     }
