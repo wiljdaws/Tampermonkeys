@@ -1,4 +1,4 @@
-# ATLAS 16.0 release and incident runbook
+# ATLAS 16.1 release and incident runbook
 
 This is the approved forced mid-event upgrade path. Use one reviewed release
 window. Stop if a device is missing, a conflict is unresolved, scoring changes,
@@ -50,8 +50,8 @@ archive again, and make a new plan.
 
 ## 5. Roll out
 
-1. Publish the tested websites and ATLAS 16.0 compatibility client.
-2. Verify the update URLs serve 16.0 and the two websites load normally.
+1. Publish the tested websites and ATLAS 16.1 compatibility client.
+2. Verify the update URLs serve 16.1 and the two websites load normally.
 3. **APPROVAL-GATED PRODUCTION MUTATION:** enable compatibility writes. This
    forced rollout does not wait for passive adoption; the final rules and
    `minVersion` block older writers.
@@ -65,7 +65,7 @@ npm run verify:baseline -- <before-manifest> <after-manifest>
 
 6. Require exact roster, score, baseline, directory, and reservation parity.
 7. **APPROVAL-GATED PRODUCTION MUTATION:** deploy indexes, wait until ready,
-   deploy final rules, enable reservations, set `minVersion` to `16.0`, disable
+   deploy final rules, enable reservations, set `minVersion` to `16.1`, disable
    compatibility writes, and unfreeze actions.
 
 Never combine steps 4 and 7 under one approval.

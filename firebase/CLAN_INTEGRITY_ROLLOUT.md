@@ -1,4 +1,4 @@
-# ATLAS 16.0 clan integrity rollout
+# ATLAS 16.1 clan integrity rollout
 
 This is the approved forced mid-event migration. Use
 `INCIDENT_RELEASE_RUNBOOK.md` as the command checklist.
@@ -53,7 +53,7 @@ The dry run does not request a credential or contact Firebase.
 
 ## Production order
 
-1. Publish ATLAS 16.0 and compatible websites with reservations off.
+1. Publish ATLAS 16.1 and compatible websites with reservations off.
 2. Verify the update URL and both websites before forcing older writers off.
 3. Set `admin/migration.allowLegacyClanWrites` to `true`.
 4. Freeze all structural clan actions.
@@ -67,7 +67,7 @@ The dry run does not request a credential or contact Firebase.
 12. Deploy the additive indexes and wait for `playlist + wins DESC` to finish.
 13. Deploy `firestore.rules`.
 14. Enable reservations.
-15. Set `admin/blacklist.minVersion` to `16.0`.
+15. Set `admin/blacklist.minVersion` to `16.1`.
 16. Set `admin/migration.allowLegacyClanWrites` to `false`.
 17. Smoke-test all normal clan actions and authenticated admin disband.
 18. Unfreeze actions.
@@ -96,7 +96,7 @@ resulting rekey and deletion still needs its operation ID in
 2. Disable reservations.
 3. Restore the reviewed pre-change rules and indexes.
 4. Restore the previous minimum version.
-5. Turn compatibility writes back on only if needed for ATLAS 16.0.
+5. Turn compatibility writes back on only if needed for ATLAS 16.1.
 6. Keep migrated lock and directory documents in place.
 7. Do not perform cleanup or restore writes without a new reviewed plan, exact
    hash, approvals file, and expected document preconditions.

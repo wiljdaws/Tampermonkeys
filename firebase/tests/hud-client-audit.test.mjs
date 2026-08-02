@@ -74,7 +74,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "16.0");
+  assert.equal(version, "16.1");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -109,6 +109,34 @@ test("every client mutation path uses the central version gate", () => {
   const gate = hudFunctionSource("atlasMutationAllowed");
   assert.match(gate, /isUpdateRequired\(fb\)/);
   assert.match(gate, /showUpdateRequiredUI\(\)/);
+});
+
+test("every clan write carries the forced-upgrade version", () => {
+  const atlasStampedMutationData = extractHudFunction(
+    "atlasStampedMutationData",
+    {
+      SCRIPT_VERSION: "16.1",
+      SCRIPT_VERSION_NUM: 16.1,
+    },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(atlasStampedMutationData(
+      { path: "clans/clan-one" },
+      { totalMMR: 1234 },
+    ))),
+    {
+      totalMMR: 1234,
+      scriptVersion: "16.1",
+      versionNum: 16.1,
+    },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(atlasStampedMutationData(
+      { path: "clans_directory/clan-one" },
+      { totalMMR: 1234 },
+    ))),
+    { totalMMR: 1234 },
+  );
 });
 
 test("outdated clients see one update UI while reads stay available", async () => {
