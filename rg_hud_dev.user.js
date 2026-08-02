@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      14.12-dev
+// @version      14.13-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -4890,7 +4890,10 @@
   let _currentUserId = null;
   let _lastRawNickname = '';
   const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
-  const HISTORY_KEY = 'rgNameForge.history.v1';
+  function nameForgeHistoryKey(userId) {
+    return 'rgNameForge.history.v2.' + (userId || 'anon');
+  }
+  const historyKey = () => nameForgeHistoryKey(_currentUserId);
   // steal receipt. boot-time SetNickname echo can undo a fresh steal, so we
   // re-apply once after boot if the login nickname doesn't match.
   const pendingStealKey = () => 'rgNameForge.pendingSteal.v1.' + (_currentUserId || 'anon');
@@ -5004,6 +5007,30 @@
       titleOn: Boolean(titleText),
       titleText,
     };
+  }
+
+  function updatedRecentHistory(history, entry) {
+    const entries = Array.isArray(history) ? history : [];
+    return [
+      entry,
+      ...entries.filter(item => item && item.code !== entry.code),
+    ].slice(0, 5);
+  }
+
+  function recordRecentApply(code, rawCode = code) {
+    const editableName = editableFieldsFromRaw(rawCode).name;
+    const plain = editableName
+      .replace(/<sprite=\d+\s*>/gi, '')
+      .trim()
+      .slice(0, 24) || '(markup only)';
+    const entry = {
+      code: String(code),
+      rawCode: String(rawCode),
+      plain,
+      ts: Date.now(),
+    };
+    const history = loadJSON(historyKey(), []);
+    saveJSON(historyKey(), updatedRecentHistory(history, entry));
   }
 
   function syncEditableFieldsFromRaw(raw) {
@@ -6427,10 +6454,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
               if (r.ok) {
                 setRawSnapshot(raw);
                 _lastRawNickname = raw;
-                const hist = loadJSON(HISTORY_KEY, []);
-                const plain = raw.replace(/<[^>]*>/g, '').trim().slice(0, 24) || '(markup only)';
-                hist.unshift({ code: codeApplied, plain, ts: Date.now() });
-                saveJSON(HISTORY_KEY, hist.slice(0, 5));
+                recordRecentApply(codeApplied, raw);
                 render(panel);
                 showImposterReveal(raw);
                 return;
@@ -6613,18 +6637,21 @@ _rgnfFab = fab; _rgnfPanel = panel;
     ]));
 
     // last 5 applies. 💾 promotes to a permanent preset before it rotates out.
-    const hist = loadJSON(HISTORY_KEY, []);
+    const hist = loadJSON(historyKey(), []);
     if (hist.length) {
       secPresets.appendChild(el('h4', { text: 'Recently applied (auto — newest 5 only)' }));
       const histWrap = el('div', { class: 'rgnf-presets' });
       hist.forEach((h) => {
+        const recentPreview = el('span', { title: h.code });
+        recentPreview.style.cssText = 'flex:1;overflow:hidden;max-height:44px;white-space:normal;';
+        recentPreview.appendChild(renderRawTMP(h.code));
         histWrap.appendChild(el('div', { class: 'rgnf-preset' }, [
-          el('span', { text: h.plain, title: h.code }),
+          recentPreview,
           el('button', {
             class: 'rgnf-chip', text: '💾', title: 'Save this as a permanent preset',
             onclick: () => {
               // strip the clan-tag prefix, the checkbox owns it
-              let code = h.code;
+              let code = h.rawCode || h.code;
               const pfx = _prefix();
               if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
               const snap = Object.assign(defaultState(), { rawCode: code });
@@ -6661,11 +6688,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
                 const r = await applyNicknameStable(h.code, h.code);
                 if (r.ok) {
                   // load what was applied into preview so the screen matches live
-                  let code = h.code;
+                  let code = h.rawCode || h.code;
                   const pfx = _prefix();
                   if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
                   setRawSnapshot(code);
                   _lastRawNickname = code;
+                  recordRecentApply(h.code, code);
                   render(panel);
                   return;
                 }
@@ -6678,7 +6706,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       });
       histWrap.appendChild(el('button', {
         class: 'rgnf-chip', text: 'Clear history',
-        onclick: () => { saveJSON(HISTORY_KEY, []); render(panel); },
+        onclick: () => { saveJSON(historyKey(), []); render(panel); },
       }));
       secPresets.appendChild(histWrap);
     }
@@ -6700,12 +6728,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
           _lastRawNickname = state.rawCode ? state.rawCode : buildCode(state);
           const result = await applyNicknameStable(codeApplied, _lastRawNickname);
           if (result.ok) {
-            statusLine.className = 'rgnf-status ok';
-            statusLine.textContent = '✓ Nickname updated';
-            const hist = loadJSON(HISTORY_KEY, []);
-            const plain = state.name.replace(/<[^>]*>/g, '').slice(0, 24) || '(sprites only)';
-            hist.unshift({ code: codeApplied, plain, ts: Date.now() });
-            saveJSON(HISTORY_KEY, hist.slice(0, 5));
+            recordRecentApply(codeApplied, _lastRawNickname);
+            render(panel);
+            const refreshedStatus = panel.querySelector('.rgnf-status');
+            if (refreshedStatus) {
+              refreshedStatus.className = 'rgnf-status ok';
+              refreshedStatus.textContent = '✓ Nickname updated';
+            }
           } else {
             statusLine.className = 'rgnf-status err';
             statusLine.textContent = `✗ ${result.status}: ${result.body.slice(0, 120)}`;
