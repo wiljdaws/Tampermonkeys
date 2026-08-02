@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      15.2-dev
+// @version      15.3-dev
 // @description  Dev build of ATLAS. Testing match popup, Name Forge, and clan race-condition fixes. Install alongside the prod ATLAS to compare.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -349,7 +349,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5076,6 +5076,83 @@
     };
   }
 
+  function editableGlyphs(text) {
+    const glyphs = [];
+    const value = String(text ?? '');
+    for (let i = 0; i < value.length;) {
+      const sprite = value.slice(i).match(/^<sprite=\d+\s*>/i);
+      if (sprite) {
+        glyphs.push(sprite[0]);
+        i += sprite[0].length;
+        continue;
+      }
+      const glyph = String.fromCodePoint(value.codePointAt(i));
+      glyphs.push(glyph);
+      i += glyph.length;
+    }
+    return glyphs;
+  }
+
+  function replaceRawVisibleText(raw, nextText) {
+    const replacements = editableGlyphs(nextText);
+    const value = String(raw ?? '');
+    const tokens = [];
+    for (let i = 0; i < value.length;) {
+      if (value[i] === '<') {
+        const close = value.indexOf('>', i);
+        if (close >= 0) {
+          const tag = value.slice(i, close + 1);
+          tokens.push({
+            type: /^<sprite=\d+\s*>$/i.test(tag) ? 'visible' : 'tag',
+            value: tag,
+          });
+          i = close + 1;
+          continue;
+        }
+      }
+      const glyph = String.fromCodePoint(value.codePointAt(i));
+      tokens.push({ type: 'visible', value: glyph });
+      i += glyph.length;
+    }
+    let lastVisible = -1;
+    tokens.forEach((token, index) => {
+      if (token.type === 'visible') lastVisible = index;
+    });
+    let replacementIndex = 0;
+    let output = '';
+    let trailingTags = '';
+    tokens.forEach((token, index) => {
+      if (index > lastVisible && token.type === 'tag') {
+        trailingTags += token.value;
+      } else if (token.type === 'tag') {
+        output += token.value;
+      } else if (replacementIndex < replacements.length) {
+        output += replacements[replacementIndex++];
+      }
+    });
+    if (lastVisible < 0) {
+      output = '';
+      trailingTags = tokens.map(token => token.value).join('');
+    }
+    return output
+      + replacements.slice(replacementIndex).join('')
+      + trailingTags;
+  }
+
+  function replaceRawTitleText(raw, nextTitle) {
+    const value = String(raw ?? '');
+    const lineBreak = /<br\s*\/?\s*>|\r\n?|\n/gi;
+    let match;
+    let lastBreak = null;
+    while ((match = lineBreak.exec(value)) !== null) lastBreak = match;
+    if (!lastBreak) {
+      return nextTitle ? value + '<br>' + nextTitle : value;
+    }
+    const titleStart = lastBreak.index + lastBreak[0].length;
+    return value.slice(0, titleStart)
+      + replaceRawVisibleText(value.slice(titleStart), nextTitle);
+  }
+
   function updatedRecentHistory(history, entry) {
     const entries = Array.isArray(history) ? history : [];
     return [
@@ -6128,7 +6205,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         if (t.closest('.rgnf-modebar') || t.closest('.rgnf-actions-sec')
             || t.closest('.rgnf-preview-sec') || t.closest('.rgnf-preview')
             || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-imposter-sec')
-            || t.closest('.rgnf-scored-sec')
+            || t.closest('.rgnf-scored-sec') || t.closest('.rgnf-raw-text-safe')
             || t.closest('.rgnf-head')) return;
         syncEditableFieldsFromRaw(state.rawCode);
         state.rawCode = null;
@@ -6393,7 +6470,20 @@ _rgnfFab = fab; _rgnfPanel = panel;
     if (state.titleOn) {
       // text input
       secTitle.appendChild(el('div', { class: 'rgnf-row' }, [
-        el('input', { type: 'text', placeholder: 'e.g. RGC FINALIST', value: state.titleText, oninput: (e) => { state.titleText = e.target.value; refreshPreview(); } }),
+        el('input', {
+          class: 'rgnf-raw-text-safe',
+          type: 'text',
+          placeholder: 'e.g. RGC FINALIST',
+          value: state.titleText,
+          oninput: (e) => {
+            const nextTitle = e.target.value;
+            if (typeof state.rawCode === 'string') {
+              state.rawCode = replaceRawTitleText(state.rawCode, nextTitle);
+            }
+            state.titleText = nextTitle;
+            refreshPreview();
+          },
+        }),
       ]));
       // color mode
       const tm = el('div', { class: 'rgnf-row' });
