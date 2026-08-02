@@ -126,6 +126,7 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 - The title also reacts to your session: *Heating Up* → *ON FIRE* → *Flow State* when you're locked in, *Ice Cold* when you're not. There's a couple easter eggs in there too
 - RGB glow you can customize (colors, speed, brightness) - and it speeds up when you're on fire
 - Miss the old 🚀 Rocket Goal HUD title? There's an **OG Title** toggle in settings
+- Optional network RTT tracker that updates while you play without covering the scoreboard
 - Drag it anywhere, minimize it, and it hides itself during matches automatically
 
 ## 🏆 Community Leaderboard
@@ -133,6 +134,14 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 - Your stats auto-sync to the [community leaderboard](https://abuarqob.github.io/rgleaderboard/) after every match - nothing to do manually
 - Pick your own display name, rename whenever
 - The anti-cheat is real: server-side rules, device blacklisting, forged-stat detection, and old exploited versions get force-updated
+
+## 🎯 Ranked Player Popups
+
+- Shows ranked teammates and opponents when a match starts
+- Separate teammate and opponent toggles
+- Choose the maximum rank, how long each card stays up, and which screen corner it uses
+- Handles 1v1, 2v2, 3v3, late roster messages, and back-to-back matches
+- Follows your browser's reduced-motion setting
 
 ## 🛡️ Clans
 
@@ -177,17 +186,12 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 - Yes, there's an Among Us role reveal when you do it
 - Profane names get filtered out, and you can't accidentally steal your own name
 
-## 🚗 Rocket Buddy
+## 🧰 Support and diagnostics
 
-- Your own animated tamagotchi that lives in the HUD. Give them a name and drag them along for the ride
-- 5 evolution stages: **Ignition → Rookie Booster → Ace Racer → Champion Ride → Legendary Fleet**. Later stages need both matches played *and* a high enough peak rank - a fresh install can't skip to the top just because you're already good
-- Only matches you play *after* installing ATLAS count toward your buddy - nothing is retroactive, no shortcuts
-- Moods react live to how you're playing: 🎯 Focused, 🔥 On fire, ❄ Frosty, 💤 Sleepy, 😢 Neglected - each with its own sprite animation
-- Energy bar that decays as you idle. Play a match or hit the **🫳 Pet** button (1-hour cooldown) to top it back up
-- Chatty status blurbs after wins, losses, streaks, evolutions, and long absences - so your buddy actually reacts to the session
-- Toast alerts and a banner when they evolve to the next stage
-- **Equip** them to pin a mini sprite next to your streak badge in the main HUD
-- 100% local to your device - no server sync, no leaderboard exposure, switch accounts and the same buddy stays with you
+- ATLAS keeps debug logging enabled so problems leave useful clues
+- Settings → **Download debug bundle** saves a `.txt` file you can attach to a bug report
+- Support downloads remove your persistent device ID, player ID, and full browser user agent
+- The bundle still includes the ATLAS version, screen size, recent warnings, errors, and match state
 
 ---
 

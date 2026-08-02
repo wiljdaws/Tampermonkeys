@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      15.0
+// @version      15.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -48,6 +48,12 @@
         } catch (loggingFailed) {
             try { oldLog.call(console, "[RG HUD] pushError failed:", loggingFailed); } catch (e) {}
         }
+    }
+    function redactSupportText(value, secrets = []) {
+        let safe = String(value ?? "");
+        const unique = [...new Set(secrets.map(secret => String(secret ?? "")).filter(secret => secret.length >= 3))];
+        for (const secret of unique) safe = safe.split(secret).join("[redacted]");
+        return safe;
     }
     // trace focus + first keystroke on an input so "can't type" bugs leave a trail
     function probeInput(el, label) {
@@ -144,6 +150,12 @@
         ogTitle: false,
         // coarse browser estimate; never presented as exact Photon ping
         pingTrackerEnabled: false,
+        popupShowOpponents: true,
+        popupShowTeammates: true,
+        popupMaxRank: 100,
+        // 0 follows the server default, which is currently six seconds
+        popupDurationMs: 0,
+        popupPosition: "top-right",
     };
 
     let settings = { ...DEFAULT_SETTINGS };
@@ -349,7 +361,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -539,6 +551,12 @@
                         <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
+                        <div style="border-top:1px solid #00bfff33;margin:6px 0 4px;padding-top:5px;font-size:10px;color:#7ec8ff;text-transform:uppercase;letter-spacing:.7px;">Ranked player popups</div>
+                        <div class="rgSettingRow"><span>Opponents</span><input type="checkbox" id="rgSetPopupOpponents"></div>
+                        <div class="rgSettingRow"><span>Teammates</span><input type="checkbox" id="rgSetPopupTeammates"></div>
+                        <div class="rgSettingRow"><span>Show through rank</span><input type="number" id="rgSetPopupMaxRank" min="1" max="100" step="1" style="width:62px;"></div>
+                        <div class="rgSettingRow"><span>Duration</span><select id="rgSetPopupDuration" style="width:112px;"><option value="0">ATLAS default</option><option value="3000">3 seconds</option><option value="6000">6 seconds</option><option value="10000">10 seconds</option></select></div>
+                        <div class="rgSettingRow"><span>Corner</span><select id="rgSetPopupPosition" style="width:112px;"><option value="top-right">Top right</option><option value="top-left">Top left</option><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
                     </div>
@@ -705,7 +723,13 @@
 
         const setOgTitle = document.getElementById("rgSetOgTitle");
         const setPingTracker = document.getElementById("rgSetPingTracker");
+        const setPopupOpponents = document.getElementById("rgSetPopupOpponents");
+        const setPopupTeammates = document.getElementById("rgSetPopupTeammates");
+        const setPopupMaxRank = document.getElementById("rgSetPopupMaxRank");
+        const setPopupDuration = document.getElementById("rgSetPopupDuration");
+        const setPopupPosition = document.getElementById("rgSetPopupPosition");
         function syncSettingInputs() {
+            const popup = normalizePopupPreferences(settings);
             setOgTitle.checked = !!settings.ogTitle;
             setPingTracker.checked = !!settings.pingTrackerEnabled;
             setGlow.checked = settings.glowEnabled;
@@ -713,6 +737,11 @@
             setOpacity.value = settings.glowOpacity;
             setColor1.value = settings.glowColor1;
             setColor2.value = settings.glowColor2;
+            setPopupOpponents.checked = popup.showOpponents;
+            setPopupTeammates.checked = popup.showTeammates;
+            setPopupMaxRank.value = popup.maxRank;
+            setPopupDuration.value = String(popup.durationMs);
+            setPopupPosition.value = popup.position;
         }
         syncSettingInputs();
 
@@ -731,13 +760,40 @@
         setOpacity.oninput = () => { settings.glowOpacity = parseFloat(setOpacity.value); saveSettings(); applyGlowSettings(); };
         setColor1.oninput = () => { settings.glowColor1 = setColor1.value; saveSettings(); applyGlowSettings(); };
         setColor2.oninput = () => { settings.glowColor2 = setColor2.value; saveSettings(); applyGlowSettings(); };
+        setPopupOpponents.onchange = () => {
+            settings.popupShowOpponents = setPopupOpponents.checked;
+            saveSettings();
+            applyPopupPreferencesToOpenStack();
+        };
+        setPopupTeammates.onchange = () => {
+            settings.popupShowTeammates = setPopupTeammates.checked;
+            saveSettings();
+            applyPopupPreferencesToOpenStack();
+        };
+        setPopupMaxRank.onchange = () => {
+            settings.popupMaxRank = Math.max(1, Math.min(100, Number(setPopupMaxRank.value) || 100));
+            setPopupMaxRank.value = settings.popupMaxRank;
+            saveSettings();
+            applyPopupPreferencesToOpenStack();
+        };
+        setPopupDuration.onchange = () => {
+            settings.popupDurationMs = Number(setPopupDuration.value) || 0;
+            saveSettings();
+        };
+        setPopupPosition.onchange = () => {
+            settings.popupPosition = setPopupPosition.value;
+            saveSettings();
+            applyPopupPreferencesToOpenStack();
+        };
         document.getElementById("rgSetReset").onclick = () => {
             dbg("Settings reset to defaults");
             settings = { ...DEFAULT_SETTINGS };
             saveSettings();
             syncSettingInputs();
             applyGlowSettings();
+            applyTitle();
             syncPingTracker();
+            applyPopupPreferencesToOpenStack();
         };
 
         // trim player data, don't dump the whole login blob
@@ -757,22 +813,19 @@
                     const visible = el => !!(el && el.style.display !== "none");
                     const dlg = q("rgDialog");
                     return {
-                        hudExists: !!q("rgHud"),
+                        hudExists: !!q("rgHUD"),
                         clanViewOpen: visible(q("rgClanView")),
                         forgeViewOpen: visible(q("rgForgeView")),
                         settingsOpen: visible(q("rgSettingsPanel")),
                         dialogOpen: dlg && dlg.style.display === "flex",
                     };
                 })();
-                // device fingerprint so bug reports show mobile vs desktop,
-                // viewport size, touch, etc.
+                // Enough layout detail to reproduce UI bugs without a device fingerprint.
                 const device = (() => {
                     const n = typeof navigator !== "undefined" ? navigator : {};
                     const s = typeof screen !== "undefined" ? screen : {};
                     return {
-                        userAgent: n.userAgent || "",
-                        platform: n.platform || "",
-                        language: n.language || "",
+                        deviceClass: (n.maxTouchPoints ?? 0) > 0 ? "touch" : "pointer",
                         touch: (n.maxTouchPoints ?? 0) > 0,
                         screen: `${s.width || 0}x${s.height || 0}`,
                         viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
@@ -782,7 +835,6 @@
                 const bundle = {
                     version: SCRIPT_VERSION,
                     versionNum: SCRIPT_VERSION_NUM,
-                    deviceId: getDeviceId(),
                     device,
                     timestamp: new Date().toISOString(),
                     settings: settings,
@@ -813,6 +865,11 @@
                     errors: _rgErrorBuf,
                     log: _rgLogBuf.slice(-100),
                 };
+                const redactions = [
+                    getDeviceId(),
+                    typeof navigator !== "undefined" ? navigator.userAgent : "",
+                    lastKnownPlayerData?.Id,
+                ];
                 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
                 const filename = `atlas-debug-${stamp}.txt`;
                 const text = [
@@ -823,7 +880,8 @@
                     _rawLogBuf.join("\n"),
                     "",
                 ].join("\n");
-                const url = URL.createObjectURL(new Blob([text], {
+                const safeText = redactSupportText(text, redactions);
+                const url = URL.createObjectURL(new Blob([safeText], {
                     type: "text/plain;charset=utf-8",
                 }));
                 const link = document.createElement("a");
@@ -1058,6 +1116,7 @@
         };
         try { localStorage.setItem("rgHudSessionStart", JSON.stringify(sessionStart)); } catch (e) {}
         currentMomentumState = "neutral";
+        resetAccountRankState();
 
         // reset streak, don't count pre-session matches
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
@@ -1069,7 +1128,7 @@
         clanLoaded = false;
         clanLoadedForAccount = null;
         myClan = null;
-        checkClanNotices();
+        scheduleClanNoticeCheck();
         const clanView = document.getElementById("rgClanView");
         if (clanView && clanView.style.display !== "none") {
             renderClanView();
@@ -1983,6 +2042,78 @@
         minRankToShow: 100,
     };
 
+    function normalizePopupPreferences(raw) {
+        raw = raw || {};
+        const positions = ["top-right", "top-left", "bottom-right", "bottom-left"];
+        const durations = [0, 3000, 6000, 10000];
+        const rank = Math.round(Number(raw.popupMaxRank));
+        const duration = Number(raw.popupDurationMs);
+        return {
+            showOpponents: raw.popupShowOpponents !== false,
+            showTeammates: raw.popupShowTeammates !== false,
+            maxRank: Number.isFinite(rank) ? Math.max(1, Math.min(100, rank)) : 100,
+            durationMs: durations.includes(duration) ? duration : 0,
+            position: positions.includes(raw.popupPosition) ? raw.popupPosition : "top-right",
+        };
+    }
+
+    function rankedPopupAllowed(rank, isTeammate, config, preferences) {
+        config = config || {};
+        preferences = preferences || {};
+        if (config.popupEnabled === false) return false;
+        const prefs = normalizePopupPreferences(preferences);
+        const remoteRank = Number(config.minRankToShow);
+        const remoteLimit = Number.isFinite(remoteRank)
+            ? Math.max(1, Math.min(100, remoteRank))
+            : 100;
+        if (!Number.isFinite(rank) || rank > Math.min(remoteLimit, prefs.maxRank)) return false;
+        if (isTeammate === true) return prefs.showTeammates;
+        if (isTeammate === false) return prefs.showOpponents;
+        return prefs.showTeammates || prefs.showOpponents;
+    }
+
+    function rankedPopupDuration(config, preferences) {
+        config = config || {};
+        preferences = preferences || {};
+        const prefs = normalizePopupPreferences(preferences);
+        if (prefs.durationMs) return prefs.durationMs;
+        const remoteDuration = Number(config.popupDurationMs);
+        return Number.isFinite(remoteDuration)
+            ? Math.max(1500, Math.min(15000, remoteDuration))
+            : 6000;
+    }
+
+    function popupStackPositionStyle(position) {
+        const selected = normalizePopupPreferences({ popupPosition: position }).position;
+        return {
+            top: selected.startsWith("top-") ? "20px" : "auto",
+            bottom: selected.startsWith("bottom-") ? "20px" : "auto",
+            left: selected.endsWith("-left") ? "20px" : "auto",
+            right: selected.endsWith("-right") ? "20px" : "auto",
+            flexDirection: selected.startsWith("bottom-") ? "column-reverse" : "column",
+        };
+    }
+
+    function prefersReducedPopupMotion() {
+        return typeof window !== "undefined"
+            && typeof window.matchMedia === "function"
+            && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    }
+
+    function applyPopupPreferencesToOpenStack() {
+        const stack = document.getElementById("rgLbPopupStack");
+        if (!stack) return;
+        const prefs = normalizePopupPreferences(settings);
+        Object.assign(stack.style, popupStackPositionStyle(prefs.position));
+        stack.dataset.position = prefs.position;
+        for (const popup of stack.querySelectorAll(".rg-lb-popup")) {
+            const role = popup.dataset.role;
+            const rank = Number(popup.dataset.rank);
+            const isTeammate = role === "teammate" ? true : role === "opponent" ? false : null;
+            if (!rankedPopupAllowed(rank, isTeammate, RG_LB_DEFAULT_CONFIG, prefs)) popup.remove();
+        }
+    }
+
     let _remoteConfigMemo = null;
     let _lbCacheMemo = null;
     let _lbCacheInFlight = null;      // shared promise so concurrent callers don't re-fetch
@@ -2216,25 +2347,34 @@
   padding: 1px 6px; border-radius: 4px; font-weight: bold; font-size: 10px;
   background: rgba(0,0,0,0.35);
 }
+@media (prefers-reduced-motion: reduce) {
+  .rg-lb-popup { transition: none; transform: none; }
+  .rg-lb-header .rg-lb-dot { animation: none; }
+}
 `;
         document.head.appendChild(style);
     }
 
-    async function showLbOpponentPopup({ rank, name, mode, isTeammate }) {
+    function showLbOpponentPopup({ rank, name, mode, isTeammate, config, preferences }) {
         try {
+            const cfg = config || RG_LB_DEFAULT_CONFIG;
+            const prefs = normalizePopupPreferences(preferences || settings);
+            if (!rankedPopupAllowed(rank, isTeammate, cfg, prefs)) return;
             ensureLbPopupStyles();
-            const cfg = await getRemoteConfig();
-            if (cfg.popupEnabled === false) return;
-            const dur = cfg.popupDurationMs || 6000;
+            const dur = rankedPopupDuration(cfg, prefs);
             let stack = document.getElementById("rgLbPopupStack");
             if (!stack) {
                 stack = document.createElement("div");
                 stack.id = "rgLbPopupStack";
                 document.body.appendChild(stack);
             }
+            Object.assign(stack.style, popupStackPositionStyle(prefs.position));
+            stack.dataset.position = prefs.position;
             const el = document.createElement("div");
             el.className = "rg-lb-popup";
             el.style.setProperty("--tier-color", tierColorForRank(rank));
+            el.dataset.rank = String(rank);
+            el.dataset.role = isTeammate === true ? "teammate" : isTeammate === false ? "opponent" : "player";
             const headerLabel = isTeammate === true ? "LEADERBOARD TEAMMATE"
                               : isTeammate === false ? "LEADERBOARD OPPONENT"
                               : "LEADERBOARD PLAYER";
@@ -2255,7 +2395,7 @@
             requestAnimationFrame(() => el.classList.add("show"));
             setTimeout(() => {
                 el.classList.remove("show");
-                setTimeout(() => el.remove(), 320);
+                setTimeout(() => el.remove(), prefersReducedPopupMotion() ? 0 : 320);
             }, dur);
         } catch (e) {
             dbg("showLbOpponentPopup threw: " + (e && e.message ? e.message : e));
@@ -2377,28 +2517,36 @@
             if (!cache) { dbg("popup skip: no leaderboard cache available"); return; }
             const cfg = await getRemoteConfig();
             if (generation !== _matchPopupGeneration) return;
+            const prefs = normalizePopupPreferences(settings);
             _rosterFired = true;
             for (const entry of roster) {
                 if (entry.uid === selfUid) continue;
                 if (_shownPopupsThisMatch.has(entry.uid)) continue;
-                _shownPopupsThisMatch.add(entry.uid);
                 const hit = lookupInCache(cache, entry.uid, matchFormat);
                 if (!hit) {
                     dbg(`popup skip: "${entry.name}" (${entry.uid.slice(0,8)}...) not in ${matchFormat} top ${RG_LB_TOP_N}`);
-                    continue;
-                }
-                if (hit.rank > (cfg.minRankToShow ?? 100)) {
-                    dbg(`popup skip: "${entry.name}" is #${hit.rank}, below minRankToShow ${cfg.minRankToShow}`);
                     continue;
                 }
                 let isTeammate = null; // null = don't know, use neutral label
                 if (teamsBalanced && selfTeam && entry.team) {
                     isTeammate = entry.team === selfTeam;
                 }
+                if (!rankedPopupAllowed(hit.rank, isTeammate, cfg, prefs)) {
+                    dbg(`popup skip: "${entry.name}" hidden by rank or role settings`);
+                    continue;
+                }
+                _shownPopupsThisMatch.add(entry.uid);
                 const displayName = hit.name || entry.name;
                 const role = isTeammate === true ? "teammate" : isTeammate === false ? "opponent" : "player";
                 dbg(`popup fire: #${hit.rank} ${role} "${displayName}" in ${matchFormat}`);
-                showLbOpponentPopup({ rank: hit.rank, name: displayName, mode: matchFormat, isTeammate });
+                showLbOpponentPopup({
+                    rank: hit.rank,
+                    name: displayName,
+                    mode: matchFormat,
+                    isTeammate,
+                    config: cfg,
+                    preferences: prefs,
+                });
             }
         } catch (e) {
             dbg("fireAllRankedPopups threw: " + (e && e.message ? e.message : e));
@@ -2411,6 +2559,7 @@
     // the playlist. Capture everything before the first await so match-end can
     // safely reset global popup state for the next match.
     async function firePostmortemPopupsIfDeferred(prevRatings) {
+        const generation = _matchPopupGeneration;
         const deferred = _deferredMatch;
         _deferredMatch = null;
         const players = deferred?.players?.map(player => ({ ...player })) ?? [];
@@ -2427,22 +2576,28 @@
             const mode = changedRanked[0];
             const cache = await getLeaderboardCache();
             if (!cache) return;
+            if (_matchPopupGeneration > generation + 1 || _inMatch) return;
             const cfg = await getRemoteConfig();
+            if (_matchPopupGeneration > generation + 1 || _inMatch) return;
+            const prefs = normalizePopupPreferences(settings);
             const { teamsBalanced, selfTeam } =
                 trustedTeamContext(players, selfUid, players.length);
             for (const player of players) {
                 if (player.uid === selfUid || alreadyShown.has(player.uid)) continue;
                 alreadyShown.add(player.uid);
                 const hit = lookupInCache(cache, player.uid, mode);
-                if (!hit || hit.rank > (cfg.minRankToShow ?? 100)) continue;
+                if (!hit) continue;
                 const isTeammate = teamsBalanced && selfTeam && player.team
                     ? player.team === selfTeam
                     : null;
+                if (!rankedPopupAllowed(hit.rank, isTeammate, cfg, prefs)) continue;
                 showLbOpponentPopup({
                     rank: hit.rank,
                     name: hit.name || player.name,
                     mode,
                     isTeammate,
+                    config: cfg,
+                    preferences: prefs,
                 });
             }
         } catch (e) {
@@ -2456,7 +2611,10 @@
 
         // piggy-back: refresh this member's MMR in the clan doc, get tag back
         const clanInfo = await queueClanMMRSync(fb, data);
-        const shownName = clanInfo?.tag ? `[${clanInfo.tag}] ${displayName}` : displayName;
+        const cleanDisplayName = clanInfo?.tag
+            ? stripClanTagPrefix(displayName, clanInfo.tag)
+            : displayName;
+        const shownName = clanInfo?.tag ? `[${clanInfo.tag}] ${cleanDisplayName}` : cleanDisplayName;
 
         const modeToPlaylist = {
             Competitive1v1: "1v1",
@@ -2776,6 +2934,14 @@
     let ranksFetchedThisSession = false;
     const lastRankedMMR = new Map(); // playlist -> mmr at last query
 
+    function resetAccountRankState() {
+        cachedRanks.clear();
+        cachedMmrToNext.clear();
+        prevRanks.clear();
+        lastRankedMMR.clear();
+        ranksFetchedThisSession = false;
+    }
+
     async function refreshRanks(fb, data, force = false) {
         if (!force && ranksFetchedThisSession) return;
 
@@ -3051,6 +3217,9 @@
                 if (arg.includes("Starting game with") && arg.includes("players")) {
                     const m = arg.match(/Starting game with\s+(\d+)\s+players/);
                     if (m) {
+                        // A fresh start line is the clean boundary even if the
+                        // previous match never sent its normal ending signal.
+                        resetMatchPopupState();
                         _matchPlayerCount = parseInt(m[1], 10);
                         _matchFormat = derivedFormatFromPlayerCount(_matchPlayerCount);
                         dbg(`match player count = ${_matchPlayerCount}, format = ${_matchFormat || "unknown"}`);
@@ -3702,6 +3871,8 @@
                         myClan = null;
                         clanLoaded = false;
                         refreshClanViewIfOpen();
+                        // The kick write lands right after the roster update.
+                        scheduleClanNoticeCheck(500);
                         return;
                     }
                     myClan = sanitizeClanDoc({ id: snap.id, ...snap.data() });
@@ -4911,6 +5082,15 @@
         }
     }
 
+    let clanNoticeTimer = null;
+    function scheduleClanNoticeCheck(delayMs = 0) {
+        if (clanNoticeTimer) clearTimeout(clanNoticeTimer);
+        clanNoticeTimer = setTimeout(() => {
+            clanNoticeTimer = null;
+            checkClanNotices();
+        }, delayMs);
+    }
+
     // Show a clan notice once, then clear it.
     async function checkClanNotices() {
         const fb = await initFirebase();
@@ -4922,6 +5102,7 @@
             const snap = await fb.getDoc(ref);
             if (snap.exists()) {
                 const n = snap.data();
+                let handled = false;
                 if (n.type === "kicked") {
                     const extra = n.message ? `  Message: "${n.message}"` : "";
                     await showDialog({
@@ -4929,6 +5110,7 @@
                         okLabel: "OK",
                         cancelLabel: "Dismiss",
                     });
+                    handled = true;
                 } else if (n.type === "admin_disbanded") {
                     const extra = n.message ? `  Message: "${n.message}"` : "";
                     await showDialog({
@@ -4936,8 +5118,10 @@
                         okLabel: "OK",
                         cancelLabel: "Close",
                     });
+                    handled = true;
                 }
-                await fb.deleteDoc(ref);
+                if (handled) await fb.deleteDoc(ref);
+                else dbgWarn(`Unknown clan notice type kept for later: ${String(n.type || "missing")}`);
             }
         } catch (e) {
             // notices are best-effort, don't spam the user
@@ -5419,17 +5603,19 @@
         return null;
     }
 
-    // strip a leading styled [TAG] from a raw nickname if it matches our tag.
-    // without this, the opt-in prefix stacks a second copy ([KING] [KING] ...).
-    // tolerates TMP markup interleaved between the letters.
-    function stripLeadingClanTagMarkup(raw) {
-        const tag = String(myClan?.tag ?? "").trim();
+    // Strip a matching plain or styled [TAG] from the start.
+    function stripClanTagPrefix(raw, clanTag) {
+        const tag = String(clanTag ?? "").trim();
         if (!raw || !tag) return raw || "";
         const anyTags = "(?:<[^>]*>)*";
-        // sanitizeClanTag guarantees A-Z only, no escaping needed
-        const letters = [...tag.toUpperCase()].map(ch => ch + anyTags).join("");
+        const escaped = [...tag.toUpperCase()].map(ch => ch.replace(/[\\^$.*+?()[\]|]/g, "\\$&"));
+        const letters = escaped.map(ch => ch + anyTags).join("");
         const re = new RegExp("^" + anyTags + "\\[" + anyTags + letters + "\\]" + anyTags + "\\s*", "i");
         return raw.replace(re, "");
+    }
+
+    function stripLeadingClanTagMarkup(raw) {
+        return stripClanTagPrefix(raw, myClan?.tag);
     }
 
     function getClanTagPrefix() {
@@ -6075,12 +6261,17 @@
 
   // ---- Constants ----
   const API_URL = 'https://us-central1-rocketball-23c12.cloudfunctions.net/v0304_player/nickname';
-  const STORE_KEY = 'rgNameForge.presets.v1';
+  const STORE_KEY_LEGACY = 'rgNameForge.presets.v1';
   const STATE_KEY_LEGACY = 'rgNameForge.lastState.v1';
   // per-account state, legacy key read once as a fallback on upgrade
   let _currentUserId = null;
   let _lastRawNickname = '';
   const stateKey = () => _currentUserId ? ('rgNameForge.state.v5.' + _currentUserId) : STATE_KEY_LEGACY;
+  function nameForgePresetKey(userId) {
+    return 'rgNameForge.presets.v2.' + (userId || 'anon');
+  }
+  const presetKey = () => nameForgePresetKey(_currentUserId);
+  const folderCollapseKey = () => 'rgNameForge.folderCollapse.v2.' + (_currentUserId || 'anon');
   function nameForgeHistoryKey(userId) {
     return 'rgNameForge.history.v2.' + (userId || 'anon');
   }
@@ -7859,11 +8050,16 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // otherwise "+ Save" in raw mode cleared rawCode before the save ran.
     const secPresets = el('div', { class: 'rgnf-sec rgnf-presets-sec' });
     secPresets.appendChild(el('h4', { text: 'Presets' }));
-    const presets = loadJSON(STORE_KEY, []);
+    let presets = loadJSON(presetKey(), null);
+    if (!Array.isArray(presets)) {
+      const legacyPresets = loadJSON(STORE_KEY_LEGACY, []);
+      presets = Array.isArray(legacyPresets) ? legacyPresets : [];
+      if (_currentUserId && presets.length) saveJSON(presetKey(), presets);
+    }
     const listWrap = el('div', { class: 'rgnf-presets' });
 
     // presets with no folder -> "Ungrouped"
-    const collapseKey = 'rgNameForge.folderCollapse.v1';
+    const collapseKey = folderCollapseKey();
     const collapseState = loadJSON(collapseKey, {});
     const groups = {};
     presets.forEach((p, idx) => {
@@ -7910,7 +8106,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
                   delete collapseState[folder];
                   saveJSON(collapseKey, collapseState);
                 }
-                saveJSON(STORE_KEY, presets);
+                saveJSON(presetKey(), presets);
                 render(panel);
               },
             });
@@ -7942,7 +8138,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
                 current: p.folder || '',
                 onPick: (dest) => {
                   presets[idx].folder = dest || undefined;
-                  saveJSON(STORE_KEY, presets);
+                  saveJSON(presetKey(), presets);
                   render(panel);
                 },
               });
@@ -7950,7 +8146,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           }));
           row.appendChild(el('button', {
             class: 'rgnf-chip', text: '🗑️', title: 'Delete preset',
-            onclick: () => { presets.splice(idx, 1); saveJSON(STORE_KEY, presets); render(panel); },
+            onclick: () => { presets.splice(idx, 1); saveJSON(presetKey(), presets); render(panel); },
           }));
           listWrap.appendChild(row);
         });
@@ -7980,7 +8176,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             } else {
               presets.push(entry);
             }
-            saveJSON(STORE_KEY, presets);
+            saveJSON(presetKey(), presets);
             render(panel);
           },
         });
@@ -8010,7 +8206,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             const incoming = JSON.parse(raw);
             if (!Array.isArray(incoming)) throw new Error('not an array');
             const merged = presets.concat(incoming.filter(p => p && p.label && p.state));
-            saveJSON(STORE_KEY, merged);
+            saveJSON(presetKey(), merged);
             render(panel);
           } catch (err) {
             alert('That JSON was as valid as a screen-door submarine. Import failed.');
@@ -8056,7 +8252,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
                   } else {
                     presets.push(entry);
                   }
-                  saveJSON(STORE_KEY, presets);
+                  saveJSON(presetKey(), presets);
                   render(panel);
                 },
               });
