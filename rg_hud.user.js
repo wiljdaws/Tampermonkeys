@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      16.1
+// @version      16.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -361,7 +361,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -851,6 +851,9 @@
                     firestore: {
                         reads: firestoreReadCount,
                         writes: firestoreWriteCount,
+                        windowReads: firestoreBudgetWindow.reads,
+                        windowWrites: firestoreBudgetWindow.writes,
+                        windowMinutes: FIRESTORE_BUDGET_WINDOW_MS / 60000,
                         readBudget: FIRESTORE_READ_BUDGET,
                         writeBudget: FIRESTORE_WRITE_BUDGET,
                     },
@@ -1501,25 +1504,53 @@
     let firestoreWriteCount = 0;
     const FIRESTORE_READ_BUDGET = 120;
     const FIRESTORE_WRITE_BUDGET = 40;
-    let firestoreReadBudgetWarned = false;
-    let firestoreWriteBudgetWarned = false;
+    const FIRESTORE_BUDGET_WINDOW_MS = 10 * 60 * 1000;
+    let firestoreBudgetWindow = {
+        startedAt: Date.now(),
+        reads: 0,
+        writes: 0,
+        readWarned: false,
+        writeWarned: false,
+    };
+
+    function nextFirestoreBudgetWindow(window, now = Date.now()) {
+        const startedAt = Number(window?.startedAt);
+        if (Number.isFinite(startedAt)
+            && now >= startedAt
+            && now - startedAt < FIRESTORE_BUDGET_WINDOW_MS) {
+            return window;
+        }
+        return {
+            startedAt: now,
+            reads: 0,
+            writes: 0,
+            readWarned: false,
+            writeWarned: false,
+        };
+    }
 
     function logRead(label, count = 1) {
         const charged = Math.max(1, Number(count) || 1);
+        firestoreBudgetWindow = nextFirestoreBudgetWindow(firestoreBudgetWindow);
         firestoreReadCount += charged;
-        console.log(`[RG HUD] Firestore read +${charged} #${firestoreReadCount} (${label})`);
-        if (!firestoreReadBudgetWarned && firestoreReadCount > FIRESTORE_READ_BUDGET) {
-            firestoreReadBudgetWarned = true;
-            dbgWarn(`Firestore read budget passed (${firestoreReadCount}/${FIRESTORE_READ_BUDGET})`);
+        firestoreBudgetWindow.reads += charged;
+        console.log(`[RG HUD] Firestore read +${charged} #${firestoreReadCount} (${label}; ${firestoreBudgetWindow.reads}/${FIRESTORE_READ_BUDGET} in 10m)`);
+        if (!firestoreBudgetWindow.readWarned
+            && firestoreBudgetWindow.reads > FIRESTORE_READ_BUDGET) {
+            firestoreBudgetWindow.readWarned = true;
+            dbgWarn(`Firestore read budget passed (${firestoreBudgetWindow.reads}/${FIRESTORE_READ_BUDGET} in 10m)`);
         }
     }
 
     function logWrite(label) {
+        firestoreBudgetWindow = nextFirestoreBudgetWindow(firestoreBudgetWindow);
         firestoreWriteCount++;
-        console.log(`[RG HUD] Firestore write #${firestoreWriteCount} (${label})`);
-        if (!firestoreWriteBudgetWarned && firestoreWriteCount > FIRESTORE_WRITE_BUDGET) {
-            firestoreWriteBudgetWarned = true;
-            dbgWarn(`Firestore write budget passed (${firestoreWriteCount}/${FIRESTORE_WRITE_BUDGET})`);
+        firestoreBudgetWindow.writes++;
+        console.log(`[RG HUD] Firestore write #${firestoreWriteCount} (${label}; ${firestoreBudgetWindow.writes}/${FIRESTORE_WRITE_BUDGET} in 10m)`);
+        if (!firestoreBudgetWindow.writeWarned
+            && firestoreBudgetWindow.writes > FIRESTORE_WRITE_BUDGET) {
+            firestoreBudgetWindow.writeWarned = true;
+            dbgWarn(`Firestore write budget passed (${firestoreBudgetWindow.writes}/${FIRESTORE_WRITE_BUDGET} in 10m)`);
         }
     }
 
