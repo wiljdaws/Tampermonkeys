@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      15.9-dev
-// @description  Dev build of ATLAS. Testing configurable match popups, safer support logs, account-isolated HUD state, and Name Forge preset scoredMode persistence.
+// @version      16.3-dev
+// @description  Dev build of ATLAS. Testing Name Forge preset scoredMode persistence on top of prod 16.2.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
@@ -361,7 +361,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.9-dev";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.3-dev";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
