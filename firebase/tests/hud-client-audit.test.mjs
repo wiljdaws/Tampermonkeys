@@ -74,7 +74,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "16.1");
+  assert.equal(version, "16.2");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -174,13 +174,40 @@ test("outdated clients see one update UI while reads stay available", async () =
   }
 });
 
-test("Firestore diagnostics count reads and writes with budgets", () => {
+test("Firestore diagnostics use rolling budgets without losing session totals", () => {
   assert.match(hudSource, /let firestoreReadCount = 0;/);
   assert.match(hudSource, /function logRead\(/);
   assert.match(hudSource, /FIRESTORE_READ_BUDGET/);
   assert.match(hudSource, /FIRESTORE_WRITE_BUDGET/);
+  assert.match(hudSource, /FIRESTORE_BUDGET_WINDOW_MS/);
+  assert.match(hudSource, /function nextFirestoreBudgetWindow\(/);
   assert.match(hudSource, /firestore:\s*\{[\s\S]*reads:\s*firestoreReadCount/);
   assert.match(hudSource, /writes:\s*firestoreWriteCount/);
+  assert.match(hudSource, /windowReads:\s*firestoreBudgetWindow\.reads/);
+  assert.match(hudSource, /windowWrites:\s*firestoreBudgetWindow\.writes/);
+
+  const nextFirestoreBudgetWindow = extractHudFunction(
+    "nextFirestoreBudgetWindow",
+    { FIRESTORE_BUDGET_WINDOW_MS: 10 * 60 * 1000 },
+  );
+  const active = {
+    startedAt: 1_000,
+    reads: 120,
+    writes: 40,
+    readWarned: true,
+    writeWarned: true,
+  };
+  assert.equal(nextFirestoreBudgetWindow(active, 2_000), active);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(nextFirestoreBudgetWindow(active, 601_000))),
+    {
+      startedAt: 601_000,
+      reads: 0,
+      writes: 0,
+      readWarned: false,
+      writeWarned: false,
+    },
+  );
 });
 
 test("denied match audits stay disabled", () => {
