@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      15.8-dev
-// @description  Dev build of ATLAS. Testing configurable match popups, safer support logs, and account-isolated HUD state.
+// @version      15.9-dev
+// @description  Dev build of ATLAS. Testing configurable match popups, safer support logs, account-isolated HUD state, and Name Forge preset scoredMode persistence.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
@@ -361,7 +361,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "15.9-dev";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -6430,7 +6430,7 @@
 
   function rawSnapshotFields(raw) {
     const scored = splitRawScoredSuffix(raw);
-    return {
+    const fields = {
       rawCode: scored.rawCode,
       ...editableFieldsFromRaw(scored.rawCode),
       colorMode: 'none',
@@ -6452,10 +6452,18 @@
       titleUnderline: false,
       titleStrike: false,
       titleAlpha: 255,
-      scoredMode: scored.scoredMode,
-      ...(scored.scoredSizePct ? { scoredSizePct: scored.scoredSizePct } : {}),
-      ...(scored.scoredColor ? { scoredColor: scored.scoredColor } : {}),
     };
+    // scoredMode is orthogonal to rawCode (effectiveForgeCode appends the
+    // suffix separately). Only surface it here when raw had an embedded suffix
+    // that needed stripping — the legacy migration path. Otherwise leave the
+    // caller's scored* values alone so loading a preset saved with
+    // scoredMode='hide' doesn't get reset to 'default'.
+    if (scored.scoredMode !== 'default') {
+      fields.scoredMode = scored.scoredMode;
+      if (scored.scoredSizePct) fields.scoredSizePct = scored.scoredSizePct;
+      if (scored.scoredColor) fields.scoredColor = scored.scoredColor;
+    }
+    return fields;
   }
 
   function editableGlyphs(text) {
