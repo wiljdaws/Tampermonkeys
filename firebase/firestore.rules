@@ -70,16 +70,36 @@ service cloud.firestore {
              && data.lastWriteAt == request.time;
     }
 
+    function hasEmoji(text) {
+      return text.matches('.*[\\x{1F000}-\\x{1FAFF}\\x{2600}-\\x{27BF}\\x{2190}-\\x{21FF}\\x{2B00}-\\x{2BFF}\\x{FE00}-\\x{FE0F}\\x{1F1E6}-\\x{1F1FF}\\x{2300}-\\x{23FF}\\x{2100}-\\x{214F}\\x{1F3F3}\\x{1F3F4}\\x{E0020}-\\x{E007F}\\x{200D}].*');
+    }
+
+    function hasProfanity(text) {
+      return text.matches('(?i).*(fuck|fuk|fvck|shit|bitch|cunt|asshole|dick|cock|pussy|bastard|twat|wanker|nigger|nigga|chink|spic|gook|kike|coon|faggot|fag|dyke|tranny|retard|whore|slut|hoe|rape|pedo|nazi|hitler|kkk).*');
+    }
+
+    function hasTagProfanity(text) {
+      return text.matches('(?i).*(fuck|fuk|fvck|shit|bitch|cunt|nigger|nigga|fag|kkk).*');
+    }
+
     function validClanName(name) {
       return name is string
              && name.size() > 0
-             && name.size() <= 24;
+             && name.size() <= 24
+             && !hasEmoji(name)
+             && !hasProfanity(name);
     }
 
-    function validClanTag(tag) {
+    function validLegacyClanTag(tag) {
       return tag is string
              && tag.size() >= 2
              && tag.size() <= 4
+             && !hasEmoji(tag)
+             && !hasTagProfanity(tag);
+    }
+
+    function validClanTag(tag) {
+      return validLegacyClanTag(tag)
              && tag.matches('^[A-Z]+$');
     }
 
@@ -209,7 +229,7 @@ service cloud.firestore {
              && data.members.size() >= 1
              && data.members.size() <= 5
              && validClanName(data.name)
-             && validClanTag(data.tag)
+             && validLegacyClanTag(data.tag)
              && validJoinRequests(data)
              && validLegacyClanIdentity(data);
     }
@@ -392,6 +412,9 @@ service cloud.firestore {
              && data.name is string
              && data.name.size() > 0
              && data.name.size() <= 22
+             && !data.name.matches('(?i)^(\\[.{2,4}\\] )?player$')
+             && !hasEmoji(data.name)
+             && !hasProfanity(data.name)
              && (!('flag' in data) || (
                data.flag is string
                && data.flag.size() <= 2048
@@ -436,6 +459,30 @@ service cloud.firestore {
              );
     }
 
+    function validSubmissionRating(data, mode) {
+      return !(mode in data.ratings)
+             || data.ratings[mode] == null
+             || (
+               data.ratings[mode] is number
+               && data.ratings[mode] >= 0
+               && data.ratings[mode] <= 35000
+             );
+    }
+
+    function validSubmissionStats(data, mode) {
+      return !('stats' in data)
+             || !(mode in data.stats)
+             || data.stats[mode] == null
+             || (
+               data.stats[mode].wins is number
+               && data.stats[mode].matchesPlayed is number
+               && data.stats[mode].wins >= 0
+               && data.stats[mode].matchesPlayed >= 0
+               && data.stats[mode].wins <= data.stats[mode].matchesPlayed
+               && data.stats[mode].matchesPlayed <= 100000
+             );
+    }
+
     function validSubmission(data) {
       return data.keys().hasAll([
                'sourceUserId',
@@ -450,6 +497,15 @@ service cloud.firestore {
              && data.nickname.size() > 0
              && data.nickname.size() <= 500
              && data.ratings is map
+             && validSubmissionRating(data, 'Competitive3v3')
+             && validSubmissionRating(data, 'Competitive2v2')
+             && validSubmissionRating(data, 'Competitive1v1')
+             && validSubmissionRating(data, 'Casual')
+             && (!('stats' in data) || data.stats is map)
+             && validSubmissionStats(data, 'Competitive3v3')
+             && validSubmissionStats(data, 'Competitive2v2')
+             && validSubmissionStats(data, 'Competitive1v1')
+             && validSubmissionStats(data, 'Casual')
              && (!('displayName' in data) || (
                data.displayName is string
                && data.displayName.size() > 0
@@ -512,6 +568,13 @@ service cloud.firestore {
     }
 
     match /atlas_config/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Trusted playlist aggregates written by the scheduled builder SA/admin.
+    // Clients may read; client writes are denied (admin/SA only).
+    match /leaderboard_cache/{playlist} {
       allow read: if true;
       allow write: if isAdmin();
     }

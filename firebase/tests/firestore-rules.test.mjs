@@ -265,6 +265,7 @@ test("only client paths are publicly readable", async () => {
     ["script_submissions", "player-a"],
     ["iconKey", "champion"],
     ["atlas_config", "hud"],
+    ["leaderboard_cache", "1v1"],
     ["events", "current"],
     ["clans", "clan-one"],
     ["clans_directory", "clan-one"],
@@ -297,6 +298,7 @@ test("sensitive config writes require an admin", async () => {
   for (const [collection, id] of [
     ["iconKey", "champion"],
     ["atlas_config", "hud"],
+    ["leaderboard_cache", "1v1"],
     ["events", "current"],
     ["admin", "blacklist"],
     ["admin", "clanPerms"],
@@ -366,6 +368,67 @@ test("sourced leaderboard rows use deterministic IDs", async () => {
       flag: "US",
     }),
   );
+});
+
+test("public leaderboard names reject placeholders, emoji, and profanity", async () => {
+  const db = publicDb();
+  await assertSucceeds(
+    setDoc(
+      doc(db, "script_submissions", "player-a"),
+      submissionPayload(),
+    ),
+  );
+  await assertSucceeds(
+    setDoc(
+      doc(db, "leaderboard", "player-a_1v1"),
+      leaderboardPayload(),
+    ),
+  );
+
+  for (const name of [
+    "Player",
+    "[ABC] Player",
+    "Rocket 🚀",
+    "shit name",
+  ]) {
+    await assertFails(
+      setDoc(
+        doc(db, "leaderboard", "player-a_1v1"),
+        leaderboardPayload({ name }),
+      ),
+    );
+  }
+});
+
+test("submission ratings and stats stay within safe bounds", async () => {
+  const db = publicDb();
+  const invalidPayloads = [
+    submissionPayload({
+      ratings: { Competitive1v1: 35001 },
+    }),
+    submissionPayload({
+      ratings: { Competitive1v1: -1 },
+    }),
+    submissionPayload({
+      ratings: { Competitive1v1: "1200" },
+    }),
+    submissionPayload({
+      stats: {
+        Competitive1v1: { wins: 11, matchesPlayed: 10 },
+      },
+    }),
+    submissionPayload({
+      stats: {
+        Competitive1v1: { wins: 1, matchesPlayed: 100001 },
+      },
+    }),
+  ];
+
+  for (const payload of invalidPayloads) {
+    await assertFails(
+      setDoc(doc(db, "script_submissions", "player-a"), payload),
+    );
+  }
 });
 
 test("optional current streak remains compatible with merged submissions", async () => {
@@ -582,6 +645,18 @@ test("strict clans enforce join-request and version limits", async () => {
   await assertFails(writeStrictClan(publicDb(), "blocked", blocked));
 });
 
+test("clan names and tags reject emoji and profanity", async () => {
+  for (const [clanId, name, tag] of [
+    ["bad-name", "shit clan", "BAD"],
+    ["bad-tag", "Clean Clan", "FAG"],
+    ["emoji-name", "Rocket 🚀", "RKT"],
+  ]) {
+    await assertFails(
+      writeStrictClan(publicDb(), clanId, strictClan({ name, tag })),
+    );
+  }
+});
+
 test("legacy writes are temporary and cannot overwrite migrated clans", async () => {
   const legacy = {
     name: "Legacy Clan",
@@ -628,6 +703,46 @@ test("legacy writes are temporary and cannot overwrite migrated clans", async ()
   await assertFails(
     setDoc(doc(publicDb(), "clans", "strict"), legacy),
   );
+});
+
+test("compatibility keeps existing mixed-case tags but still filters them", async () => {
+  const mixedCase = {
+    name: "Mixed Case Clan",
+    tag: "Meow",
+    leaderId: "player-a",
+    versionNum: 16.0,
+    members: [
+      { userId: "player-a", role: "leader" },
+    ],
+    joinRequests: [],
+  };
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), "clans", "mixed-case"), mixedCase);
+  });
+
+  const mixedCaseUpdate = setDoc(
+    doc(publicDb(), "clans", "mixed-case"),
+    { ...mixedCase, totalMMR: 1200 },
+  );
+  if (compatibilityMode) {
+    await assertSucceeds(mixedCaseUpdate);
+  } else {
+    await assertFails(mixedCaseUpdate);
+  }
+
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), "clans", "bad-tag"), {
+      ...mixedCase,
+      name: "Bad Tag Clan",
+      tag: "FAG",
+    });
+  });
+  await assertFails(setDoc(doc(publicDb(), "clans", "bad-tag"), {
+    ...mixedCase,
+    name: "Bad Tag Clan",
+    tag: "FAG",
+    totalMMR: 1200,
+  }));
 });
 
 test("member and device locks release only with the clan update", async () => {

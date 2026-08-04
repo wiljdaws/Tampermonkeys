@@ -36,6 +36,7 @@ export const SNAPSHOT_TARGETS = [
   { key: "clan_devices", kind: "collection", path: "clan_devices" },
   { key: "clan_notices", kind: "collection", path: "clan_notices" },
   { key: "leaderboard", kind: "collection", path: "leaderboard" },
+  { key: "leaderboard_cache", kind: "collection", path: "leaderboard_cache" },
   { key: "iconKey", kind: "collection", path: "iconKey" },
   {
     key: "script_submissions",
@@ -336,8 +337,6 @@ export function buildOperationBudget(targets) {
     100,
     Math.max(0, ...rowsByPlaylist.values()),
   );
-  const directoryShards = targetDocuments(targets, "clans_directory")
-    .filter(document => document.id !== "index").length;
 
   return {
     modelVersion: 2,
@@ -353,15 +352,14 @@ export function buildOperationBudget(targets) {
       mainLeaderboardFullLoad:
         (byTarget.leaderboard || 0) + (byTarget.atlas_config || 0),
       activeLeaderboardLoad:
-        largestPlaylist + Math.min(byTarget.iconKey || 0, 12),
+        largestPlaylist + Math.min(byTarget.leaderboard_cache || 1, 1),
+      // Aggregate path: atlas_config/hud + leaderboard_cache/{playlist}.
       coldPopupCache:
-        Math.min(largestPlaylist, 100)
-        + Math.min(byTarget.atlas_config || 0, 1),
+        Math.min(byTarget.atlas_config || 0, 1)
+        + Math.min(byTarget.leaderboard_cache || 1, 1),
       warmPopupCache: 0,
-      clanReopen:
-        Math.min(byTarget["events/current"] || 0, 1)
-        + 3
-        + Math.min(directoryShards, 8),
+      // Warm reopen reuses memory/listener; budget is a small refresh ceiling.
+      clanReopen: 2,
     },
     clientOperationUpperBounds: {
       matchSync: { reads: 4, writes: 7 },

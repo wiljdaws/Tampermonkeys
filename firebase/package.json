@@ -6,7 +6,8 @@
   "description": "Versioned Firestore rules, emulator tests, snapshots, and migration planning for rgleaderboard.",
   "scripts": {
     "test": "npm run test:core && npm run test:contracts",
-    "test:core": "npm run test:rules && npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots",
+    "test:core": "npm run test:rules && npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots && npm run test:leaderboard-cache",
+    "test:leaderboard-cache": "node --test tests/leaderboard-cache.test.mjs",
     "test:rules": "npm run test:rules:compatibility && npm run test:rules:final",
     "test:rules:compatibility": "node scripts/run-emulator-test.mjs --config firebase.json -- \"RULES_MODE=compatibility node --test tests/firestore-rules.test.mjs\"",
     "test:rules:final": "node scripts/run-emulator-test.mjs --config firebase.json -- \"RULES_MODE=final node --test tests/firestore-rules.test.mjs\"",
@@ -20,7 +21,8 @@
     "plan:rollout-bridge": "node scripts/plan-rollout-bridge.mjs",
     "apply:migrations": "node scripts/apply-migrations.mjs",
     "snapshot:production": "node scripts/snapshot-production.mjs",
-    "verify:baseline": "node scripts/verify-baseline.mjs"
+    "verify:baseline": "node scripts/verify-baseline.mjs",
+    "build:leaderboard-cache": "node scripts/build-leaderboard-cache.mjs"
   },
   "engines": {
     "node": ">=20"

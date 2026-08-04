@@ -330,14 +330,14 @@
   },
   "operationBudgets": {
     "activeLeaderboardLoad": {
-      "reads": 112,
-      "writes": 0,
-      "assumption": "100 active-playlist rows plus at most 12 cached icon-key rows"
-    },
-    "coldPopupCache": {
       "reads": 101,
       "writes": 0,
-      "assumption": "one remote config document plus 100 rows for one ranked playlist"
+      "assumption": "100 active-playlist rows plus one leaderboard_cache/iconKey manifest document"
+    },
+    "coldPopupCache": {
+      "reads": 2,
+      "writes": 0,
+      "assumption": "one remote config document plus one leaderboard_cache aggregate when useLeaderboardCache is enabled"
     },
     "warmPopupCache": {
       "reads": 0,
@@ -350,9 +350,9 @@
       "assumption": "cold version check, submission, four deterministic rows, clan and shard update"
     },
     "clanReopen": {
-      "reads": 12,
+      "reads": 2,
       "writes": 0,
-      "assumption": "event, member lock, device lock, clan, and up to eight directory shards"
+      "assumption": "warm reopen reuses memory and live clan listener; at most throttled directory refresh plus memoized event config"
     },
     "structuralAction": {
       "reads": 10,

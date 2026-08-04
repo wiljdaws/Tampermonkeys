@@ -75,11 +75,14 @@ test("active leaderboard and popup cache stay playlist scoped", () => {
   assert.equal(MAX_PLAYLIST_ROWS, 100);
   assert.equal(popupTopN, 100);
   assert.deepEqual(budgets.activeLeaderboardLoad, {
-    reads: 112,
+    reads: 101,
     writes: 0,
-    assumption: "100 active-playlist rows plus at most 12 cached icon-key rows",
+    assumption: "100 active-playlist rows plus one leaderboard_cache/iconKey manifest document",
   });
-  assert.equal(budgets.coldPopupCache.reads, popupTopN + 1);
+  assert.equal(budgets.coldPopupCache.reads, 2);
+  assert.match(hudSource, /useLeaderboardCache/);
+  assert.match(hudSource, /leaderboard_cache/);
+  assert.match(hudSource, /fetchLeaderboardCacheFromAggregate/);
   assert.deepEqual(
     { reads: budgets.warmPopupCache.reads, writes: budgets.warmPopupCache.writes },
     { reads: 0, writes: 0 },
@@ -93,8 +96,9 @@ test("match sync and clan reopen stay inside their ceilings", () => {
   });
   assert.deepEqual(
     { reads: budgets.clanReopen.reads, writes: budgets.clanReopen.writes },
-    { reads: 12, writes: 0 },
+    { reads: 2, writes: 0 },
   );
+  assert.match(hudSource, /warmReopen/);
   assert.match(hudSource, /fb\.getDoc\(fb\.doc\(fb\.db, "clan_memberships", uid\)\)/);
   assert.match(hudSource, /fb\.getDoc\(fb\.doc\(fb\.db, "clan_devices", deviceId\)\)/);
 });

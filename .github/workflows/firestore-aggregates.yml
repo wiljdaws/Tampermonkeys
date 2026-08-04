@@ -1,0 +1,68 @@
+name: Firestore aggregates
+
+on:
+  schedule:
+    # Every 3 hours — aligns with ATLAS popup cacheRefreshHours default.
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Plan writes without committing (true/false)
+        required: false
+        default: "true"
+      project:
+        description: Firebase project ID
+        required: false
+        default: rgleaderboard
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-leaderboard-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: firebase
+    env:
+      FIREBASE_PROJECT: ${{ github.event.inputs.project || 'rgleaderboard' }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: firebase/package-lock.json
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+          token_format: access_token
+          create_credentials_file: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit-test cache builder
+        run: npm run test:leaderboard-cache
+
+      - name: Build leaderboard aggregates
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          args=(--project "$FIREBASE_PROJECT")
+          if [[ "$DRY_RUN" != "true" ]]; then
+            args+=(--apply)
+          fi
+          npm run build:leaderboard-cache -- "${args[@]}"
