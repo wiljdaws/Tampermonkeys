@@ -7901,6 +7901,37 @@
     (nameInput || sel).focus();
   }
 
+  // Same overlay look as openFolderPicker, three buttons. Beats a native
+  // confirm() sitting in the top-left corner of the tab.
+  function openConfirmPicker(panel, { title, message, replaceLabel = 'Replace', keepLabel = 'Keep both', cancelLabel = 'Cancel', onChoice }) {
+    const backdrop = el('div', { class: 'rgnf-picker-backdrop' });
+    const box = el('div', { class: 'rgnf-picker' });
+    box.appendChild(el('div', { class: 'rgnf-picker-title', text: title }));
+    if (message) {
+      const msg = el('div', { class: 'rgnf-picker-label', text: message });
+      msg.style.whiteSpace = 'pre-wrap';
+      msg.style.marginTop = '0';
+      box.appendChild(msg);
+    }
+    const close = () => backdrop.remove();
+    const btnRow = el('div', { class: 'rgnf-row' });
+    btnRow.appendChild(el('button', {
+      class: 'rgnf-chip', text: cancelLabel,
+      onclick: () => { close(); onChoice('cancel'); },
+    }));
+    btnRow.appendChild(el('button', {
+      class: 'rgnf-chip', text: keepLabel,
+      onclick: () => { close(); onChoice('keep'); },
+    }));
+    btnRow.appendChild(el('button', {
+      class: 'rgnf-chip rgnf-on', text: replaceLabel,
+      onclick: () => { close(); onChoice('replace'); },
+    }));
+    box.appendChild(btnRow);
+    backdrop.appendChild(box);
+    (panel || document.body).appendChild(backdrop);
+  }
+
   function buildUI() {
     const style = document.createElement('style');
     style.textContent = css;
@@ -8742,16 +8773,23 @@ _rgnfFab = fab; _rgnfPanel = panel;
             if (!label) return;
             const entry = { label, state: snap };
             if (folder) entry.folder = folder;
+            const commit = () => { saveJSON(presetKey(), presets); render(panel); };
             const existingIdx = presets.findIndex(x => x.label === label);
             if (existingIdx >= 0) {
-              const replace = confirm('A preset named "' + label + '" already exists.\nOK = replace it, Cancel = keep both.');
-              if (replace) presets[existingIdx] = entry;
-              else { entry.label = label + ' (2)'; presets.push(entry); }
+              openConfirmPicker(panel, {
+                title: 'Preset already exists',
+                message: '"' + label + '" is already saved. Replace it, or keep both?',
+                onChoice: (choice) => {
+                  if (choice === 'cancel') return;
+                  if (choice === 'replace') presets[existingIdx] = entry;
+                  else { entry.label = label + ' (2)'; presets.push(entry); }
+                  commit();
+                },
+              });
             } else {
               presets.push(entry);
+              commit();
             }
-            saveJSON(presetKey(), presets);
-            render(panel);
           },
         });
       },
@@ -8818,16 +8856,23 @@ _rgnfFab = fab; _rgnfPanel = panel;
                   if (!label) return;
                   const entry = { label, state: snap };
                   if (folder) entry.folder = folder;
+                  const commit = () => { saveJSON(presetKey(), presets); render(panel); };
                   const existingIdx = presets.findIndex(x => x.label === label);
                   if (existingIdx >= 0) {
-                    const replace = confirm('A preset named "' + label + '" already exists.\nOK = replace it, Cancel = keep both.');
-                    if (replace) presets[existingIdx] = entry;
-                    else { entry.label = label + ' (2)'; presets.push(entry); }
+                    openConfirmPicker(panel, {
+                      title: 'Preset already exists',
+                      message: '"' + label + '" is already saved. Replace it, or keep both?',
+                      onChoice: (choice) => {
+                        if (choice === 'cancel') return;
+                        if (choice === 'replace') presets[existingIdx] = entry;
+                        else { entry.label = label + ' (2)'; presets.push(entry); }
+                        commit();
+                      },
+                    });
                   } else {
                     presets.push(entry);
+                    commit();
                   }
-                  saveJSON(presetKey(), presets);
-                  render(panel);
                 },
               });
             },
