@@ -2,7 +2,7 @@
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
 // @version      16.3-dev
-// @description  Dev build of ATLAS. Testing Name Forge preset scoredMode persistence on top of prod 16.2.
+// @description  Dev build of ATLAS on top of prod 16.2. Testing Name Forge preset scoredMode persistence.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
@@ -848,13 +848,22 @@
                         _lastValidRatingsAt,
                         networkRttEstimateMs: pingTrackerLastRtt,
                     },
+                    firestore: {
+                        reads: firestoreReadCount,
+                        writes: firestoreWriteCount,
+                        windowReads: firestoreBudgetWindow.reads,
+                        windowWrites: firestoreBudgetWindow.writes,
+                        windowMinutes: FIRESTORE_BUDGET_WINDOW_MS / 60000,
+                        readBudget: FIRESTORE_READ_BUDGET,
+                        writeBudget: FIRESTORE_WRITE_BUDGET,
+                    },
                     ui,
                     clan: myClan ? {
                         id: myClan.id,
                         name: myClan.name,
                         tag: myClan.tag,
                         role: myClanRole?.(),
-                        memberCount: (myClan.members || []).length,
+                        memberCount: clanMembers(myClan).length,
                         eventScore: computeClanEventScore(myClan),
                     } : null,
                     event: eventConfig ? {
@@ -1491,6 +1500,59 @@
     const LEADERBOARD_COLLECTION = "script_submissions";
 
     let firestoreReady = null;
+    let firestoreReadCount = 0;
+    let firestoreWriteCount = 0;
+    const FIRESTORE_READ_BUDGET = 120;
+    const FIRESTORE_WRITE_BUDGET = 40;
+    const FIRESTORE_BUDGET_WINDOW_MS = 10 * 60 * 1000;
+    let firestoreBudgetWindow = {
+        startedAt: Date.now(),
+        reads: 0,
+        writes: 0,
+        readWarned: false,
+        writeWarned: false,
+    };
+
+    function nextFirestoreBudgetWindow(window, now = Date.now()) {
+        const startedAt = Number(window?.startedAt);
+        if (Number.isFinite(startedAt)
+            && now >= startedAt
+            && now - startedAt < FIRESTORE_BUDGET_WINDOW_MS) {
+            return window;
+        }
+        return {
+            startedAt: now,
+            reads: 0,
+            writes: 0,
+            readWarned: false,
+            writeWarned: false,
+        };
+    }
+
+    function logRead(label, count = 1) {
+        const charged = Math.max(1, Number(count) || 1);
+        firestoreBudgetWindow = nextFirestoreBudgetWindow(firestoreBudgetWindow);
+        firestoreReadCount += charged;
+        firestoreBudgetWindow.reads += charged;
+        console.log(`[RG HUD] Firestore read +${charged} #${firestoreReadCount} (${label}; ${firestoreBudgetWindow.reads}/${FIRESTORE_READ_BUDGET} in 10m)`);
+        if (!firestoreBudgetWindow.readWarned
+            && firestoreBudgetWindow.reads > FIRESTORE_READ_BUDGET) {
+            firestoreBudgetWindow.readWarned = true;
+            dbgWarn(`Firestore read budget passed (${firestoreBudgetWindow.reads}/${FIRESTORE_READ_BUDGET} in 10m)`);
+        }
+    }
+
+    function logWrite(label) {
+        firestoreBudgetWindow = nextFirestoreBudgetWindow(firestoreBudgetWindow);
+        firestoreWriteCount++;
+        firestoreBudgetWindow.writes++;
+        console.log(`[RG HUD] Firestore write #${firestoreWriteCount} (${label}; ${firestoreBudgetWindow.writes}/${FIRESTORE_WRITE_BUDGET} in 10m)`);
+        if (!firestoreBudgetWindow.writeWarned
+            && firestoreBudgetWindow.writes > FIRESTORE_WRITE_BUDGET) {
+            firestoreBudgetWindow.writeWarned = true;
+            dbgWarn(`Firestore write budget passed (${firestoreBudgetWindow.writes}/${FIRESTORE_WRITE_BUDGET} in 10m)`);
+        }
+    }
 
     async function initFirebase() {
         if (!FIREBASE_CONFIG) return null;
@@ -1498,13 +1560,65 @@
 
         try {
             const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-            const { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot, runTransaction } =
+            const {
+                getFirestore,
+                doc,
+                setDoc,
+                getDoc: rawGetDoc,
+                collection,
+                query,
+                where,
+                getDocs: rawGetDocs,
+                getCountFromServer: rawGetCountFromServer,
+                orderBy,
+                limit,
+                deleteDoc,
+                serverTimestamp,
+                onSnapshot: rawOnSnapshot,
+                runTransaction,
+            } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
+            const getDoc = async ref => {
+                const snapshot = await rawGetDoc(ref);
+                logRead(ref?.path || "document");
+                return snapshot;
+            };
+            const getDocs = async target => {
+                const snapshot = await rawGetDocs(target);
+                logRead("query", Math.max(1, snapshot.size || 0));
+                return snapshot;
+            };
+            const getCountFromServer = async target => {
+                const snapshot = await rawGetCountFromServer(target);
+                logRead("count query");
+                return snapshot;
+            };
+            const onSnapshot = (target, onNext, onError) =>
+                rawOnSnapshot(target, snapshot => {
+                    logRead(target?.path || "listener", snapshot?.size || 1);
+                    onNext(snapshot);
+                }, onError);
 
-            firestoreReady = { db, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, getCountFromServer, orderBy, limit, deleteDoc, serverTimestamp, onSnapshot, runTransaction };
+            firestoreReady = {
+                db,
+                doc,
+                setDoc,
+                getDoc,
+                collection,
+                query,
+                where,
+                getDocs,
+                getCountFromServer,
+                orderBy,
+                limit,
+                deleteDoc,
+                serverTimestamp,
+                onSnapshot,
+                runTransaction,
+            };
             return firestoreReady;
         } catch (e) {
             dbg("initFirebase failed: " + (e && e.message ? e.message : e));
@@ -1516,10 +1630,18 @@
 
     // ---------- Force-update gate ----------
     // admin/blacklist has { minVersion }. rules reject sub-min writes anyway.
-    // check once per session, skip submits if outdated. HUD display stays on.
+    // Check once per session. Reads stay available, but every client mutation
+    // goes through atlasMutationAllowed.
 
     let updateRequiredChecked = false;
     let updateRequired = false;
+    let updateRequiredUiShown = false;
+
+    function showUpdateRequiredUI() {
+        if (updateRequiredUiShown) return;
+        updateRequiredUiShown = true;
+        showBanner("ATLAS update required — Tampermonkey → Check for updates", "#ffcf5b");
+    }
 
     async function isUpdateRequired(fb) {
         if (updateRequiredChecked) return updateRequired;
@@ -1530,8 +1652,6 @@
                 const minV = snap.data().minVersion;
                 if (typeof minV === "number" && SCRIPT_VERSION_NUM < minV) {
                     updateRequired = true;
-                    showError(`HUD v${SCRIPT_VERSION} is outdated -- update via Tampermonkey to resume leaderboard sync`);
-                    showBanner("⬆️ HUD update required! Tampermonkey → Check for updates", "#ffcf5b");
                 }
             }
         } catch (e) {
@@ -1540,6 +1660,79 @@
         }
         updateRequiredChecked = true;
         return updateRequired;
+    }
+
+    async function atlasMutationAllowed(fb, label) {
+        if (!(await isUpdateRequired(fb))) return true;
+        showUpdateRequiredUI();
+        dbg(`blocked outdated client mutation: ${label}`);
+        return false;
+    }
+
+    function atlasStampedMutationData(ref, data) {
+        const path = String(ref?.path || "");
+        if (!/^clans\/[^/]+$/.test(path)
+            || !data
+            || typeof data !== "object"
+            || Array.isArray(data)) {
+            return data;
+        }
+        return {
+            ...data,
+            scriptVersion: SCRIPT_VERSION,
+            versionNum: SCRIPT_VERSION_NUM,
+        };
+    }
+
+    async function atlasSetDoc(fb, label, ref, data, options) {
+        if (!(await atlasMutationAllowed(fb, label))) return false;
+        logWrite(label);
+        const stamped = atlasStampedMutationData(ref, data);
+        if (options === undefined) await fb.setDoc(ref, stamped);
+        else await fb.setDoc(ref, stamped, options);
+        return true;
+    }
+
+    async function atlasDeleteDoc(fb, label, ref) {
+        if (!(await atlasMutationAllowed(fb, label))) return false;
+        logWrite(label);
+        await fb.deleteDoc(ref);
+        return true;
+    }
+
+    async function runAtlasTransaction(fb, label, callback) {
+        if (!(await atlasMutationAllowed(fb, label))) return false;
+        await fb.runTransaction(fb.db, async transaction => {
+            const counted = {
+                get: async ref => {
+                    const snapshot = await transaction.get(ref);
+                    logRead(ref?.path || `${label} transaction`);
+                    return snapshot;
+                },
+                set: (ref, data, ...args) => {
+                    logWrite(label);
+                    return transaction.set(
+                        ref,
+                        atlasStampedMutationData(ref, data),
+                        ...args
+                    );
+                },
+                update: (ref, data, ...args) => {
+                    logWrite(label);
+                    return transaction.update(
+                        ref,
+                        atlasStampedMutationData(ref, data),
+                        ...args
+                    );
+                },
+                delete: (...args) => {
+                    logWrite(label);
+                    return transaction.delete(...args);
+                },
+            };
+            return callback(counted);
+        });
+        return true;
     }
 
     // strips TMP tags (<#rrggbb>, <br>, etc.)
@@ -1743,15 +1936,8 @@
     // ---------- Write-reduction caches ----------
     // read nothing twice per session, write nothing unchanged.
 
-    let firestoreWriteCount = 0;
-    function logWrite(label) {
-        firestoreWriteCount++;
-        console.log(`[RG HUD] Firestore write #${firestoreWriteCount} (${label})`);
-    }
-
     const cachedDisplayNames = new Map();  // player -> displayName
     const lastSyncSnapshot = new Map();    // player -> last payload JSON
-    const knownDocIds = new Map();         // player+mode -> doc id
 
     const SYNC_COOLDOWN_MS = 20000;
     const lastSyncTime = new Map();
@@ -1782,7 +1968,7 @@
 
         const fb = await initFirebase();
         if (!fb) return;
-        if (await isUpdateRequired(fb)) return;
+        if (!(await atlasMutationAllowed(fb, "leaderboard submission"))) return;
 
         const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, data.Id);
 
@@ -1864,13 +2050,18 @@
 
         let writeOk = false;
         try {
-            logWrite("script_submissions");
-            await fb.setDoc(docRef, payload, { merge: true });
+            writeOk = await atlasSetDoc(
+                fb,
+                "script_submissions",
+                docRef,
+                payload,
+                { merge: true }
+            );
             // cache AFTER success, otherwise a rejected write looks "unchanged"
             // next time and never retries
+            if (!writeOk) return;
             lastSyncTime.set(data.Id, now);
             lastSyncSnapshot.set(data.Id, snapshotKey);
-            writeOk = true;
             clearError();
         } catch (e) {
             console.error("[RG HUD] Leaderboard submission failed:", e);
@@ -1893,17 +2084,13 @@
     // serialize per player+mode so races can't create duplicate docs
     const upsertLocks = new Map();
 
-    // finds this player's entry for one playlist by sourceUserId. merge:true
-    // preserves hand-set fields (flag, icons, glowColor). creates if missing.
-    // catch inside covers Firestore-side failures, no top-level wrap needed.
+    // Sourced rows have one stable id. merge:true preserves hand-set fields on
+    // that row, while unrelated manual site rows are never queried or touched.
     async function upsertPlaylistEntry(fb, sourceUserId, playlist, fields) {
         const lockKey = `${sourceUserId}_${playlist}`;
         const previous = upsertLocks.get(lockKey) || Promise.resolve();
 
         const current = previous.then(async () => {
-            const cacheKey = `${sourceUserId}_${playlist}`;
-            const cachedId = knownDocIds.get(cacheKey);
-
             // identifying fields on every write so rules can blacklist-check merges
             const fullFields = {
                 ...fields,
@@ -1916,36 +2103,15 @@
             };
 
             try {
-                if (cachedId) {
-                    logWrite(`leaderboard/${playlist} (cached id)`);
-                    await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, cachedId), fullFields, { merge: true });
-                    clearError();
-                    return true;
-                }
-
-                const q = fb.query(
-                    fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                    fb.where("sourceUserId", "==", sourceUserId),
-                    fb.where("playlist", "==", playlist)
+                const deterministicId = `${sourceUserId}_${playlist}`;
+                const wrote = await atlasSetDoc(
+                    fb,
+                    `leaderboard/${playlist}`,
+                    fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, deterministicId),
+                    fullFields,
+                    { merge: true }
                 );
-
-                const existing = await fb.getDocs(q);
-                if (existing.size > 1) {
-                    console.warn(
-                        `[RG HUD] ⚠️ Found ${existing.size} leaderboard documents matching sourceUserId=${sourceUserId} playlist=${playlist}. ` +
-                        `Only the first one found will be updated; the rest will go stale. Delete the extras in Firestore.`
-                    );
-                }
-                if (!existing.empty) {
-                    const docId = existing.docs[0].id;
-                    knownDocIds.set(cacheKey, docId);
-                    logWrite(`leaderboard/${playlist} (found via query)`);
-                    await fb.setDoc(fb.doc(fb.db, REAL_LEADERBOARD_COLLECTION, docId), fullFields, { merge: true });
-                } else {
-                    logWrite(`leaderboard/${playlist} (new doc)`);
-                    const newDoc = await fb.addDoc(fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION), fullFields);
-                    knownDocIds.set(cacheKey, newDoc.id);
-                }
+                if (!wrote) return false;
                 clearError();
                 return true;
             } catch (e) {
@@ -1977,50 +2143,12 @@
         } catch (e) {}
     }
 
-    // v13.6 -------- Match audit trail --------
-    // append-only receipt in match_audits. every player in the match writes
-    // their own — a fabricated match has no corroborating audits.
-    // fire-and-forget, non-fatal on failure (rules may not allow it yet).
+    // The public rules deny this collection and there is no retention job.
+    // Keep the call site as a no-op until both exist.
     async function writeMatchAudit(prevRatings, opponents) {
-        try {
-            if (!lastKnownPlayerData) return;
-            const fb = await initFirebase();
-            if (!fb) return;
-            const g = lastKnownPlayerData.ModesGlicko || {};
-            const deltas = {};
-            const afters = {};
-            let anyChange = false;
-            for (const mode of ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"]) {
-                const after = g[mode]?.displayRating;
-                const before = prevRatings[mode];
-                if (typeof after === "number") afters[mode] = after;
-                if (typeof after === "number" && typeof before === "number" && after !== before) {
-                    deltas[mode] = after - before;
-                    anyChange = true;
-                }
-            }
-            if (!anyChange) return; // non-ranked or resync with no change
-            const opponentList = (Array.isArray(opponents) ? opponents : [])
-                .filter(p => p && p.uid && p.uid !== lastKnownPlayerData.Id)
-                .map(p => ({ uid: String(p.uid).slice(0, 64), name: String(p.name || "").slice(0, 64) }))
-                .slice(0, 8); // 3v3 max is 6, leave headroom
-            const audit = {
-                sourceUserId: lastKnownPlayerData.Id,
-                deviceId: getDeviceId(),
-                versionNum: SCRIPT_VERSION_NUM,
-                deltas,
-                ratingsAfter: afters,
-                opponents: opponentList,
-                ts: fb.serverTimestamp(),
-                clientTs: Date.now(),
-            };
-            logWrite("match_audits");
-            await fb.addDoc(fb.collection(fb.db, "match_audits"), audit);
-            dbg(`match audit written (${Object.keys(deltas).length} mode deltas, ${opponentList.length} opponents)`);
-        } catch (e) {
-            // best-effort. HUD keeps working, we just skip the audit.
-            dbg("match audit write failed (non-fatal): " + (e && e.message ? e.message : e));
-        }
+        void prevRatings;
+        void opponents;
+        dbg("match audit disabled");
     }
 
     // ---------- Leaderboard opponent popup ----------
@@ -2028,7 +2156,8 @@
     // cache + config live in their own localStorage keys so the existing
     // near-real-time rank stuff is untouched.
 
-    const RG_LB_CACHE_KEY = "rgHudLbCache_v1";
+    const RG_LB_CACHE_KEY_LEGACY = "rgHudLbCache_v1";
+    const RG_LB_CACHE_KEY_PREFIX = "rgHudLbCache_v2";
     const RG_LB_CONFIG_KEY = "rgHudRemoteConfig_v1";
     const RG_LB_CONFIG_TTL_MS = 60 * 60 * 1000;
     const RG_LB_MODES = ["Competitive1v1", "Competitive2v2", "Competitive3v3"];
@@ -2094,6 +2223,10 @@
         };
     }
 
+    function leaderboardCacheKey(mode) {
+        return `${RG_LB_CACHE_KEY_PREFIX}.${mode}`;
+    }
+
     function prefersReducedPopupMotion() {
         return typeof window !== "undefined"
             && typeof window.matchMedia === "function"
@@ -2115,9 +2248,9 @@
     }
 
     let _remoteConfigMemo = null;
-    let _lbCacheMemo = null;
-    let _lbCacheInFlight = null;      // shared promise so concurrent callers don't re-fetch
-    let _lbCacheFailUntil = 0;        // cooldown after a failed fetch to avoid hammering
+    const _lbCacheMemo = new Map();
+    const _lbCacheInFlight = new Map();
+    const _lbCacheFailUntil = new Map();
     const RG_LB_FAIL_COOLDOWN_MS = 60 * 1000;
     let _matchFormat = null;
     let _matchPlayerCount = 0;
@@ -2163,29 +2296,28 @@
         return { ...RG_LB_DEFAULT_CONFIG, fetchedAt: 0 };
     }
 
-    async function fetchLeaderboardCache() {
+    async function fetchLeaderboardCache(mode) {
         try {
             const fb = await initFirebase();
             if (!fb) return null;
-            const cache = { modes: {}, fetchedAt: Date.now() };
-            for (const mode of RG_LB_MODES) {
-                const q = fb.query(
-                    fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                    fb.where("playlist", "==", RG_LB_MODE_TO_PLAYLIST[mode]),
-                    fb.orderBy("mmr", "desc"),
-                    fb.limit(RG_LB_TOP_N),
-                );
-                const snap = await fb.getDocs(q);
-                const entries = [];
-                let rank = 0;
-                snap.forEach(doc => {
-                    rank++;
-                    const d = doc.data();
-                    entries.push({ uid: d.sourceUserId, name: d.name, mmr: d.mmr, rank });
-                });
-                cache.modes[mode] = entries;
-            }
-            dbg(`leaderboard cache refreshed (${RG_LB_MODES.map(m => `${m.replace("Competitive","")}:${cache.modes[m].length}`).join(", ")})`);
+            const playlist = RG_LB_MODE_TO_PLAYLIST[mode];
+            if (!playlist) return null;
+            const q = fb.query(
+                fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                fb.where("playlist", "==", playlist),
+                fb.orderBy("mmr", "desc"),
+                fb.limit(RG_LB_TOP_N),
+            );
+            const snap = await fb.getDocs(q);
+            const entries = [];
+            let rank = 0;
+            snap.forEach(doc => {
+                rank++;
+                const d = doc.data();
+                entries.push({ uid: d.sourceUserId, name: d.name, mmr: d.mmr, rank });
+            });
+            const cache = { modes: { [mode]: entries }, fetchedAt: Date.now() };
+            dbg(`leaderboard cache refreshed (${mode.replace("Competitive", "")}:${entries.length})`);
             return cache;
         } catch (e) {
             dbg("leaderboard cache fetch failed: " + (e && e.message ? e.message : e));
@@ -2193,37 +2325,69 @@
         }
     }
 
-    async function getLeaderboardCache() {
+    async function getLeaderboardCache(mode) {
+        if (!RG_LB_MODE_TO_PLAYLIST[mode]) return null;
         const cfg = await getRemoteConfig();
         const ttl = (cfg.cacheRefreshHours || 24) * 60 * 60 * 1000;
-        if (_lbCacheMemo && Date.now() - _lbCacheMemo.fetchedAt < ttl) return _lbCacheMemo;
+        const memo = _lbCacheMemo.get(mode);
+        if (memo && Date.now() - memo.fetchedAt < ttl) return memo;
         try {
-            const cached = JSON.parse(localStorage.getItem(RG_LB_CACHE_KEY) || "null");
+            const cached = JSON.parse(
+                localStorage.getItem(leaderboardCacheKey(mode)) || "null"
+            );
             if (cached && Date.now() - cached.fetchedAt < ttl) {
-                _lbCacheMemo = cached;
+                _lbCacheMemo.set(mode, cached);
                 return cached;
+            }
+            // Keep a warm cache across the v16 upgrade, then store only the
+            // requested playlist in the new key.
+            const legacy = JSON.parse(
+                localStorage.getItem(RG_LB_CACHE_KEY_LEGACY) || "null"
+            );
+            if (legacy?.modes?.[mode] && Date.now() - legacy.fetchedAt < ttl) {
+                const migrated = {
+                    modes: { [mode]: legacy.modes[mode] },
+                    fetchedAt: legacy.fetchedAt,
+                };
+                _lbCacheMemo.set(mode, migrated);
+                try {
+                    localStorage.setItem(
+                        leaderboardCacheKey(mode),
+                        JSON.stringify(migrated)
+                    );
+                } catch (e) {}
+                return migrated;
             }
         } catch (e) {}
         // back off if we just failed — usually a missing index or perms issue,
         // no point hammering the same broken query for every roster entry.
-        if (Date.now() < _lbCacheFailUntil) return null;
+        if (Date.now() < (_lbCacheFailUntil.get(mode) || 0)) return null;
         // share one in-flight fetch so 4 roster entries don't spawn 4 requests
-        if (_lbCacheInFlight) return _lbCacheInFlight;
-        _lbCacheInFlight = (async () => {
+        if (_lbCacheInFlight.has(mode)) return _lbCacheInFlight.get(mode);
+        const inFlight = (async () => {
             try {
-                const fresh = await fetchLeaderboardCache();
+                const fresh = await fetchLeaderboardCache(mode);
                 if (fresh) {
-                    _lbCacheMemo = fresh;
-                    try { localStorage.setItem(RG_LB_CACHE_KEY, JSON.stringify(fresh)); } catch (e) {}
+                    _lbCacheMemo.set(mode, fresh);
+                    try {
+                        localStorage.setItem(
+                            leaderboardCacheKey(mode),
+                            JSON.stringify(fresh)
+                        );
+                    } catch (e) {}
                     return fresh;
                 }
-                _lbCacheFailUntil = Date.now() + RG_LB_FAIL_COOLDOWN_MS;
+                _lbCacheFailUntil.set(
+                    mode,
+                    Date.now() + RG_LB_FAIL_COOLDOWN_MS
+                );
                 return null;
             } finally {
-                _lbCacheInFlight = null;
+                _lbCacheInFlight.delete(mode);
             }
         })();
-        return _lbCacheInFlight;
+        _lbCacheInFlight.set(mode, inFlight);
+        return inFlight;
     }
 
     function lookupInCache(cache, uid, mode) {
@@ -2512,7 +2676,7 @@
             if (!teamsBalanced) {
                 dbg(`team split ${counts.Orange || 0}O/${counts.Blue || 0}B doesn't match a legit ${matchPlayerCount}-player split — using neutral labels`);
             }
-            const cache = await getLeaderboardCache();
+            const cache = await getLeaderboardCache(matchFormat);
             if (generation !== _matchPopupGeneration) return;
             if (!cache) { dbg("popup skip: no leaderboard cache available"); return; }
             const cfg = await getRemoteConfig();
@@ -2574,7 +2738,7 @@
         try {
             if (!deferred || !selfUid || !players.length || changedRanked.length !== 1) return;
             const mode = changedRanked[0];
-            const cache = await getLeaderboardCache();
+            const cache = await getLeaderboardCache(mode);
             if (!cache) return;
             if (_matchPopupGeneration > generation + 1 || _inMatch) return;
             const cfg = await getRemoteConfig();
@@ -2680,12 +2844,52 @@
         }
     }
 
+    function clanMembers(clan) {
+        if (Array.isArray(clan?.members)) return clan.members;
+        if (!clan?.members || typeof clan.members !== "object") return [];
+        return Object.entries(clan.members).map(([userId, member]) => ({
+            ...(member && typeof member === "object" ? member : {}),
+            userId: member?.userId || userId,
+        }));
+    }
+
+    function clanMembersField(liveClan, members) {
+        if (!Array.isArray(liveClan?.members)
+            && liveClan?.members
+            && typeof liveClan.members === "object") {
+            return {
+                members: Object.fromEntries(
+                    members
+                        .filter(member => member?.userId)
+                        .map(member => {
+                            const stats = liveClan.memberStats?.[member.userId];
+                            const deviceIds = [...new Set([
+                                ...(Array.isArray(member.deviceIds)
+                                    ? member.deviceIds
+                                    : []),
+                                member.deviceId,
+                                ...(Array.isArray(stats?.deviceIds)
+                                    ? stats.deviceIds
+                                    : []),
+                                stats?.deviceId,
+                            ].filter(Boolean))].sort();
+                            return [
+                                member.userId,
+                                { ...member, deviceIds },
+                            ];
+                        })
+                ),
+            };
+        }
+        return { members };
+    }
+
     // Current clients keep per-player MMR in a map that legacy whole-array
     // writes do not touch. Prefer whichever representation has the newer
     // timestamp so downgrades and mixed-version clans remain compatible.
     function effectiveClanMemberStat(clan, memberOrUid) {
         const member = typeof memberOrUid === "string"
-            ? (clan?.members ?? []).find(m => m.userId === memberOrUid)
+            ? clanMembers(clan).find(m => m.userId === memberOrUid)
             : memberOrUid;
         const uid = typeof memberOrUid === "string" ? memberOrUid : member?.userId;
         const mapped = uid ? clan?.memberStats?.[uid] : null;
@@ -2706,7 +2910,7 @@
     }
 
     function effectiveClanTotalMMR(clan) {
-        return (clan?.members ?? []).reduce((sum, member) => {
+        return clanMembers(clan).reduce((sum, member) => {
             const mmr = effectiveClanMemberStat(clan, member).mmr;
             return sum + (typeof mmr === "number" ? mmr : 0);
         }, 0);
@@ -2714,7 +2918,7 @@
 
     function clanHasDeviceId(clan, uid, deviceId) {
         if (!deviceId) return true;
-        const member = (clan?.members ?? []).find(candidate => candidate.userId === uid);
+        const member = clanMembers(clan).find(candidate => candidate.userId === uid);
         const mapped = clan?.memberStats?.[uid];
         return member?.deviceId === deviceId
             || (Array.isArray(member?.deviceIds) && member.deviceIds.includes(deviceId))
@@ -2723,7 +2927,7 @@
     }
 
     function clanMMRWriteFields(liveClan, uid, myMMR, syncedAt, deviceId = null) {
-        const liveMembers = Array.isArray(liveClan?.members) ? liveClan.members : [];
+        const liveMembers = clanMembers(liveClan);
         if (!liveMembers.some(m => m.userId === uid)) return null;
         const members = liveMembers.map(m =>
             m.userId === uid
@@ -2748,9 +2952,10 @@
                 ...(deviceIds ? { deviceIds } : {}),
             },
         };
-        const mergedClan = { ...liveClan, members, memberStats };
+        const membersField = clanMembersField(liveClan, members);
+        const mergedClan = { ...liveClan, ...membersField, memberStats };
         return {
-            members,
+            ...membersField,
             memberStats,
             totalMMR: effectiveClanTotalMMR(mergedClan),
         };
@@ -2795,7 +3000,14 @@
                     // A plain setDoc used our stale in-memory members array and
                     // could erase somebody who had just been approved.
                     const clanRef = fb.doc(fb.db, "clans", clanId);
-                    const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+                    const useReservations = clanReservationsEnabled();
+                    const directoryRef = clanDirectoryDocRef(fb, clanId);
+                    const membershipRef = useReservations
+                        ? fb.doc(fb.db, "clan_memberships", uid)
+                        : null;
+                    const deviceRef = useReservations
+                        ? fb.doc(fb.db, "clan_devices", deviceId)
+                        : null;
                     const syncedAt = Date.now();
                     let committedClan = null;
                     let committedDirectory = null;
@@ -2804,17 +3016,29 @@
                         committedClan = null;
                         committedDirectory = null;
                         wroteClan = false;
-                        return fb.runTransaction(fb.db, async tx => {
+                        return runAtlasTransaction(fb, "clan score sync", async tx => {
                             committedClan = null;
                             committedDirectory = null;
                             wroteClan = false;
                             // A device only does this on its first clan sync.
                             // Saving both together stops two accounts racing.
-                            const directorySnap = deviceNeedsLink
+                            const directorySnap = !useReservations && deviceNeedsLink
                                 ? await tx.get(directoryRef)
+                                : null;
+                            const membershipSnap = useReservations
+                                ? await tx.get(membershipRef)
+                                : null;
+                            const deviceSnap = useReservations
+                                ? await tx.get(deviceRef)
                                 : null;
                             const liveSnap = await tx.get(clanRef);
                             if (!liveSnap.exists()) return;
+                            if ((membershipSnap?.exists()
+                                && membershipSnap.data().clanId !== clanId)
+                                || (deviceSnap?.exists()
+                                    && deviceSnap.data().clanId !== clanId)) {
+                                return;
+                            }
                             const liveClan = liveSnap.data();
                             const liveMine = effectiveClanMemberStat(liveClan, uid);
                             if (!force && liveMine.mmr === myMMR
@@ -2830,17 +3054,59 @@
                                 deviceId
                             );
                             if (!fields) return;
+                            const nextClan = {
+                                ...liveClan,
+                                id: clanId,
+                                ...fields,
+                            };
+                            const reservationFields = useReservations
+                                ? {
+                                    memberIds: clanMembers(nextClan).map(
+                                        member => member.userId
+                                    ),
+                                    deviceIds: clanDeviceIds(nextClan),
+                                }
+                                : {};
                             tx.set(clanRef,
-                                { ...fields, lastSyncAt: fb.serverTimestamp() },
+                                {
+                                    ...fields,
+                                    ...reservationFields,
+                                    lastSyncAt: fb.serverTimestamp(),
+                                },
                                 { merge: true });
-                            committedClan = { ...liveClan, id: clanId, ...fields };
-                            if (deviceNeedsLink && directorySnap) {
+                            committedClan = {
+                                ...nextClan,
+                                ...reservationFields,
+                            };
+                            const entry = clanDirectoryEntry(clanId, committedClan);
+                            if (useReservations) {
+                                tx.set(directoryRef, entry);
+                                tx.set(
+                                    membershipRef,
+                                    clanMembershipRecord(
+                                        clanId,
+                                        clanMembers(committedClan).find(
+                                            member => member.userId === uid
+                                        )?.role ?? "member",
+                                        clanMemberDeviceIds(committedClan, uid)
+                                    )
+                                );
+                                tx.set(deviceRef, {
+                                    clanId,
+                                    userId: uid,
+                                    updatedAt: new Date().toISOString(),
+                                });
+                                committedDirectory = putClanInDirectory(
+                                    clanDirectory,
+                                    entry
+                                );
+                            } else if (deviceNeedsLink && directorySnap) {
                                 const liveDirectory = directorySnap.exists()
                                     ? (directorySnap.data().clans ?? [])
                                     : [];
                                 committedDirectory = putClanInDirectory(
                                     liveDirectory,
-                                    clanDirectoryEntry(clanId, committedClan)
+                                    entry
                                 );
                                 tx.set(directoryRef, { clans: committedDirectory });
                             }
@@ -2848,13 +3114,15 @@
                         });
                     };
                     try {
-                        await writeClanMMR();
+                        const ran = await writeClanMMR();
+                        if (!ran) return null;
                     } catch (firstErr) {
                         // one retry, otherwise a transient fail stalled visible
                         // contribution until the NEXT match
                         console.warn("[RG HUD] Clan MMR write failed, retrying in 5s:", firstErr);
                         await new Promise(r => setTimeout(r, 5000));
-                        await writeClanMMR();
+                        const ran = await writeClanMMR();
+                        if (!ran) return null;
                     }
                     if (!committedClan) {
                         dbg("Clan MMR transaction skipped: clan missing or player no longer on roster");
@@ -3223,8 +3491,8 @@
                         _matchPlayerCount = parseInt(m[1], 10);
                         _matchFormat = derivedFormatFromPlayerCount(_matchPlayerCount);
                         dbg(`match player count = ${_matchPlayerCount}, format = ${_matchFormat || "unknown"}`);
-                        // pre-warm the cache in the background so it's ready when roster fills
-                        getLeaderboardCache();
+                        // Pre-warm only the active playlist.
+                        if (_matchFormat) getLeaderboardCache(_matchFormat);
                         if (_matchFormat) {
                             // Late Starting line: live roster now owns delivery;
                             // discard deferred state to prevent match-end duplicates.
@@ -3362,7 +3630,7 @@
     }
 
     function myClanRole() {
-        const me = (myClan?.members ?? []).find(m => m.userId === myUserId());
+        const me = clanMembers(myClan).find(m => m.userId === myUserId());
         return me?.role ?? "member";
     }
 
@@ -3391,19 +3659,56 @@
     async function maybeCaptureEventBaseline(fb, uid, currentMMR) {
         if (!myClan || eventPhase() !== "active") return;
         const evId = currentEventId();
-
-        // baseline from a previous event -> wipe
-        let baseline = myClan.eventBaseline ?? {};
-        if (myClan.eventId !== evId) {
-            baseline = {};
-        }
-        if (baseline[uid] != null && myClan.eventId === evId) return;
+        if (myClan.eventId === evId
+            && memberEventBaseline(myClan, uid) != null) return;
 
         try {
-            baseline[uid] = currentMMR;
-            await fb.setDoc(fb.doc(fb.db, "clans", myClan.id),
-                { eventBaseline: baseline, eventId: evId, eventName: eventConfig.name }, { merge: true });
-            myClan.eventBaseline = baseline;
+            const clanId = myClan.id;
+            let committedBaseline = null;
+            const ran = await runAtlasTransaction(
+                fb,
+                "clan event baseline",
+                async tx => {
+                    committedBaseline = null;
+                    const ref = fb.doc(fb.db, "clans", clanId);
+                    const snapshot = await tx.get(ref);
+                    if (!snapshot.exists()) return;
+                    const liveClan = snapshot.data();
+                    const baseline = liveClan.eventId === evId
+                        ? { ...(liveClan.eventBaseline ?? {}) }
+                        : {};
+                    if (liveClan.eventId === evId
+                        && memberEventBaseline(liveClan, uid) != null) {
+                        committedBaseline = baseline;
+                        return;
+                    }
+                    if (baseline[uid] != null) {
+                        committedBaseline = baseline;
+                        return;
+                    }
+                    baseline[uid] = currentMMR;
+                    tx.set(ref, {
+                        eventBaseline: baseline,
+                        eventId: evId,
+                        eventName: eventConfig.name,
+                    }, { merge: true });
+                    if (clanReservationsEnabled()) {
+                        const nextClan = {
+                            ...liveClan,
+                            id: clanId,
+                            eventBaseline: baseline,
+                            eventId: evId,
+                            eventName: eventConfig.name,
+                        };
+                        const entry = clanDirectoryEntry(clanId, nextClan);
+                        tx.set(clanDirectoryDocRef(fb, clanId), entry);
+                        clanDirectory = putClanInDirectory(clanDirectory, entry);
+                    }
+                    committedBaseline = baseline;
+                }
+            );
+            if (!ran || !committedBaseline) return;
+            myClan.eventBaseline = committedBaseline;
             myClan.eventId = evId;
         } catch (e) {
             console.warn("[RG HUD] Event baseline capture failed:", e);
@@ -3413,16 +3718,31 @@
     }
 
     function clanBaselineForCurrentEvent(clan) {
-        if (!clan || !clan.eventBaseline) return null;
+        if (!clan) return null;
         if (clan.eventId !== currentEventId()) return null; // stale -> no score yet
-        return clan.eventBaseline;
+        const hasPerMemberBaseline = clanMembers(clan).some(
+            member => member?.eventBaseline != null
+        );
+        if (!clan.eventBaseline && !hasPerMemberBaseline) return null;
+        return clan.eventBaseline ?? {};
+    }
+
+    function memberEventBaseline(clan, memberOrUid) {
+        const member = typeof memberOrUid === "string"
+            ? clanMembers(clan).find(candidate => candidate.userId === memberOrUid)
+            : memberOrUid;
+        if (member?.eventBaseline != null) return member.eventBaseline;
+        const uid = typeof memberOrUid === "string"
+            ? memberOrUid
+            : member?.userId;
+        return uid ? clan?.eventBaseline?.[uid] ?? null : null;
     }
 
     function computeClanEventScore(clan) {
         const baseline = clanBaselineForCurrentEvent(clan);
         if (!baseline) return 0;
-        return (clan.members ?? []).reduce((sum, m) => {
-            const base = baseline[m.userId];
+        return clanMembers(clan).reduce((sum, m) => {
+            const base = memberEventBaseline(clan, m);
             const mmr = effectiveClanMemberStat(clan, m).mmr;
             if (base == null || typeof mmr !== "number") return sum;
             return sum + (mmr - base);
@@ -3432,8 +3752,8 @@
     function myEventContribution(clan, uid) {
         const baseline = clanBaselineForCurrentEvent(clan);
         if (!baseline) return null;
-        const base = baseline[uid];
-        const me = (clan.members ?? []).find(m => m.userId === uid);
+        const me = clanMembers(clan).find(m => m.userId === uid);
+        const base = memberEventBaseline(clan, me ?? uid);
         const mmr = effectiveClanMemberStat(clan, me).mmr;
         if (base == null || !me || typeof mmr !== "number") return null;
         return mmr - base;
@@ -3680,7 +4000,7 @@
 
     function clanMemberDeviceIds(clan, uid) {
         const ids = new Set();
-        const member = (clan?.members ?? []).find(candidate => candidate.userId === uid);
+        const member = clanMembers(clan).find(candidate => candidate.userId === uid);
         const stats = clan?.memberStats?.[uid];
         if (member?.deviceId) ids.add(member.deviceId);
         for (const deviceId of Array.isArray(member?.deviceIds) ? member.deviceIds : []) {
@@ -3690,25 +4010,79 @@
         for (const deviceId of Array.isArray(stats?.deviceIds) ? stats.deviceIds : []) {
             if (deviceId) ids.add(deviceId);
         }
-        return [...ids];
+        return [...ids].sort();
     }
 
     function clanDeviceIds(clan) {
         const ids = new Set();
-        for (const member of clan?.members ?? []) {
+        for (const member of clanMembers(clan)) {
             for (const deviceId of clanMemberDeviceIds(clan, member.userId)) {
                 if (deviceId) ids.add(deviceId);
             }
         }
-        return [...ids];
+        return [...ids].sort();
     }
 
     function clanMembershipRecord(clanId, role, deviceIds) {
         return {
             clanId,
             role,
-            deviceIds: [...new Set((deviceIds ?? []).filter(Boolean))],
+            deviceIds: [...new Set((deviceIds ?? []).filter(Boolean))].sort(),
             updatedAt: new Date().toISOString(),
+        };
+    }
+
+    function clanDirectoryDocRef(fb, clanId) {
+        return clanReservationsEnabled()
+            ? fb.doc(fb.db, "clans_directory", clanId)
+            : fb.doc(fb.db, "clans_directory", "index");
+    }
+
+    function clanDeviceLinkPlan({
+        clan,
+        uid,
+        deviceId,
+        membership = null,
+        device = null,
+        directoryEntry = null,
+        useReservations = false,
+    }) {
+        const clanId = clan?.id;
+        const membershipClanId = membership?.clanId || null;
+        const deviceClanId = device?.clanId || null;
+        const legacyClanId = directoryEntry?.id || null;
+        const deviceInClan = clanHasDeviceId(clan, uid, deviceId);
+        const sameClanDeviceConflict = useReservations
+            ? deviceClanId === clanId
+                && device?.userId
+                && device.userId !== uid
+            : legacyClanId === clanId
+                && (directoryEntry?.deviceIds ?? []).includes(deviceId)
+                && !deviceInClan;
+        const conflictClanId = sameClanDeviceConflict
+            ? clanId
+            : (
+                useReservations
+                    ? ([membershipClanId, deviceClanId].find(
+                        value => value && value !== clanId
+                    ) || null)
+                    : (legacyClanId && legacyClanId !== clanId
+                        ? legacyClanId
+                        : null)
+            );
+        const pointerHasDevice = useReservations
+            ? membershipClanId === clanId
+                && deviceClanId === clanId
+                && directoryEntry?.id === clanId
+                && (directoryEntry?.memberIds ?? []).includes(uid)
+                && (directoryEntry?.deviceIds ?? []).includes(deviceId)
+            : legacyClanId === clanId
+                && (directoryEntry?.memberIds ?? []).includes(uid)
+                && (directoryEntry?.deviceIds ?? []).includes(deviceId);
+        return {
+            conflictClanId,
+            repairClan: !deviceInClan,
+            repairPointer: !pointerHasDevice,
         };
     }
 
@@ -3752,32 +4126,19 @@
     }
 
     function clanDirectoryEntry(id, clan) {
-        const deviceIds = new Set();
-        for (const member of clan.members ?? []) {
-            if (typeof member.deviceId === "string" && member.deviceId) {
-                deviceIds.add(member.deviceId);
-            }
-            for (const value of Array.isArray(member.deviceIds) ? member.deviceIds : []) {
-                if (typeof value === "string" && value) deviceIds.add(value);
-            }
-            const mapped = clan.memberStats?.[member.userId];
-            if (typeof mapped?.deviceId === "string" && mapped.deviceId) {
-                deviceIds.add(mapped.deviceId);
-            }
-            for (const value of Array.isArray(mapped?.deviceIds) ? mapped.deviceIds : []) {
-                if (typeof value === "string" && value) deviceIds.add(value);
-            }
-        }
+        const members = clanMembers(clan);
+        const deviceIds = clanDeviceIds(clan);
         return {
             id,
+            clanId: id,
             name: clan.name,
             tag: clan.tag ?? "",
             tagStyle: clan.tagStyle || null,
             leaderId: clan.leaderId ?? null,
             createdAt: clan.createdAt ?? null,
-            memberCount: (clan.members ?? []).length,
-            memberIds: (clan.members ?? []).map(member => member.userId),
-            deviceIds: [...deviceIds],
+            memberCount: members.length,
+            memberIds: members.map(member => member.userId),
+            deviceIds,
             totalMMR: effectiveClanTotalMMR(clan),
             eventScore: computeClanEventScore(clan),
             eventId: clan.eventId ?? null,
@@ -3865,7 +4226,7 @@
                     // doc gone (disband) or we're off the roster (left/kicked).
                     // this is also how a kicked player sees it happen live.
                     const stillMember = snap.exists()
-                        && ((snap.data().members ?? []).some(m => m.userId === uid));
+                        && clanMembers(snap.data()).some(m => m.userId === uid);
                     if (!stillMember) {
                         detachClanListener();
                         myClan = null;
@@ -3933,21 +4294,65 @@
         if (!fb) return;
 
         try {
-            const dirSnap = await fb.getDoc(fb.doc(fb.db, "clans_directory", "index"));
-            clanDirectory = canonicalClanDirectory(
-                dirSnap.exists() ? (dirSnap.data().clans ?? []) : []
-            );
-
+            await loadEventConfig(fb);
+            const useReservations = clanReservationsEnabled();
+            const deviceId = getDeviceId();
             myClan = null;
-            const mine = findDirectoryMembership(clanDirectory, uid);
-            if (mine) {
-                const clanSnap = await fb.getDoc(fb.doc(fb.db, "clans", mine.id));
-                if (clanSnap.exists()) myClan = sanitizeClanDoc({ id: mine.id, ...clanSnap.data() });
+            let mine = null;
+            if (useReservations) {
+                const [membershipSnap, deviceSnap, directorySnap] = await Promise.all([
+                    fb.getDoc(fb.doc(fb.db, "clan_memberships", uid)),
+                    fb.getDoc(fb.doc(fb.db, "clan_devices", deviceId)),
+                    fb.getDocs(fb.collection(fb.db, "clans_directory")),
+                ]);
+                const membership = membershipSnap.exists()
+                    ? membershipSnap.data()
+                    : null;
+                const device = deviceSnap.exists() ? deviceSnap.data() : null;
+                const clanId = membership?.clanId || device?.clanId || null;
+                clanDirectory = canonicalClanDirectory(
+                    directorySnap.docs
+                        .filter(snapshot => snapshot.id !== "index")
+                        .map(snapshot => ({ id: snapshot.id, ...snapshot.data() }))
+                );
+                mine = clanId
+                    ? (clanDirectory.find(entry => entry.id === clanId)
+                        || { id: clanId })
+                    : null;
+            } else {
+                const dirSnap = await fb.getDoc(
+                    fb.doc(fb.db, "clans_directory", "index")
+                );
+                clanDirectory = canonicalClanDirectory(
+                    dirSnap.exists() ? (dirSnap.data().clans ?? []) : []
+                );
+                mine = findDirectoryMembership(clanDirectory, uid);
+            }
+            if (mine?.id) {
+                const clanSnap = await fb.getDoc(
+                    fb.doc(fb.db, "clans", mine.id)
+                );
+                if (clanSnap.exists()) {
+                    myClan = sanitizeClanDoc({
+                        id: mine.id,
+                        ...clanSnap.data(),
+                    });
+                }
             }
             if (myClan) {
-                const deviceId = getDeviceId();
-                if (clanReservationsEnabled()
-                    || !clanHasDeviceId(myClan, uid, deviceId)) {
+                const directoryEntry = clanDirectory.find(
+                    entry => entry.id === myClan.id
+                ) || null;
+                const linkPlan = clanDeviceLinkPlan({
+                    clan: myClan,
+                    uid,
+                    deviceId,
+                    directoryEntry,
+                    useReservations,
+                });
+                if (useReservations
+                    || linkPlan.repairClan
+                    || linkPlan.repairPointer) {
                     const linkResult = await linkCurrentClanDevice(
                         fb,
                         myClan,
@@ -3978,8 +4383,8 @@
 
     async function linkCurrentClanDevice(fb, clan, uid, deviceId) {
         const clanRef = fb.doc(fb.db, "clans", clan.id);
-        const directoryRef = fb.doc(fb.db, "clans_directory", "index");
         const useReservations = clanReservationsEnabled();
+        const directoryRef = clanDirectoryDocRef(fb, clan.id);
         const membershipRef = useReservations
             ? fb.doc(fb.db, "clan_memberships", uid)
             : null;
@@ -3987,7 +4392,7 @@
             ? fb.doc(fb.db, "clan_devices", deviceId)
             : null;
         let result = { clan, directory: null, conflict: null };
-        await fb.runTransaction(fb.db, async tx => {
+        const ran = await runAtlasTransaction(fb, "link clan device", async tx => {
             result = { clan, directory: null, conflict: null };
             const directorySnap = await tx.get(directoryRef);
             const clanSnap = await tx.get(clanRef);
@@ -4002,50 +4407,68 @@
                 return;
             }
             const liveClan = { id: clan.id, ...clanSnap.data() };
-            const member = (liveClan.members ?? []).find(candidate => candidate.userId === uid);
+            const member = clanMembers(liveClan).find(
+                candidate => candidate.userId === uid
+            );
             if (!member) {
                 result = { clan: null, directory: null, conflict: null };
                 return;
             }
-            const liveDirectory = directorySnap.exists()
+            const liveDirectory = !useReservations && directorySnap.exists()
                 ? (directorySnap.data().clans ?? [])
-                : [];
-            const conflict = findDirectoryMembership(
-                liveDirectory,
-                { userId: null, deviceId }
-            );
-            const lockedClanId = membershipSnap?.exists()
-                ? membershipSnap.data().clanId
-                : (deviceSnap?.exists() ? deviceSnap.data().clanId : null);
-            const lockedConflict = lockedClanId && lockedClanId !== clan.id
-                ? {
-                    ...(liveDirectory.find(entry => entry?.id === lockedClanId)
-                        ?? { id: lockedClanId, name: "another clan", tag: "" }),
-                    membershipMatch: membershipSnap?.exists() ? "player" : "device",
-                }
+                : clanDirectory;
+            const directoryEntry = useReservations
+                ? (directorySnap.exists()
+                    ? { id: clan.id, ...directorySnap.data() }
+                    : null)
+                : findDirectoryMembership(
+                    liveDirectory,
+                    { userId: null, deviceId }
+                );
+            const membership = membershipSnap?.exists()
+                ? membershipSnap.data()
                 : null;
-            const liveHasDevice = clanHasDeviceId(liveClan, uid, deviceId);
-            if (lockedConflict
-                || (conflict && !(conflict.id === clan.id && liveHasDevice))) {
+            const device = deviceSnap?.exists() ? deviceSnap.data() : null;
+            const plan = clanDeviceLinkPlan({
+                clan: liveClan,
+                uid,
+                deviceId,
+                membership,
+                device,
+                directoryEntry,
+                useReservations,
+            });
+            if (plan.conflictClanId) {
+                const lockedConflict = {
+                    ...(clanDirectory.find(
+                        entry => entry?.id === plan.conflictClanId
+                    ) ?? {
+                        id: plan.conflictClanId,
+                        name: "another clan",
+                        tag: "",
+                    }),
+                    membershipMatch: membership?.clanId === plan.conflictClanId
+                        ? "player"
+                        : "device",
+                };
                 result = {
                     clan: liveClan,
                     directory: null,
-                    conflict: lockedConflict ?? conflict,
+                    conflict: lockedConflict,
                 };
                 return;
             }
-            const reservationReady = !useReservations
-                || (membershipSnap?.data()?.clanId === clan.id
-                    && deviceSnap?.data()?.clanId === clan.id);
-            if (liveHasDevice && conflict?.id === clan.id && reservationReady) {
+            if (!plan.repairClan && !plan.repairPointer) {
                 result = {
                     clan: liveClan,
-                    directory: canonicalClanDirectory(liveDirectory),
+                    directory: useReservations
+                        ? clanDirectory
+                        : canonicalClanDirectory(liveDirectory),
                     conflict: null,
                 };
                 return;
             }
-            const members = (liveClan.members ?? []).map(candidate =>
+            const members = clanMembers(liveClan).map(candidate =>
                 candidate.userId === uid
                     ? { ...candidate, deviceId }
                     : candidate
@@ -4065,23 +4488,25 @@
                     deviceIds: clanDeviceIds({ ...liveClan, members, memberStats }),
                 }
                 : {};
+            const membersField = clanMembersField(liveClan, members);
             const linkedClan = {
                 ...liveClan,
-                members,
+                ...membersField,
                 memberStats,
                 ...reservationFields,
             };
-            const directory = putClanInDirectory(
-                liveDirectory,
-                clanDirectoryEntry(clan.id, linkedClan)
-            );
+            const entry = clanDirectoryEntry(clan.id, linkedClan);
+            const directory = putClanInDirectory(clanDirectory, entry);
             tx.set(clanRef, {
-                members,
+                ...membersField,
                 memberStats,
                 ...reservationFields,
+                ...(useReservations
+                    ? { lastReservationRepairAt: fb.serverTimestamp() }
+                    : {}),
             }, { merge: true });
-            tx.set(directoryRef, { clans: directory });
             if (useReservations) {
+                tx.set(directoryRef, entry);
                 tx.set(
                     membershipRef,
                     clanMembershipRecord(
@@ -4095,15 +4520,20 @@
                     userId: uid,
                     updatedAt: new Date().toISOString(),
                 });
+            } else {
+                tx.set(
+                    directoryRef,
+                    { clans: putClanInDirectory(liveDirectory, entry) }
+                );
             }
             result = { clan: linkedClan, directory, conflict: null };
         });
+        if (!ran) return result;
         return result;
     }
 
-    // refreshDirectory reads EVERY clan doc + 1 write. fine for structural
-    // changes (create/join/kick/leave). routine per-match MMR ticks go
-    // through refreshDirectoryThrottled.
+    // Legacy mode rebuilds the shared index. Reservation mode only reads the
+    // directory shards; mutations update their own shard in the transaction.
 
     // zero-read patch of my own entry in the in-memory directory
     function patchMyClanInDirectory() {
@@ -4123,6 +4553,7 @@
     async function refreshDirectoryThrottled(fb) {
         try {
             patchMyClanInDirectory();
+            if (clanReservationsEnabled()) return;
             const now = Date.now();
             if (now - lastDirRefreshAt < DIR_REFRESH_THROTTLE_MS) return;
             lastDirRefreshAt = now;
@@ -4130,6 +4561,16 @@
         } catch (e) {
             dbg("refreshDirectoryThrottled threw: " + (e && e.message ? e.message : e));
         }
+    }
+
+    async function saveClanTagStyle(fb, clanId, newStyle) {
+        return atlasSetDoc(
+            fb,
+            "clan tag style",
+            fb.doc(fb.db, "clans", clanId),
+            { tagStyle: newStyle },
+            { merge: true }
+        );
     }
 
 
@@ -4428,7 +4869,7 @@
                 try {
                     const fb = await initFirebase();
                     if (!fb) return;
-                    await fb.setDoc(fb.doc(fb.db, "clans", myClan.id), { tagStyle: newStyle }, { merge: true });
+                    if (!(await saveClanTagStyle(fb, myClan.id, newStyle))) return;
                     myClan.tagStyle = newStyle;
                     // inline confirm, toast is easy to miss when scrolled deep
                     const saveBtn = document.getElementById("rgTagSave");
@@ -4467,16 +4908,32 @@
 
     async function refreshDirectory(fb) {
         try {
-            const snap = await fb.getDocs(fb.collection(fb.db, "clans"));
-            const discoveredClans = [];
-            snap.forEach(docSnap => {
-                const d = docSnap.data();
-                const clan = { ...d, id: docSnap.id };
-                discoveredClans.push(clanDirectoryEntry(docSnap.id, clan));
-            });
-            const clans = canonicalClanDirectory(discoveredClans);
-            await fb.setDoc(fb.doc(fb.db, "clans_directory", "index"), { clans });
-            clanDirectory = clans;
+            if (!clanReservationsEnabled()) {
+                const snap = await fb.getDocs(fb.collection(fb.db, "clans"));
+                const discoveredClans = [];
+                snap.forEach(docSnap => {
+                    const d = docSnap.data();
+                    const clan = { ...d, id: docSnap.id };
+                    discoveredClans.push(clanDirectoryEntry(docSnap.id, clan));
+                });
+                const clans = canonicalClanDirectory(discoveredClans);
+                const wrote = await atlasSetDoc(
+                    fb,
+                    "legacy clan directory rebuild",
+                    fb.doc(fb.db, "clans_directory", "index"),
+                    { clans }
+                );
+                if (wrote) clanDirectory = clans;
+            } else {
+                const snap = await fb.getDocs(
+                    fb.collection(fb.db, "clans_directory")
+                );
+                clanDirectory = canonicalClanDirectory(
+                    snap.docs
+                        .filter(docSnap => docSnap.id !== "index")
+                        .map(docSnap => ({ id: docSnap.id, ...docSnap.data() }))
+                );
+            }
         } catch (e) {
             dbg("refreshDirectory failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Directory refresh failed:", e);
@@ -4513,12 +4970,23 @@
                 ? await clanNameReservationId(name)
                 : null;
             const tagKey = useReservations ? sanitizeClanTag(tag) : null;
+            const leaderMember = {
+                userId: uid,
+                name: myName(),
+                role: "leader",
+                mmr: initialMMR,
+                syncedAt,
+                deviceId,
+                ...(useReservations ? { deviceIds: [deviceId] } : {}),
+            };
             const clan = {
                 name,
                 tag: tag || "",
                 tagStyle: null,
                 leaderId: uid,
-                members: [{ userId: uid, name: myName(), role: "leader", mmr: initialMMR, syncedAt, deviceId }],
+                members: useReservations
+                    ? { [uid]: leaderMember }
+                    : [leaderMember],
                 memberStats: { [uid]: { mmr: initialMMR, syncedAt, deviceIds: [deviceId] } },
                 joinRequests: [],
                 totalMMR: initialMMR,
@@ -4529,13 +4997,14 @@
                     nameKey,
                     tagKey,
                     normalizedName: normalizeClanName(name),
+                    lockVersion: 1,
                     deviceId,
                     memberIds: [uid],
                     deviceIds: [deviceId],
                 } : {}),
             };
             const clanRef = fb.doc(fb.collection(fb.db, "clans"));
-            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
+            const directoryRef = clanDirectoryDocRef(fb, clanRef.id);
             const nameRef = useReservations
                 ? fb.doc(fb.db, "clan_name_keys", nameKey)
                 : null;
@@ -4553,11 +5022,13 @@
             let committedDirectory = null;
 
             // Save both together so double-clicks can't create extra clans.
-            await fb.runTransaction(fb.db, async tx => {
+            const ran = await runAtlasTransaction(fb, "create clan", async tx => {
                 outcome = "created";
                 existingMembership = null;
                 committedDirectory = null;
-                const directorySnap = await tx.get(directoryRef);
+                const directorySnap = !useReservations
+                    ? await tx.get(directoryRef)
+                    : null;
                 const membershipSnap = useReservations
                     ? await tx.get(membershipRef)
                     : null;
@@ -4570,18 +5041,22 @@
                 const tagSnap = useReservations
                     ? await tx.get(tagRef)
                     : null;
-                const liveDirectory = directorySnap.exists()
+                const liveDirectory = directorySnap?.exists()
                     ? (directorySnap.data().clans ?? [])
                     : [];
-                existingMembership = findDirectoryMembership(
-                    liveDirectory,
-                    { userId: uid, deviceId }
-                );
+                existingMembership = useReservations
+                    ? null
+                    : findDirectoryMembership(
+                        liveDirectory,
+                        { userId: uid, deviceId }
+                    );
                 const lockedClanId = membershipSnap?.exists()
                     ? membershipSnap.data().clanId
                     : (deviceSnap?.exists() ? deviceSnap.data().clanId : null);
                 if (!existingMembership && lockedClanId) {
-                    const locked = liveDirectory.find(entry => entry?.id === lockedClanId);
+                    const locked = clanDirectory.find(
+                        entry => entry?.id === lockedClanId
+                    );
                     existingMembership = {
                         ...(locked ?? { id: lockedClanId, name: "another clan", tag: "" }),
                         membershipMatch: membershipSnap?.exists() ? "player" : "device",
@@ -4601,25 +5076,26 @@
                 }
                 const normalizedName = normalizeClanName(name);
                 const normalizedTag = sanitizeClanTag(tag);
-                if (liveDirectory.some(entry =>
+                if (!useReservations && liveDirectory.some(entry =>
                     normalizeClanName(entry?.name) === normalizedName
                 )) {
                     outcome = "name-taken";
                     return;
                 }
-                if (normalizedTag && liveDirectory.some(entry =>
+                if (!useReservations && normalizedTag && liveDirectory.some(entry =>
                     sanitizeClanTag(entry?.tag) === normalizedTag
                 )) {
                     outcome = "tag-taken";
                     return;
                 }
+                const entry = clanDirectoryEntry(clanRef.id, clan);
                 committedDirectory = putClanInDirectory(
-                    liveDirectory,
-                    clanDirectoryEntry(clanRef.id, clan)
+                    useReservations ? clanDirectory : liveDirectory,
+                    entry
                 );
                 tx.set(clanRef, clan);
-                tx.set(directoryRef, { clans: committedDirectory });
                 if (useReservations) {
+                    tx.set(directoryRef, entry);
                     tx.set(nameRef, {
                         clanId: clanRef.id,
                         name,
@@ -4638,8 +5114,11 @@
                         userId: uid,
                         updatedAt: new Date().toISOString(),
                     });
+                } else {
+                    tx.set(directoryRef, { clans: committedDirectory });
                 }
             });
+            if (!ran) return;
 
             if (outcome === "already-in-clan") {
                 await showDialog({
@@ -4684,10 +5163,12 @@
 
         try {
             const clanRef = fb.doc(fb.db, "clans", clanId);
-            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
             const requestName = myName();
             const deviceId = getDeviceId();
             const useReservations = clanReservationsEnabled();
+            const directoryRef = !useReservations
+                ? fb.doc(fb.db, "clans_directory", "index")
+                : null;
             const membershipRef = useReservations
                 ? fb.doc(fb.db, "clan_memberships", uid)
                 : null;
@@ -4696,10 +5177,12 @@
                 : null;
             let outcome = "sent";
             let existingMembership = null;
-            await fb.runTransaction(fb.db, async tx => {
+            const ran = await runAtlasTransaction(fb, "request clan join", async tx => {
                 outcome = "sent";
                 existingMembership = null;
-                const directorySnap = await tx.get(directoryRef);
+                const directorySnap = !useReservations
+                    ? await tx.get(directoryRef)
+                    : null;
                 const clanSnap = await tx.get(clanRef);
                 const membershipSnap = useReservations
                     ? await tx.get(membershipRef)
@@ -4712,22 +5195,26 @@
                     return;
                 }
                 const clan = clanSnap.data();
-                if ((clan.members ?? []).some(m => m.userId === uid)) {
+                if (clanMembers(clan).some(m => m.userId === uid)) {
                     outcome = "member";
                     return;
                 }
-                const liveDirectory = directorySnap.exists()
+                const liveDirectory = directorySnap?.exists()
                     ? (directorySnap.data().clans ?? [])
                     : [];
-                existingMembership = findDirectoryMembership(
-                    liveDirectory,
-                    { userId: uid, deviceId }
-                );
+                existingMembership = useReservations
+                    ? null
+                    : findDirectoryMembership(
+                        liveDirectory,
+                        { userId: uid, deviceId }
+                    );
                 const lockedClanId = membershipSnap?.exists()
                     ? membershipSnap.data().clanId
                     : (deviceSnap?.exists() ? deviceSnap.data().clanId : null);
                 if (!existingMembership && lockedClanId) {
-                    const locked = liveDirectory.find(entry => entry?.id === lockedClanId);
+                    const locked = clanDirectory.find(
+                        entry => entry?.id === lockedClanId
+                    );
                     existingMembership = {
                         ...(locked ?? { id: lockedClanId, name: "another clan", tag: "" }),
                         membershipMatch: membershipSnap?.exists() ? "player" : "device",
@@ -4737,7 +5224,7 @@
                     outcome = "already-in-clan";
                     return;
                 }
-                if ((clan.members ?? []).length >= clanMaxMembers()) {
+                if (clanMembers(clan).length >= clanMaxMembers()) {
                     outcome = "full";
                     return;
                 }
@@ -4762,6 +5249,7 @@
                 ];
                 tx.set(clanRef, { joinRequests }, { merge: true });
             });
+            if (!ran) return;
             if (outcome === "missing") {
                 showToast("That clan no longer exists.");
                 return;
@@ -4817,8 +5305,8 @@
         try {
             const clanId = myClan.id;
             const clanRef = fb.doc(fb.db, "clans", clanId);
-            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
             const useReservations = clanReservationsEnabled();
+            const directoryRef = clanDirectoryDocRef(fb, clanId);
             const membershipRef = useReservations
                 ? fb.doc(fb.db, "clan_memberships", userId)
                 : null;
@@ -4828,18 +5316,20 @@
             let existingMembership = null;
             let requestDisplayName = "This player";
             let outcome = approve ? "approved" : "denied";
-            await fb.runTransaction(fb.db, async tx => {
+            const ran = await runAtlasTransaction(fb, "handle clan request", async tx => {
                 committedClan = null;
                 committedDirectory = null;
                 existingMembership = null;
-                const directorySnap = approve ? await tx.get(directoryRef) : null;
+                const directorySnap = approve && !useReservations
+                    ? await tx.get(directoryRef)
+                    : null;
                 const clanSnap = await tx.get(clanRef);
                 if (!clanSnap.exists()) {
                     outcome = "missing";
                     return;
                 }
                 const liveClan = clanSnap.data();
-                const liveMembers = liveClan.members ?? [];
+                const liveMembers = clanMembers(liveClan);
                 const actor = liveMembers.find(m => m.userId === actorUid);
                 if (approve && (!actor || !rolePerm(actor.role, "approve"))) {
                     outcome = "forbidden";
@@ -4864,15 +5354,19 @@
                     ? (directorySnap.data().clans ?? [])
                     : [];
                 if (approve) {
-                    existingMembership = findDirectoryMembership(
-                        liveDirectory,
-                        { userId, deviceId: req.deviceId }
-                    );
+                    existingMembership = useReservations
+                        ? null
+                        : findDirectoryMembership(
+                            liveDirectory,
+                            { userId, deviceId: req.deviceId }
+                        );
                     const lockedClanId = membershipSnap?.exists()
                         ? membershipSnap.data().clanId
                         : (deviceSnap?.exists() ? deviceSnap.data().clanId : null);
                     if (!existingMembership && lockedClanId) {
-                        const locked = liveDirectory.find(entry => entry?.id === lockedClanId);
+                        const locked = clanDirectory.find(
+                            entry => entry?.id === lockedClanId
+                        );
                         existingMembership = {
                             ...(locked ?? { id: lockedClanId, name: "another clan", tag: "" }),
                             membershipMatch: membershipSnap?.exists() ? "player" : "device",
@@ -4925,20 +5419,26 @@
                         deviceIds: clanDeviceIds(nextClan),
                     }
                     : {};
+                const membersField = clanMembersField(liveClan, members);
                 tx.set(clanRef, {
                     joinRequests,
-                    members,
+                    ...membersField,
                     ...(memberStats ? { memberStats } : {}),
                     ...reservationFields,
                 }, { merge: true });
-                committedClan = { ...nextClan, ...reservationFields };
+                committedClan = {
+                    ...nextClan,
+                    ...membersField,
+                    ...reservationFields,
+                };
                 if (approve) {
+                    const entry = clanDirectoryEntry(clanId, committedClan);
                     committedDirectory = putClanInDirectory(
-                        liveDirectory,
-                        clanDirectoryEntry(clanId, committedClan)
+                        useReservations ? clanDirectory : liveDirectory,
+                        entry
                     );
-                    tx.set(directoryRef, { clans: committedDirectory });
                     if (useReservations) {
+                        tx.set(directoryRef, entry);
                         const deviceIds = req.deviceId ? [req.deviceId] : [];
                         tx.set(
                             membershipRef,
@@ -4951,10 +5451,13 @@
                                 updatedAt: new Date().toISOString(),
                             });
                         }
+                    } else {
+                        tx.set(directoryRef, { clans: committedDirectory });
                     }
                 }
                 outcome = approve ? "approved" : "denied";
             });
+            if (!ran) return;
             if (!committedClan) {
                 if (outcome === "missing") showToast("That clan no longer exists.");
                 else if (outcome === "forbidden") showToast("Your current role can't approve join requests.");
@@ -4983,6 +5486,22 @@
         }
     }
 
+    async function writeClanNotice(fb, userId, notice) {
+        const sourceUserId = myUserId();
+        return atlasSetDoc(
+            fb,
+            "clan notice",
+            fb.doc(fb.db, "clan_notices", userId),
+            {
+                ...notice,
+                sourceUserId,
+                deviceId: getDeviceId(),
+                scriptVersion: SCRIPT_VERSION,
+                versionNum: SCRIPT_VERSION_NUM,
+            }
+        );
+    }
+
     async function kickMember(userId, message) {
         const fb = await initFirebase();
         if (!fb || !myClan) return;
@@ -4996,27 +5515,29 @@
         try {
             const clanId = myClan.id;
             const clanRef = fb.doc(fb.db, "clans", clanId);
-            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
             const useReservations = clanReservationsEnabled();
+            const directoryRef = clanDirectoryDocRef(fb, clanId);
             const membershipRef = useReservations
                 ? fb.doc(fb.db, "clan_memberships", userId)
                 : null;
             let outcome = "kicked";
             let committedClan = null;
             let committedDirectory = null;
-            await fb.runTransaction(fb.db, async tx => {
+            const ran = await runAtlasTransaction(fb, "kick clan member", async tx => {
                 outcome = "kicked";
                 committedClan = null;
                 committedDirectory = null;
-                const directorySnap = await tx.get(directoryRef);
+                const directorySnap = !useReservations
+                    ? await tx.get(directoryRef)
+                    : null;
                 const clanSnap = await tx.get(clanRef);
                 if (!clanSnap.exists()) {
                     outcome = "missing";
                     return;
                 }
                 const liveClan = clanSnap.data();
-                const target = (liveClan.members ?? []).find(m => m.userId === userId);
-                const actor = (liveClan.members ?? []).find(m => m.userId === myUid);
+                const target = clanMembers(liveClan).find(m => m.userId === userId);
+                const actor = clanMembers(liveClan).find(m => m.userId === myUid);
                 if (!target) {
                     outcome = "handled";
                     return;
@@ -5026,7 +5547,7 @@
                     outcome = "forbidden";
                     return;
                 }
-                const members = (liveClan.members ?? []).filter(m => m.userId !== userId);
+                const members = clanMembers(liveClan).filter(m => m.userId !== userId);
                 const deviceIds = clanMemberDeviceIds(liveClan, userId);
                 const reservationFields = useReservations
                     ? {
@@ -5034,25 +5555,37 @@
                         deviceIds: clanDeviceIds({ ...liveClan, members }),
                     }
                     : {};
+                const membersField = clanMembersField(liveClan, members);
                 committedClan = {
                     ...liveClan,
                     id: clanId,
-                    members,
+                    ...membersField,
                     ...reservationFields,
                 };
+                const entry = clanDirectoryEntry(clanId, committedClan);
                 committedDirectory = putClanInDirectory(
-                    directorySnap.exists() ? (directorySnap.data().clans ?? []) : [],
-                    clanDirectoryEntry(clanId, committedClan)
+                    useReservations
+                        ? clanDirectory
+                        : (directorySnap?.exists()
+                            ? (directorySnap.data().clans ?? [])
+                            : []),
+                    entry
                 );
-                tx.set(clanRef, { members, ...reservationFields }, { merge: true });
-                tx.set(directoryRef, { clans: committedDirectory });
+                tx.set(clanRef, {
+                    ...membersField,
+                    ...reservationFields,
+                }, { merge: true });
                 if (useReservations) {
+                    tx.set(directoryRef, entry);
                     tx.delete(membershipRef);
                     for (const deviceId of deviceIds) {
                         tx.delete(fb.doc(fb.db, "clan_devices", deviceId));
                     }
+                } else {
+                    tx.set(directoryRef, { clans: committedDirectory });
                 }
             });
+            if (!ran) return;
             if (!committedClan) {
                 if (outcome === "missing") showToast("That clan no longer exists.");
                 else if (outcome === "handled") showToast("That player is no longer in the clan.");
@@ -5072,7 +5605,7 @@
                 message: (message ?? "").slice(0, 200),
                 at: new Date().toISOString(),
             };
-            await fb.setDoc(fb.doc(fb.db, "clan_notices", userId), notice);
+            await writeClanNotice(fb, userId, notice);
 
             renderClanView();
         } catch (e) {
@@ -5120,7 +5653,9 @@
                     });
                     handled = true;
                 }
-                if (handled) await fb.deleteDoc(ref);
+                if (handled) {
+                    await atlasDeleteDoc(fb, "acknowledge clan notice", ref);
+                }
                 else dbgWarn(`Unknown clan notice type kept for later: ${String(n.type || "missing")}`);
             }
         } catch (e) {
@@ -5152,8 +5687,8 @@
         const fb = await initFirebase();
         if (!fb || !myClan) return;
         const myUid = myUserId();
-        const me = (myClan.members ?? []).find(m => m.userId === myUid);
-        const target = (myClan.members ?? []).find(m => m.userId === userId);
+        const me = clanMembers(myClan).find(m => m.userId === myUid);
+        const target = clanMembers(myClan).find(m => m.userId === userId);
         if (!me || !target) return;
 
         // frozen by default during events, role changes muddy the contribution audit
@@ -5176,16 +5711,16 @@
                 : null;
             let committedClan = null;
             let oldRole = target.role;
-            await fb.runTransaction(fb.db, async tx => {
+            const ran = await runAtlasTransaction(fb, "change clan role", async tx => {
                 committedClan = null;
                 const clanSnap = await tx.get(clanRef);
                 if (useReservations) await tx.get(membershipRef);
                 if (!clanSnap.exists()) return;
                 const liveClan = clanSnap.data();
-                const actor = (liveClan.members ?? []).find(member =>
+                const actor = clanMembers(liveClan).find(member =>
                     member.userId === myUid
                 );
-                const liveTarget = (liveClan.members ?? []).find(member =>
+                const liveTarget = clanMembers(liveClan).find(member =>
                     member.userId === userId
                 );
                 if (!actor
@@ -5194,13 +5729,14 @@
                     return;
                 }
                 oldRole = liveTarget.role;
-                const members = (liveClan.members ?? []).map(member =>
+                const members = clanMembers(liveClan).map(member =>
                     member.userId === userId
                         ? { ...member, role: newRole }
                         : member
                 );
+                const membersField = clanMembersField(liveClan, members);
                 tx.set(clanRef, {
-                    members,
+                    ...membersField,
                     versionNum: SCRIPT_VERSION_NUM,
                 }, { merge: true });
                 if (useReservations) {
@@ -5213,8 +5749,13 @@
                         )
                     );
                 }
-                committedClan = { ...liveClan, id: clanId, members };
+                committedClan = {
+                    ...liveClan,
+                    id: clanId,
+                    ...membersField,
+                };
             });
+            if (!ran) return;
             if (!committedClan) {
                 showToast("That role could not be changed.");
                 return;
@@ -5255,40 +5796,42 @@
             const clanId = myClan.id;
             const actorUid = myUserId();
             const clanRef = fb.doc(fb.db, "clans", clanId);
-            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
             const useReservations = clanReservationsEnabled();
+            const directoryRef = clanDirectoryDocRef(fb, clanId);
             let outcome = "updated";
             let committedClan = null;
             let committedDirectory = null;
-            await fb.runTransaction(fb.db, async tx => {
+            const ran = await runAtlasTransaction(fb, "edit clan", async tx => {
                 outcome = "updated";
                 committedClan = null;
                 committedDirectory = null;
-                const directorySnap = await tx.get(directoryRef);
+                const directorySnap = !useReservations
+                    ? await tx.get(directoryRef)
+                    : null;
                 const clanSnap = await tx.get(clanRef);
                 if (!clanSnap.exists()) {
                     outcome = "missing";
                     return;
                 }
                 const liveClan = clanSnap.data();
-                const actor = (liveClan.members ?? []).find(member =>
+                const actor = clanMembers(liveClan).find(member =>
                     member.userId === actorUid
                 );
                 if (!actor || !rolePerm(actor.role, "editClanInfo")) {
                     outcome = "forbidden";
                     return;
                 }
-                const liveDirectory = directorySnap.exists()
+                const liveDirectory = directorySnap?.exists()
                     ? (directorySnap.data().clans ?? [])
                     : [];
-                if (liveDirectory.some(entry =>
+                if (!useReservations && liveDirectory.some(entry =>
                     entry?.id !== clanId
                     && normalizeClanName(entry?.name) === normalizeClanName(newName)
                 )) {
                     outcome = "name-taken";
                     return;
                 }
-                if (liveDirectory.some(entry =>
+                if (!useReservations && liveDirectory.some(entry =>
                     entry?.id !== clanId
                     && sanitizeClanTag(entry?.tag) === sanitizeClanTag(newTag)
                 )) {
@@ -5340,9 +5883,10 @@
                         normalizedName: normalizeClanName(newName),
                     } : {}),
                 };
+                const entry = clanDirectoryEntry(clanId, committedClan);
                 committedDirectory = putClanInDirectory(
-                    liveDirectory,
-                    clanDirectoryEntry(clanId, committedClan)
+                    useReservations ? clanDirectory : liveDirectory,
+                    entry
                 );
                 tx.set(clanRef, {
                     name: newName,
@@ -5354,8 +5898,8 @@
                         normalizedName: normalizeClanName(newName),
                     } : {}),
                 }, { merge: true });
-                tx.set(directoryRef, { clans: committedDirectory });
                 if (useReservations) {
+                    tx.set(directoryRef, entry);
                     if (oldNameRef.path !== newNameRef.path) tx.delete(oldNameRef);
                     if (oldTagRef.path !== newTagRef.path) tx.delete(oldTagRef);
                     tx.set(newNameRef, {
@@ -5367,8 +5911,11 @@
                         clanId,
                         tag: sanitizeClanTag(newTag),
                     });
+                } else {
+                    tx.set(directoryRef, { clans: committedDirectory });
                 }
             });
+            if (!ran) return;
             if (!committedClan) {
                 if (outcome === "missing") showToast("That clan no longer exists.");
                 else if (outcome === "forbidden") showToast("You can't edit this clan.");
@@ -5438,8 +5985,8 @@
         try {
             const clanId = myClan.id;
             const clanRef = fb.doc(fb.db, "clans", clanId);
-            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
             const useReservations = clanReservationsEnabled();
+            const directoryRef = clanDirectoryDocRef(fb, clanId);
             const oldLeaderRef = useReservations
                 ? fb.doc(fb.db, "clan_memberships", myUid)
                 : null;
@@ -5449,11 +5996,13 @@
             let outcome = "transferred";
             let committedClan = null;
             let committedDirectory = null;
-            await fb.runTransaction(fb.db, async tx => {
+            const ran = await runAtlasTransaction(fb, "transfer clan leadership", async tx => {
                 outcome = "transferred";
                 committedClan = null;
                 committedDirectory = null;
-                const directorySnap = await tx.get(directoryRef);
+                const directorySnap = !useReservations
+                    ? await tx.get(directoryRef)
+                    : null;
                 const clanSnap = await tx.get(clanRef);
                 if (useReservations) {
                     await tx.get(oldLeaderRef);
@@ -5464,10 +6013,10 @@
                     return;
                 }
                 const liveClan = clanSnap.data();
-                const actor = (liveClan.members ?? []).find(member =>
+                const actor = clanMembers(liveClan).find(member =>
                     member.userId === myUid
                 );
-                const target = (liveClan.members ?? []).find(member =>
+                const target = clanMembers(liveClan).find(member =>
                     member.userId === userId
                 );
                 if (liveClan.leaderId !== myUid
@@ -5477,11 +6026,12 @@
                     outcome = "forbidden";
                     return;
                 }
-                const members = (liveClan.members ?? []).map(member => {
+                const members = clanMembers(liveClan).map(member => {
                     if (member.userId === userId) return { ...member, role: "leader" };
                     if (member.userId === myUid) return { ...member, role: "coleader" };
                     return member;
                 });
+                const membersField = clanMembersField(liveClan, members);
                 const newLeaderDevices = clanMemberDeviceIds(liveClan, userId);
                 if (useReservations && !newLeaderDevices.length) {
                     outcome = "target-device-missing";
@@ -5490,26 +6040,31 @@
                 committedClan = {
                     ...liveClan,
                     id: clanId,
-                    members,
+                    ...membersField,
                     leaderId: userId,
                     ...(useReservations && newLeaderDevices[0]
                         ? { deviceId: newLeaderDevices[0] }
                         : {}),
                 };
+                const entry = clanDirectoryEntry(clanId, committedClan);
                 committedDirectory = putClanInDirectory(
-                    directorySnap.exists() ? (directorySnap.data().clans ?? []) : [],
-                    clanDirectoryEntry(clanId, committedClan)
+                    useReservations
+                        ? clanDirectory
+                        : (directorySnap?.exists()
+                            ? (directorySnap.data().clans ?? [])
+                            : []),
+                    entry
                 );
                 tx.set(clanRef, {
-                    members,
+                    ...membersField,
                     leaderId: userId,
                     versionNum: SCRIPT_VERSION_NUM,
                     ...(useReservations && newLeaderDevices[0]
                         ? { deviceId: newLeaderDevices[0] }
                         : {}),
                 }, { merge: true });
-                tx.set(directoryRef, { clans: committedDirectory });
                 if (useReservations) {
+                    tx.set(directoryRef, entry);
                     tx.set(
                         oldLeaderRef,
                         clanMembershipRecord(
@@ -5526,8 +6081,11 @@
                             newLeaderDevices
                         )
                     );
+                } else {
+                    tx.set(directoryRef, { clans: committedDirectory });
                 }
             });
+            if (!ran) return;
             if (!committedClan) {
                 if (outcome === "missing") {
                     showToast("That clan no longer exists.");
@@ -5688,24 +6246,26 @@
         try {
             const clanId = myClan.id;
             const clanRef = fb.doc(fb.db, "clans", clanId);
-            const directoryRef = fb.doc(fb.db, "clans_directory", "index");
             const useReservations = clanReservationsEnabled();
+            const directoryRef = clanDirectoryDocRef(fb, clanId);
             const membershipRef = useReservations
                 ? fb.doc(fb.db, "clan_memberships", uid)
                 : null;
             let outcome = "left";
             let committedDirectory = null;
-            await fb.runTransaction(fb.db, async tx => {
+            const ran = await runAtlasTransaction(fb, "leave clan", async tx => {
                 outcome = "left";
                 committedDirectory = null;
-                const directorySnap = await tx.get(directoryRef);
+                const directorySnap = !useReservations
+                    ? await tx.get(directoryRef)
+                    : null;
                 const clanSnap = await tx.get(clanRef);
                 if (!clanSnap.exists()) {
                     outcome = "missing";
                     return;
                 }
                 const liveClan = clanSnap.data();
-                const liveMembers = liveClan.members ?? [];
+                const liveMembers = clanMembers(liveClan);
                 const member = liveMembers.find(candidate => candidate.userId === uid);
                 if (!member) {
                     outcome = "handled";
@@ -5730,12 +6290,15 @@
                     outcome = "transfer-first";
                     return;
                 }
-                const liveDirectory = directorySnap.exists()
+                const liveDirectory = directorySnap?.exists()
                     ? (directorySnap.data().clans ?? [])
                     : [];
                 if (isLeader) {
                     outcome = "disbanded";
-                    committedDirectory = removeClanFromDirectory(liveDirectory, clanId);
+                    committedDirectory = removeClanFromDirectory(
+                        useReservations ? clanDirectory : liveDirectory,
+                        clanId
+                    );
                     if (useReservations) {
                         const nameKey = await clanNameReservationId(liveClan.name);
                         tx.delete(fb.doc(fb.db, "clan_name_keys", nameKey));
@@ -5744,10 +6307,12 @@
                             "clan_tag_keys",
                             sanitizeClanTag(liveClan.tag)
                         ));
+                        tx.delete(directoryRef);
                     }
                     tx.delete(clanRef);
                 } else {
                     const members = liveMembers.filter(candidate => candidate.userId !== uid);
+                    const membersField = clanMembersField(liveClan, members);
                     const reservationFields = useReservations
                         ? {
                             memberIds: members.map(member => member.userId),
@@ -5757,26 +6322,30 @@
                     const nextClan = {
                         ...liveClan,
                         id: clanId,
-                        members,
+                        ...membersField,
                         ...reservationFields,
                     };
+                    const entry = clanDirectoryEntry(clanId, nextClan);
                     committedDirectory = putClanInDirectory(
-                        liveDirectory,
-                        clanDirectoryEntry(clanId, nextClan)
+                        useReservations ? clanDirectory : liveDirectory,
+                        entry
                     );
                     tx.set(clanRef, {
-                        members,
+                        ...membersField,
                         ...reservationFields,
                     }, { merge: true });
+                    if (useReservations) tx.set(directoryRef, entry);
                 }
-                tx.set(directoryRef, { clans: committedDirectory });
                 if (useReservations) {
                     tx.delete(membershipRef);
                     for (const deviceId of deviceIds) {
                         tx.delete(fb.doc(fb.db, "clan_devices", deviceId));
                     }
+                } else {
+                    tx.set(directoryRef, { clans: committedDirectory });
                 }
             });
+            if (!ran) return;
             if (!committedDirectory) {
                 if (outcome === "leave-locked") showToast("Can't leave during an active event -- ask leader to kick.");
                 else if (outcome === "disband-locked") showToast("Disbanding is locked during this event.");
@@ -5946,7 +6515,7 @@
 
     function renderMyClan(view) {
         const uid = myUserId();
-        const me = (myClan.members ?? []).find(m => m.userId === uid);
+        const me = clanMembers(myClan).find(m => m.userId === uid);
         const myRole = me?.role ?? "member";
         const rank = [...clanDirectory].sort((a, b) => (b.totalMMR ?? 0) - (a.totalMMR ?? 0))
             .findIndex(c => c.id === myClan.id) + 1;
@@ -5964,7 +6533,7 @@
             return mmr - base;
         };
 
-        const memberRows = (myClan.members ?? [])
+        const memberRows = clanMembers(myClan)
             .slice()
             .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))
             .map(m => {
@@ -6029,7 +6598,7 @@
             </div>
             <div style="font-size:11px;opacity:.75;margin:2px 0 6px;">
                 Total MMR: <span style="color:#00ff66;">${effectiveClanTotalMMR(myClan)}</span>
-                &nbsp;•&nbsp; ${(myClan.members ?? []).length}/${clanMaxMembers()} members
+                &nbsp;•&nbsp; ${clanMembers(myClan).length}/${clanMaxMembers()} members
             </div>
             <div id="rgMembersHeader" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:2px 0;margin-top:2px;">
                 <span id="rgMembersArrow" style="font-size:9px;opacity:.7;width:8px;display:inline-block;">▶</span>
@@ -6453,11 +7022,8 @@
       titleStrike: false,
       titleAlpha: 255,
     };
-    // scoredMode is orthogonal to rawCode (effectiveForgeCode appends the
-    // suffix separately). Only surface it here when raw had an embedded suffix
-    // that needed stripping — the legacy migration path. Otherwise leave the
-    // caller's scored* values alone so loading a preset saved with
-    // scoredMode='hide' doesn't get reset to 'default'.
+    // Only pull scoredMode out of rawCode when there's actually a suffix on
+    // the end. Otherwise we'd wipe out a preset's saved scoredMode on load.
     if (scored.scoredMode !== 'default') {
       fields.scoredMode = scored.scoredMode;
       if (scored.scoredSizePct) fields.scoredSizePct = scored.scoredSizePct;
