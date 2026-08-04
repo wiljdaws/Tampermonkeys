@@ -1,7 +1,7 @@
 # ATLAS TODO
 
 Everything I still want to do on ATLAS, in the rough order it can happen.
-None of it is on fire.
+Nothing here is on fire.
 
 ## The list
 
