@@ -64,6 +64,18 @@ const popupStackPositionStyle = extractHudFunction(
   "popupStackPositionStyle",
   { normalizePopupPreferences },
 );
+const advanceOpponentStreak = extractHudFunction("advanceOpponentStreak");
+const streakSnipeMinimum = extractHudFunction("streakSnipeMinimum", {
+  STREAK_SNIPE_MIN: 3,
+});
+const streakSnipeCandidates = extractHudFunction("streakSnipeCandidates", {
+  RG_LB_MODES: [
+    "Competitive1v1",
+    "Competitive2v2",
+    "Competitive3v3",
+  ],
+  STREAK_SNIPE_MIN: 3,
+});
 const nameForgePresetKey = extractHudFunction("nameForgePresetKey");
 const stripClanTagPrefix = extractHudFunction("stripClanTagPrefix");
 
@@ -74,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "16.2");
+  assert.equal(version, "17.0");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -252,7 +264,7 @@ test("support bundle redacts stable identifiers and full user agents", () => {
   assert.match(debugSource, /redactSupportText\(text, redactions\)/);
 });
 
-test("settings reset refreshes title and every popup setting is wired", () => {
+test("settings keep the streak toggle and remove ranked popup controls", () => {
   const resetStart = hudSource.indexOf(
     'document.getElementById("rgSetReset").onclick',
   );
@@ -262,7 +274,6 @@ test("settings reset refreshes title and every popup setting is wired", () => {
   );
   const resetSource = hudSource.slice(resetStart, resetEnd);
   assert.match(resetSource, /applyTitle\(\)/);
-  assert.match(resetSource, /applyPopupPreferencesToOpenStack\(\)/);
 
   for (const id of [
     "rgSetPopupOpponents",
@@ -271,9 +282,148 @@ test("settings reset refreshes title and every popup setting is wired", () => {
     "rgSetPopupDuration",
     "rgSetPopupPosition",
   ]) {
-    assert.match(hudSource, new RegExp(`id="${id}"`));
-    assert.match(hudSource, new RegExp(`getElementById\\("${id}"\\)`));
+    assert.doesNotMatch(hudSource, new RegExp(`id="${id}"`));
+    assert.doesNotMatch(hudSource, new RegExp(`getElementById\\("${id}"\\)`));
   }
+
+  assert.doesNotMatch(hudSource, /Ranked player popups/);
+  assert.doesNotMatch(hudSource, /applyPopupPreferencesToOpenStack/);
+  assert.match(hudSource, /id="rgSetStreakSnipe"/);
+  assert.match(hudSource, /settings\.streakSnipeEnabled = setStreakSnipe\.checked/);
+  assert.doesNotMatch(hudSource, /rgSetPreviewStreakSnipe|Preview streak snipe/i);
+});
+
+test("streak publication piggybacks the existing merged submission", () => {
+  const submission = hudFunctionSource("submitToLeaderboardInner");
+  assert.match(
+    submission,
+    /currentStreak:\s*streakData\?\.accountId === data\.Id/,
+  );
+  assert.match(
+    submission,
+    /currentStreak:\s*payload\.currentStreak/,
+  );
+  assert.match(
+    submission,
+    /atlasSetDoc\([\s\S]*"script_submissions"[\s\S]*\{\s*merge:\s*true\s*\}/,
+  );
+  assert.equal(
+    (submission.match(/"script_submissions"/g) || []).length,
+    1,
+    "streak publication must not add another Firestore write",
+  );
+});
+
+test("opponent streak inference accepts publication and safe deltas", () => {
+  const published = advanceOpponentStreak(null, 10, 20, 7, 1000);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(published)),
+    {
+      streak: 7,
+      confident: true,
+      lastWins: 10,
+      lastMatches: 20,
+      updatedAt: 1000,
+    },
+  );
+
+  const baseline = advanceOpponentStreak(null, 10, 20, null, 1000);
+  assert.equal(baseline.confident, false);
+  const inferred = advanceOpponentStreak(baseline, 12, 22, null, 2000);
+  assert.equal(inferred.streak, 2);
+  assert.equal(inferred.confident, true);
+});
+
+test("streak snipe threshold is clamped without a match-end config read", () => {
+  assert.equal(streakSnipeMinimum(undefined), 3);
+  assert.equal(streakSnipeMinimum({ streakSnipeMin: -8 }), 1);
+  assert.equal(streakSnipeMinimum({ streakSnipeMin: 999 }), 100);
+
+  const maybeSource = hudFunctionSource("maybeShowStreakSnipe");
+  assert.match(maybeSource, /config = _remoteConfigMemo/);
+  assert.match(maybeSource, /settings\.streakSnipeEnabled === false/);
+  assert.doesNotMatch(maybeSource, /getRemoteConfig\(/);
+
+  const matchEndSource = hudSource.slice(
+    hudSource.indexOf('if (url.includes("/v0304_player/matchEnd"))'),
+    hudSource.indexOf('} else if (url.includes("/v0304_login/login"))'),
+  );
+  const triggerStart = matchEndSource.indexOf("maybeShowStreakSnipe(");
+  const triggerEnd = matchEndSource.indexOf(");", triggerStart);
+  assert.notEqual(triggerStart, -1);
+  assert.doesNotMatch(
+    matchEndSource.slice(triggerStart, triggerEnd + 2),
+    /getRemoteConfig\(/,
+  );
+});
+
+test("streak snipe selects the strongest tracked opponent after a win", () => {
+  const candidates = streakSnipeCandidates(
+    { Competitive1v1: 1200 },
+    { Competitive1v1: 1212 },
+    [
+      { name: "Three", streak: 3, confident: true, isTeammate: false },
+      { name: "Eight", streak: 8, confident: true, isTeammate: false },
+      { name: "Teammate", streak: 20, confident: true, isTeammate: true },
+      { name: "Guess", streak: 30, confident: false, isTeammate: false },
+    ],
+    3,
+  );
+  assert.deepEqual(
+    Array.from(candidates, candidate => candidate.name),
+    ["Eight", "Three"],
+  );
+  assert.equal(
+    streakSnipeCandidates(
+      { Competitive1v1: 1200 },
+      { Competitive1v1: 1190 },
+      [{ streak: 8, confident: true, isTeammate: false }],
+      3,
+    ).length,
+    0,
+  );
+});
+
+test("ranked popups keep fixed defaults and show opponent streak badges", () => {
+  assert.match(
+    hudSource,
+    /const RANKED_POPUP_PREFERENCES = Object\.freeze\(/,
+  );
+  assert.match(
+    hudFunctionSource("showLbOpponentPopup"),
+    /preferences \|\| RANKED_POPUP_PREFERENCES/,
+  );
+  for (const name of [
+    "fireAllRankedPopups",
+    "firePostmortemPopupsIfDeferred",
+  ]) {
+    assert.match(
+      hudFunctionSource(name),
+      /normalizePopupPreferences\(RANKED_POPUP_PREFERENCES\)/,
+    );
+  }
+  assert.match(hudSource, /class="rg-lb-streak"/);
+  assert.match(hudSource, /_matchOpponentStreaks\.set\(/);
+});
+
+test("streak snipe uses the selected precision timing and safe text nodes", () => {
+  const styles = hudSource.slice(
+    hudSource.indexOf("function ensureStreakSnipeStyles()"),
+    hudSource.indexOf("function showStreakSnipeOverlay("),
+  );
+  assert.match(styles, /rgSnipeOverlay 7\.2s/);
+  assert.match(styles, /0%, 29%[\s\S]*31%/);
+  assert.match(styles, /45%, 96\.5% \{ opacity: 1/);
+  assert.match(
+    styles,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration: 4\.8s/,
+  );
+
+  const overlay = hudFunctionSource("showStreakSnipeOverlay");
+  assert.match(overlay, /title\.textContent/);
+  assert.match(overlay, /value\.textContent/);
+  assert.match(overlay, /prefersReducedPopupMotion\(\) \? 4850 : 7250/);
+  assert.doesNotMatch(overlay, /\.innerHTML\s*=/);
 });
 
 test("account switches clear every rank cache", () => {

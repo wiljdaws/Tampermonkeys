@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      16.2
+// @version      17.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -150,12 +150,7 @@
         ogTitle: false,
         // coarse browser estimate; never presented as exact Photon ping
         pingTrackerEnabled: false,
-        popupShowOpponents: true,
-        popupShowTeammates: true,
-        popupMaxRank: 100,
-        // 0 follows the server default, which is currently six seconds
-        popupDurationMs: 0,
-        popupPosition: "top-right",
+        streakSnipeEnabled: true,
     };
 
     let settings = { ...DEFAULT_SETTINGS };
@@ -361,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -551,12 +546,7 @@
                         <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
-                        <div style="border-top:1px solid #00bfff33;margin:6px 0 4px;padding-top:5px;font-size:10px;color:#7ec8ff;text-transform:uppercase;letter-spacing:.7px;">Ranked player popups</div>
-                        <div class="rgSettingRow"><span>Opponents</span><input type="checkbox" id="rgSetPopupOpponents"></div>
-                        <div class="rgSettingRow"><span>Teammates</span><input type="checkbox" id="rgSetPopupTeammates"></div>
-                        <div class="rgSettingRow"><span>Show through rank</span><input type="number" id="rgSetPopupMaxRank" min="1" max="100" step="1" style="width:62px;"></div>
-                        <div class="rgSettingRow"><span>Duration</span><select id="rgSetPopupDuration" style="width:112px;"><option value="0">ATLAS default</option><option value="3000">3 seconds</option><option value="6000">6 seconds</option><option value="10000">10 seconds</option></select></div>
-                        <div class="rgSettingRow"><span>Corner</span><select id="rgSetPopupPosition" style="width:112px;"><option value="top-right">Top right</option><option value="top-left">Top left</option><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></div>
+                        <div class="rgSettingRow"><span title="Show the animation after you end a tracked opponent streak">Streak snipe</span><input type="checkbox" id="rgSetStreakSnipe"></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
                     </div>
@@ -723,25 +713,16 @@
 
         const setOgTitle = document.getElementById("rgSetOgTitle");
         const setPingTracker = document.getElementById("rgSetPingTracker");
-        const setPopupOpponents = document.getElementById("rgSetPopupOpponents");
-        const setPopupTeammates = document.getElementById("rgSetPopupTeammates");
-        const setPopupMaxRank = document.getElementById("rgSetPopupMaxRank");
-        const setPopupDuration = document.getElementById("rgSetPopupDuration");
-        const setPopupPosition = document.getElementById("rgSetPopupPosition");
+        const setStreakSnipe = document.getElementById("rgSetStreakSnipe");
         function syncSettingInputs() {
-            const popup = normalizePopupPreferences(settings);
             setOgTitle.checked = !!settings.ogTitle;
             setPingTracker.checked = !!settings.pingTrackerEnabled;
+            setStreakSnipe.checked = settings.streakSnipeEnabled !== false;
             setGlow.checked = settings.glowEnabled;
             setSpeed.value = settings.glowSpeed;
             setOpacity.value = settings.glowOpacity;
             setColor1.value = settings.glowColor1;
             setColor2.value = settings.glowColor2;
-            setPopupOpponents.checked = popup.showOpponents;
-            setPopupTeammates.checked = popup.showTeammates;
-            setPopupMaxRank.value = popup.maxRank;
-            setPopupDuration.value = String(popup.durationMs);
-            setPopupPosition.value = popup.position;
         }
         syncSettingInputs();
 
@@ -755,36 +736,15 @@
             saveSettings();
             syncPingTracker();
         };
+        setStreakSnipe.onchange = () => {
+            settings.streakSnipeEnabled = setStreakSnipe.checked;
+            saveSettings();
+        };
         setGlow.onchange = () => { settings.glowEnabled = setGlow.checked; saveSettings(); applyGlowSettings(); };
         setSpeed.oninput = () => { settings.glowSpeed = parseFloat(setSpeed.value); saveSettings(); applyGlowSettings(); };
         setOpacity.oninput = () => { settings.glowOpacity = parseFloat(setOpacity.value); saveSettings(); applyGlowSettings(); };
         setColor1.oninput = () => { settings.glowColor1 = setColor1.value; saveSettings(); applyGlowSettings(); };
         setColor2.oninput = () => { settings.glowColor2 = setColor2.value; saveSettings(); applyGlowSettings(); };
-        setPopupOpponents.onchange = () => {
-            settings.popupShowOpponents = setPopupOpponents.checked;
-            saveSettings();
-            applyPopupPreferencesToOpenStack();
-        };
-        setPopupTeammates.onchange = () => {
-            settings.popupShowTeammates = setPopupTeammates.checked;
-            saveSettings();
-            applyPopupPreferencesToOpenStack();
-        };
-        setPopupMaxRank.onchange = () => {
-            settings.popupMaxRank = Math.max(1, Math.min(100, Number(setPopupMaxRank.value) || 100));
-            setPopupMaxRank.value = settings.popupMaxRank;
-            saveSettings();
-            applyPopupPreferencesToOpenStack();
-        };
-        setPopupDuration.onchange = () => {
-            settings.popupDurationMs = Number(setPopupDuration.value) || 0;
-            saveSettings();
-        };
-        setPopupPosition.onchange = () => {
-            settings.popupPosition = setPopupPosition.value;
-            saveSettings();
-            applyPopupPreferencesToOpenStack();
-        };
         document.getElementById("rgSetReset").onclick = () => {
             dbg("Settings reset to defaults");
             settings = { ...DEFAULT_SETTINGS };
@@ -793,7 +753,6 @@
             applyGlowSettings();
             applyTitle();
             syncPingTracker();
-            applyPopupPreferencesToOpenStack();
         };
 
         // trim player data, don't dump the whole login blob
@@ -2015,6 +1974,9 @@
                 Competitive1v1: data.ModesData?.Competitive1v1 ?? null,
                 Casual: data.ModesData?.Casual ?? null,
             },
+            currentStreak: streakData?.accountId === data.Id
+                ? Math.trunc(Number(streakData.streak) || 0)
+                : 0,
             xp: data.AccountXp ?? 0,
             equippedSkinId: data.EquippedSkinId ?? null,
             lastUpdated: new Date().toISOString(),
@@ -2035,6 +1997,7 @@
         const currentClanTag = (clanLoadedForAccount === data.Id && myClan) ? (myClan.tag ?? "") : "";
         const snapshotKey = JSON.stringify({
             displayName, ratings: payload.ratings, stats: payload.stats,
+            currentStreak: payload.currentStreak,
             xp: payload.xp, equippedSkinId: payload.equippedSkinId,
             clanTag: currentClanTag,
         });
@@ -2164,12 +2127,145 @@
     // leaderboard docs store playlist as "1v1"/"2v2"/"3v3", not the mode name
     const RG_LB_MODE_TO_PLAYLIST = { Competitive1v1: "1v1", Competitive2v2: "2v2", Competitive3v3: "3v3" };
     const RG_LB_TOP_N = 100;
+    const STREAK_SNIPE_MIN = 3;
     const RG_LB_DEFAULT_CONFIG = {
         popupDurationMs: 6000,
         popupEnabled: true,
         cacheRefreshHours: 3,
         minRankToShow: 100,
+        streakSnipeMin: STREAK_SNIPE_MIN,
     };
+    const RANKED_POPUP_PREFERENCES = Object.freeze({
+        popupShowOpponents: true,
+        popupShowTeammates: true,
+        popupMaxRank: 100,
+        popupDurationMs: 0,
+        popupPosition: "top-right",
+    });
+    const OPPONENT_STREAK_CACHE_KEY = "rgHudOpponentStreak_v1";
+    let opponentStreakCache = {};
+    try {
+        opponentStreakCache = JSON.parse(
+            localStorage.getItem(OPPONENT_STREAK_CACHE_KEY) || "{}"
+        ) || {};
+    } catch (e) {
+        dbg("opponent streak cache load failed");
+    }
+
+    function advanceOpponentStreak(previous, wins, matches, publishedStreak = null, now = Date.now()) {
+        const safeWins = Number(wins);
+        const safeMatches = Number(matches);
+        const published = Number(publishedStreak);
+        const base = {
+            streak: 0,
+            confident: false,
+            lastWins: Number.isFinite(safeWins) ? safeWins : 0,
+            lastMatches: Number.isFinite(safeMatches) ? safeMatches : 0,
+            updatedAt: now,
+        };
+        if (publishedStreak !== null && Number.isFinite(published)) {
+            base.streak = Math.max(-999, Math.min(999, Math.trunc(published)));
+            base.confident = true;
+            return base;
+        }
+        if (!Number.isFinite(safeWins)
+            || !Number.isFinite(safeMatches)
+            || safeWins < 0
+            || safeMatches < safeWins) {
+            return base;
+        }
+        const priorWins = Number(previous?.lastWins);
+        const priorMatches = Number(previous?.lastMatches);
+        if (!Number.isFinite(priorWins)
+            || !Number.isFinite(priorMatches)
+            || safeWins < priorWins
+            || safeMatches < priorMatches) {
+            return base;
+        }
+        const matchDiff = safeMatches - priorMatches;
+        const winDiff = safeWins - priorWins;
+        if (matchDiff <= 0) {
+            base.streak = Math.trunc(Number(previous?.streak) || 0);
+            base.confident = previous?.confident === true;
+            return base;
+        }
+        const losses = matchDiff - winDiff;
+        const priorStreak = Math.trunc(Number(previous?.streak) || 0);
+        if (winDiff > 0 && losses === 0) {
+            base.streak = priorStreak > 0 ? priorStreak + winDiff : winDiff;
+        } else if (losses > 0 && winDiff === 0) {
+            base.streak = priorStreak < 0 ? priorStreak - losses : -losses;
+        } else {
+            base.streak = winDiff >= losses ? 1 : -1;
+        }
+        base.streak = Math.max(-999, Math.min(999, base.streak));
+        base.confident = true;
+        return base;
+    }
+
+    function submissionTotals(stats) {
+        const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
+        let wins = 0;
+        let matches = 0;
+        let found = false;
+        for (const mode of modes) {
+            const row = stats?.[mode];
+            if (typeof row?.wins !== "number" || typeof row?.matchesPlayed !== "number") continue;
+            wins += row.wins;
+            matches += row.matchesPlayed;
+            found = true;
+        }
+        return found ? { wins, matches } : null;
+    }
+
+    function saveOpponentStreakCache() {
+        try {
+            const entries = Object.entries(opponentStreakCache)
+                .sort((a, b) => (b[1]?.updatedAt || 0) - (a[1]?.updatedAt || 0))
+                .slice(0, 200);
+            opponentStreakCache = Object.fromEntries(entries);
+            localStorage.setItem(
+                OPPONENT_STREAK_CACHE_KEY,
+                JSON.stringify(opponentStreakCache)
+            );
+        } catch (e) {
+            dbg("opponent streak cache save failed");
+        }
+    }
+
+    async function resolveOpponentStreak(uid) {
+        if (!uid) return { streak: 0, confident: false };
+        try {
+            const fb = await initFirebase();
+            if (!fb) return { streak: 0, confident: false };
+            const snap = await fb.getDoc(
+                fb.doc(fb.db, LEADERBOARD_COLLECTION, uid)
+            );
+            if (!snap.exists()) return { streak: 0, confident: false };
+            const data = snap.data() || {};
+            const totals = submissionTotals(data.stats);
+            if (!totals) return { streak: 0, confident: false };
+            // Older clients merge their snapshot and leave unknown fields in
+            // place, so only trust a streak when this version wrote the doc.
+            const supportsPublishedStreak = Number(data.versionNum) >= 16.3;
+            const published = supportsPublishedStreak
+                && Number.isFinite(Number(data.currentStreak))
+                ? Number(data.currentStreak)
+                : null;
+            const next = advanceOpponentStreak(
+                opponentStreakCache[uid],
+                totals.wins,
+                totals.matches,
+                published,
+            );
+            opponentStreakCache[uid] = next;
+            saveOpponentStreakCache();
+            return next;
+        } catch (e) {
+            dbg("opponent streak read failed: " + (e && e.message ? e.message : e));
+            return { streak: 0, confident: false };
+        }
+    }
 
     function normalizePopupPreferences(raw) {
         raw = raw || {};
@@ -2233,20 +2329,6 @@
             && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     }
 
-    function applyPopupPreferencesToOpenStack() {
-        const stack = document.getElementById("rgLbPopupStack");
-        if (!stack) return;
-        const prefs = normalizePopupPreferences(settings);
-        Object.assign(stack.style, popupStackPositionStyle(prefs.position));
-        stack.dataset.position = prefs.position;
-        for (const popup of stack.querySelectorAll(".rg-lb-popup")) {
-            const role = popup.dataset.role;
-            const rank = Number(popup.dataset.rank);
-            const isTeammate = role === "teammate" ? true : role === "opponent" ? false : null;
-            if (!rankedPopupAllowed(rank, isTeammate, RG_LB_DEFAULT_CONFIG, prefs)) popup.remove();
-        }
-    }
-
     let _remoteConfigMemo = null;
     const _lbCacheMemo = new Map();
     const _lbCacheInFlight = new Map();
@@ -2256,6 +2338,7 @@
     let _matchPlayerCount = 0;
     let _selfTeam = null;
     let _shownPopupsThisMatch = new Set();
+    let _matchOpponentStreaks = new Map();
     let _deferredMatch = null;
     let _rosterFired = false;
     let _rosterFiring = false;
@@ -2496,6 +2579,11 @@
   color: #00bfff;
   border-radius: 999px;
 }
+.rg-lb-streak {
+  margin-top: 6px; color: #ffb020; font-size: 11px; font-weight: 900;
+  letter-spacing: .7px; text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(255,176,32,.55);
+}
 .rg-lb-teammate {
   margin-top: 10px; padding-top: 8px;
   border-top: 1px solid rgba(0,191,255,0.15);
@@ -2519,10 +2607,12 @@
         document.head.appendChild(style);
     }
 
-    function showLbOpponentPopup({ rank, name, mode, isTeammate, config, preferences }) {
+    function showLbOpponentPopup({ rank, name, mode, isTeammate, winStreak, config, preferences }) {
         try {
             const cfg = config || RG_LB_DEFAULT_CONFIG;
-            const prefs = normalizePopupPreferences(preferences || settings);
+            const prefs = normalizePopupPreferences(
+                preferences || RANKED_POPUP_PREFERENCES
+            );
             if (!rankedPopupAllowed(rank, isTeammate, cfg, prefs)) return;
             ensureLbPopupStyles();
             const dur = rankedPopupDuration(cfg, prefs);
@@ -2542,6 +2632,12 @@
             const headerLabel = isTeammate === true ? "LEADERBOARD TEAMMATE"
                               : isTeammate === false ? "LEADERBOARD OPPONENT"
                               : "LEADERBOARD PLAYER";
+            const safeStreak = isTeammate === false
+                ? Math.max(0, Math.trunc(Number(winStreak) || 0))
+                : 0;
+            const streakHtml = safeStreak > 0
+                ? `<div class="rg-lb-streak">🔥 ${safeStreak} win streak</div>`
+                : "";
             el.innerHTML = `
                 <div class="rg-lb-header"><span class="rg-lb-dot"></span>${headerLabel}</div>
                 <div class="rg-lb-body">
@@ -2552,6 +2648,7 @@
                     <div class="rg-lb-info">
                         <div class="rg-lb-name">${escapeHtml(name)}</div>
                         <div class="rg-lb-mode">${modeLabel(mode)}</div>
+                        ${streakHtml}
                     </div>
                 </div>
             `;
@@ -2564,6 +2661,327 @@
         } catch (e) {
             dbg("showLbOpponentPopup threw: " + (e && e.message ? e.message : e));
         }
+    }
+
+    function streakSnipeCandidates(prevRatings, nextRatings, opponents, minimum = STREAK_SNIPE_MIN) {
+        const changed = RG_LB_MODES.filter(mode => {
+            const before = prevRatings?.[mode];
+            const after = nextRatings?.[mode];
+            return typeof before === "number"
+                && typeof after === "number"
+                && before !== after;
+        });
+        if (changed.length !== 1) return [];
+        const mode = changed[0];
+        if (nextRatings[mode] <= prevRatings[mode]) return [];
+        const threshold = Math.max(1, Math.trunc(Number(minimum) || STREAK_SNIPE_MIN));
+        return (Array.isArray(opponents) ? opponents : [])
+            .filter(entry =>
+                entry?.isTeammate === false
+                && entry.confident === true
+                && Number(entry.streak) >= threshold)
+            .sort((a, b) => Number(b.streak) - Number(a.streak));
+    }
+
+    function streakSnipeMinimum(config) {
+        const configured = Math.trunc(Number(config?.streakSnipeMin));
+        return Number.isFinite(configured)
+            ? Math.max(1, Math.min(100, configured))
+            : STREAK_SNIPE_MIN;
+    }
+
+    function ensureStreakSnipeStyles() {
+        if (document.getElementById("rgStreakSnipeStyle")) return;
+        const style = document.createElement("style");
+        style.id = "rgStreakSnipeStyle";
+        style.textContent = `
+@keyframes rgSnipeOverlay {
+  0% { opacity: 0; }
+  4%, 96.5% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes rgSnipeLens {
+  0% { opacity: 0; transform: scale(1.45); filter: blur(6px); }
+  8%, 88% { opacity: 1; transform: scale(1); filter: blur(0); }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+@keyframes rgSnipeSway {
+  0%, 4% { transform: translate(12px,-9px) rotate(-1.2deg); }
+  10% { transform: translate(-9px,7px) rotate(.9deg); }
+  16% { transform: translate(5px,-4px) rotate(-.5deg); }
+  22% { transform: translate(-2px,2px) rotate(.2deg); }
+  28%, 100% { transform: translate(0,0) rotate(0); }
+}
+@keyframes rgSnipeCompass {
+  0%, 3% { opacity: 0; }
+  6%, 29% { opacity: 1; }
+  34%, 100% { opacity: 0; }
+}
+@keyframes rgSnipeBreath {
+  0%, 3% { opacity: 0; }
+  6%, 29% { opacity: 1; }
+  34%, 100% { opacity: 0; }
+}
+@keyframes rgSnipeBreathDrain {
+  0%, 6% { transform: scaleX(1); }
+  29%, 100% { transform: scaleX(.06); }
+}
+@keyframes rgSnipeMuzzle {
+  0%, 29% { opacity: 0; transform: scale(.35); }
+  31% { opacity: .98; transform: scale(1.18); }
+  35%, 100% { opacity: 0; transform: scale(1.65); }
+}
+@keyframes rgSnipeKick {
+  0%, 29% { transform: translateY(0) rotate(0); }
+  32% { transform: translateY(-34px) rotate(-2.8deg); }
+  39% { transform: translateY(5px) rotate(.5deg); }
+  44%, 100% { transform: translateY(0) rotate(0); }
+}
+@keyframes rgSnipeHit {
+  0%, 33% { opacity: 0; transform: scale(.55); }
+  36% { opacity: 1; transform: scale(1.35); }
+  41% { opacity: 1; transform: scale(1); }
+  48%, 100% { opacity: 0; }
+}
+@keyframes rgSnipeFinishRing {
+  0%, 36% { opacity: 0; transform: scale(1.65) rotate(14deg); }
+  43% { opacity: .95; transform: scale(.96) rotate(0); }
+  96.5% { opacity: .72; transform: scale(1) rotate(0); }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+@keyframes rgSnipeFinishCard {
+  0%, 39.5% { opacity: 0; transform: scale(.84); filter: blur(8px); }
+  45%, 96.5% { opacity: 1; transform: scale(1); filter: blur(0); }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+#rgStreakSnipe {
+  position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;
+  display: grid; place-items: center; overflow: hidden;
+  background:
+    radial-gradient(circle at center, rgba(34,211,238,.07), transparent 42%),
+    rgba(2,6,12,.96);
+  animation: rgSnipeOverlay 7.2s ease forwards;
+}
+#rgStreakSnipe .rg-snipe-vignette {
+  position: absolute; inset: -4%;
+  background: radial-gradient(circle at center, transparent 0 34%, rgba(2,6,12,.28) 48%, #010308 72%);
+}
+#rgStreakSnipe .rg-snipe-compass {
+  position: absolute; top: 8%; left: 50%; z-index: 7;
+  display: flex; gap: 18px; transform: translateX(-50%);
+  color: rgba(174,184,196,.52);
+  font: 800 10px/1 "IBM Plex Mono","SF Mono",Menlo,monospace;
+  letter-spacing: .18em; animation: rgSnipeCompass 7.2s ease both;
+}
+#rgStreakSnipe .rg-snipe-kick {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  animation: rgSnipeKick 7.2s cubic-bezier(.2,.7,.2,1) both;
+}
+#rgStreakSnipe .rg-snipe-lens {
+  position: relative; width: min(72vmin,720px); aspect-ratio: 1; border-radius: 50%;
+  display: grid; place-items: center; overflow: hidden;
+  border: 1.5px solid rgba(174,184,196,.46);
+  background: radial-gradient(circle at 42% 34%, rgba(255,255,255,.05), transparent 44%), rgba(7,11,18,.44);
+  box-shadow: inset 0 0 90px rgba(0,0,0,.62), 0 0 70px rgba(0,0,0,.5);
+  animation: rgSnipeLens 7.2s ease both;
+}
+#rgStreakSnipe .rg-snipe-sway {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  animation: rgSnipeSway 7.2s ease-out both;
+}
+#rgStreakSnipe .rg-snipe-cross-h,
+#rgStreakSnipe .rg-snipe-cross-v {
+  position: absolute; background: rgba(230,235,240,.78);
+  box-shadow: 0 0 10px rgba(230,235,240,.2);
+}
+#rgStreakSnipe .rg-snipe-cross-h { width: 30%; height: 1px; }
+#rgStreakSnipe .rg-snipe-cross-v { width: 1px; height: 30%; }
+#rgStreakSnipe .rg-snipe-hit {
+  position: absolute; width: 24px; height: 24px; z-index: 8;
+  animation: rgSnipeHit 7.2s ease-out both;
+}
+#rgStreakSnipe .rg-snipe-hit::before,
+#rgStreakSnipe .rg-snipe-hit::after {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 16px; height: 2px; background: #d64545;
+  box-shadow: 0 0 12px rgba(214,69,69,.7);
+}
+#rgStreakSnipe .rg-snipe-hit::before { transform: translate(-50%,-50%) rotate(45deg); }
+#rgStreakSnipe .rg-snipe-hit::after { transform: translate(-50%,-50%) rotate(-45deg); }
+#rgStreakSnipe .rg-snipe-muzzle {
+  position: absolute; z-index: 6; width: min(66vmin,620px); aspect-ratio: 1; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.98) 0 5%, rgba(255,176,32,.48) 16%, transparent 55%);
+  animation: rgSnipeMuzzle 7.2s ease-out both;
+}
+#rgStreakSnipe .rg-snipe-breath {
+  position: absolute; left: 50%; bottom: 9%; z-index: 8;
+  width: min(310px,70vw); transform: translateX(-50%);
+  color: #7dd3c0; text-align: center;
+  font: 800 10px/1 "IBM Plex Mono","SF Mono",Menlo,monospace;
+  letter-spacing: .2em; text-transform: uppercase;
+  animation: rgSnipeBreath 7.2s ease both;
+}
+#rgStreakSnipe .rg-snipe-breath-track {
+  display: block; height: 2px; margin-top: 10px; overflow: hidden;
+  background: rgba(125,211,192,.18);
+}
+#rgStreakSnipe .rg-snipe-breath-track::after {
+  content: ""; display: block; width: 100%; height: 100%;
+  transform-origin: left; background: #7dd3c0; box-shadow: 0 0 12px rgba(125,211,192,.65);
+  animation: rgSnipeBreathDrain 7.2s linear both;
+}
+#rgStreakSnipe .rg-snipe-finish {
+  position: absolute; inset: 0; z-index: 9;
+  display: grid; place-items: center;
+}
+#rgStreakSnipe .rg-snipe-finish > * { grid-area: 1 / 1; }
+#rgStreakSnipe .rg-snipe-finish-ring {
+  position: relative; width: min(48vw,460px); aspect-ratio: 1;
+  border: 1.5px solid rgba(34,211,238,.78); border-radius: 50%;
+  box-shadow: 0 0 50px rgba(34,211,238,.18), inset 0 0 40px rgba(34,211,238,.08);
+  animation: rgSnipeFinishRing 7.2s cubic-bezier(.2,.8,.2,1) both;
+}
+#rgStreakSnipe .rg-snipe-finish-ring::before,
+#rgStreakSnipe .rg-snipe-finish-ring::after {
+  content: ""; position: absolute; border-radius: 50%;
+}
+#rgStreakSnipe .rg-snipe-finish-ring::before {
+  inset: 16%; border: 1px dashed rgba(34,211,238,.3);
+}
+#rgStreakSnipe .rg-snipe-finish-ring::after {
+  inset: 47% -14%; border-top: 1px solid rgba(34,211,238,.75);
+  border-bottom: 1px solid rgba(34,211,238,.75);
+}
+#rgStreakSnipe .rg-snipe-card {
+  position: relative; width: min(700px,84vw); padding: clamp(28px,4vw,48px);
+  color: #f8fafc; text-align: center; border: 1px solid rgba(34,211,238,.65);
+  background: rgba(3,10,20,.92);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 70px rgba(34,211,238,.2);
+  animation: rgSnipeFinishCard 7.2s cubic-bezier(.16,.9,.28,1.05) both;
+}
+#rgStreakSnipe .rg-snipe-kicker {
+  color: #67e8f9; font: 900 12px/1.2 Arial,sans-serif;
+  letter-spacing: .28em; text-transform: uppercase;
+}
+#rgStreakSnipe .rg-snipe-title {
+  max-width: 100%; margin-top: 14px; color: #fff;
+  font: 900 clamp(28px,5vw,56px)/1.02 Arial,sans-serif;
+  overflow-wrap: anywhere; word-break: break-word;
+  text-shadow: 0 0 26px rgba(255,255,255,.2);
+}
+#rgStreakSnipe .rg-snipe-value {
+  margin-top: 18px; color: #ffb020; font: 900 clamp(24px,4vw,44px)/1 Arial,sans-serif;
+  letter-spacing: .04em; text-shadow: 0 0 26px rgba(255,176,32,.6);
+}
+#rgStreakSnipe .rg-snipe-foot {
+  margin-top: 18px; color: #94a3b8; font: 800 12px/1 Arial,sans-serif;
+  letter-spacing: .24em; text-transform: uppercase;
+}
+@media (max-width: 560px) {
+  #rgStreakSnipe .rg-snipe-lens { width: min(84vmin,520px); }
+  #rgStreakSnipe .rg-snipe-finish-ring { width: min(78vw,420px); }
+  #rgStreakSnipe .rg-snipe-card { width: 90vw; padding: 26px 18px; }
+  #rgStreakSnipe .rg-snipe-kicker { font-size: 10px; letter-spacing: .2em; }
+  #rgStreakSnipe .rg-snipe-foot { font-size: 10px; letter-spacing: .16em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #rgStreakSnipe { animation-duration: 4.8s; }
+  #rgStreakSnipe .rg-snipe-vignette,
+  #rgStreakSnipe .rg-snipe-compass,
+  #rgStreakSnipe .rg-snipe-kick,
+  #rgStreakSnipe .rg-snipe-muzzle,
+  #rgStreakSnipe .rg-snipe-breath { display: none; }
+  #rgStreakSnipe .rg-snipe-finish-ring { animation: none; opacity: .55; }
+  #rgStreakSnipe .rg-snipe-card {
+    animation: none; opacity: 1; transform: none; filter: none;
+  }
+}
+`;
+        document.head.appendChild(style);
+    }
+
+    function showStreakSnipeOverlay({ playerName, streak }) {
+        if (!document?.body) return;
+        ensureStreakSnipeStyles();
+        document.getElementById("rgStreakSnipe")?.remove();
+        const overlay = document.createElement("div");
+        overlay.id = "rgStreakSnipe";
+        const vignette = document.createElement("div");
+        vignette.className = "rg-snipe-vignette";
+        const muzzle = document.createElement("div");
+        muzzle.className = "rg-snipe-muzzle";
+        const compass = document.createElement("div");
+        compass.className = "rg-snipe-compass";
+        for (const direction of ["NW", "N", "NE"]) {
+            const marker = document.createElement("span");
+            marker.textContent = direction;
+            compass.appendChild(marker);
+        }
+        const kick = document.createElement("div");
+        kick.className = "rg-snipe-kick";
+        const lens = document.createElement("div");
+        lens.className = "rg-snipe-lens";
+        const sway = document.createElement("div");
+        sway.className = "rg-snipe-sway";
+        const crossH = document.createElement("div");
+        crossH.className = "rg-snipe-cross-h";
+        const crossV = document.createElement("div");
+        crossV.className = "rg-snipe-cross-v";
+        const hit = document.createElement("div");
+        hit.className = "rg-snipe-hit";
+        sway.append(crossH, crossV, hit);
+        lens.appendChild(sway);
+        kick.appendChild(lens);
+        const breath = document.createElement("div");
+        breath.className = "rg-snipe-breath";
+        breath.textContent = "Hold breath";
+        const breathTrack = document.createElement("span");
+        breathTrack.className = "rg-snipe-breath-track";
+        breath.appendChild(breathTrack);
+        const finish = document.createElement("div");
+        finish.className = "rg-snipe-finish";
+        const finishRing = document.createElement("div");
+        finishRing.className = "rg-snipe-finish-ring";
+        const card = document.createElement("div");
+        card.className = "rg-snipe-card";
+        const kicker = document.createElement("div");
+        kicker.className = "rg-snipe-kicker";
+        kicker.textContent = "Target streak eliminated";
+        const title = document.createElement("div");
+        title.className = "rg-snipe-title";
+        title.textContent = `You sniped ${String(playerName || "an opponent")}`;
+        const value = document.createElement("div");
+        value.className = "rg-snipe-value";
+        value.textContent = `${Math.max(1, Math.trunc(Number(streak) || 1))}-win streak ended`;
+        const foot = document.createElement("div");
+        foot.className = "rg-snipe-foot";
+        foot.textContent = "Direct hit confirmed";
+        card.append(kicker, title, value, foot);
+        finish.append(finishRing, card);
+        overlay.append(vignette, muzzle, compass, kick, breath, finish);
+        document.body.appendChild(overlay);
+        setTimeout(
+            () => overlay.remove(),
+            prefersReducedPopupMotion() ? 4850 : 7250,
+        );
+    }
+
+    function maybeShowStreakSnipe(prevRatings, nextRatings, opponents, config = _remoteConfigMemo) {
+        if (settings.streakSnipeEnabled === false) return null;
+        const candidates = streakSnipeCandidates(
+            prevRatings,
+            nextRatings,
+            opponents,
+            streakSnipeMinimum(config),
+        );
+        if (!candidates.length) return null;
+        const target = candidates[0];
+        dbg(`streak snipe: ended ${target.name}'s ${target.streak} win streak`);
+        showStreakSnipeOverlay({
+            playerName: target.name,
+            streak: target.streak,
+        });
+        return target;
     }
 
     function derivedFormatFromPlayerCount(n) {
@@ -2613,6 +3031,7 @@
         _matchPlayerCount = 0;
         _selfTeam = null;
         _shownPopupsThisMatch = new Set();
+        _matchOpponentStreaks = new Map();
         _deferredMatch = null;
         _rosterFired = false;
         _rosterFiring = false;
@@ -2681,7 +3100,7 @@
             if (!cache) { dbg("popup skip: no leaderboard cache available"); return; }
             const cfg = await getRemoteConfig();
             if (generation !== _matchPopupGeneration) return;
-            const prefs = normalizePopupPreferences(settings);
+            const prefs = normalizePopupPreferences(RANKED_POPUP_PREFERENCES);
             _rosterFired = true;
             for (const entry of roster) {
                 if (entry.uid === selfUid) continue;
@@ -2699,6 +3118,21 @@
                     dbg(`popup skip: "${entry.name}" hidden by rank or role settings`);
                     continue;
                 }
+                let winStreak = 0;
+                if (isTeammate === false) {
+                    const streakInfo = await resolveOpponentStreak(entry.uid);
+                    if (generation !== _matchPopupGeneration) return;
+                    if (streakInfo.confident && streakInfo.streak > 0) {
+                        winStreak = streakInfo.streak;
+                        _matchOpponentStreaks.set(entry.uid, {
+                            uid: entry.uid,
+                            name: hit.name || entry.name,
+                            streak: winStreak,
+                            confident: true,
+                            isTeammate: false,
+                        });
+                    }
+                }
                 _shownPopupsThisMatch.add(entry.uid);
                 const displayName = hit.name || entry.name;
                 const role = isTeammate === true ? "teammate" : isTeammate === false ? "opponent" : "player";
@@ -2708,6 +3142,7 @@
                     name: displayName,
                     mode: matchFormat,
                     isTeammate,
+                    winStreak,
                     config: cfg,
                     preferences: prefs,
                 });
@@ -2743,7 +3178,7 @@
             if (_matchPopupGeneration > generation + 1 || _inMatch) return;
             const cfg = await getRemoteConfig();
             if (_matchPopupGeneration > generation + 1 || _inMatch) return;
-            const prefs = normalizePopupPreferences(settings);
+            const prefs = normalizePopupPreferences(RANKED_POPUP_PREFERENCES);
             const { teamsBalanced, selfTeam } =
                 trustedTeamContext(players, selfUid, players.length);
             for (const player of players) {
@@ -2755,11 +3190,16 @@
                     ? player.team === selfTeam
                     : null;
                 if (!rankedPopupAllowed(hit.rank, isTeammate, cfg, prefs)) continue;
+                const streakInfo = isTeammate === false
+                    ? await resolveOpponentStreak(player.uid)
+                    : { streak: 0, confident: false };
+                if (_matchPopupGeneration > generation + 1 || _inMatch) return;
                 showLbOpponentPopup({
                     rank: hit.rank,
                     name: hit.name || player.name,
                     mode,
                     isTeammate,
+                    winStreak: streakInfo.confident ? streakInfo.streak : 0,
                     config: cfg,
                     preferences: prefs,
                 });
@@ -3364,7 +3804,20 @@
                     Casual: lastKnownPlayerData?.ModesGlicko?.Casual?.displayRating,
                 };
                 const opponentsSnapshot = _liveRoster.slice();
+                const opponentStreakSnapshot = [..._matchOpponentStreaks.values()]
+                    .map(entry => ({ ...entry }));
                 tryParseAndUpdate(text);
+                const nextRatings = {
+                    Competitive3v3: lastKnownPlayerData?.ModesGlicko?.Competitive3v3?.displayRating,
+                    Competitive2v2: lastKnownPlayerData?.ModesGlicko?.Competitive2v2?.displayRating,
+                    Competitive1v1: lastKnownPlayerData?.ModesGlicko?.Competitive1v1?.displayRating,
+                    Casual: lastKnownPlayerData?.ModesGlicko?.Casual?.displayRating,
+                };
+                maybeShowStreakSnipe(
+                    prevRatings,
+                    nextRatings,
+                    opponentStreakSnapshot,
+                );
                 // Contribution is event-critical, so it owns a match-end sync.
                 // Do not make it depend on the diagnostic audit or leaderboard
                 // submission path (both can independently skip/fail).
