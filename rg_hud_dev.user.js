@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      16.7-dev
+// @version      16.9-dev
 // @description  Dev build of ATLAS with Name Forge fixes, clan parity, opponent streaks, and streak-snipe effects.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -150,6 +150,7 @@
         ogTitle: false,
         // coarse browser estimate; never presented as exact Photon ping
         pingTrackerEnabled: false,
+        streakSnipeEnabled: true,
     };
 
     let settings = { ...DEFAULT_SETTINGS };
@@ -355,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -545,6 +546,7 @@
                         <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
+                        <div class="rgSettingRow"><span title="Show the animation after you end a tracked opponent streak">Streak snipe</span><input type="checkbox" id="rgSetStreakSnipe"></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
                         <button id="rgSetPreviewStreakSnipe" class="rgBtn" style="width:100%;margin-top:4px;">🎯 Preview streak snipe</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
@@ -712,9 +714,11 @@
 
         const setOgTitle = document.getElementById("rgSetOgTitle");
         const setPingTracker = document.getElementById("rgSetPingTracker");
+        const setStreakSnipe = document.getElementById("rgSetStreakSnipe");
         function syncSettingInputs() {
             setOgTitle.checked = !!settings.ogTitle;
             setPingTracker.checked = !!settings.pingTrackerEnabled;
+            setStreakSnipe.checked = settings.streakSnipeEnabled !== false;
             setGlow.checked = settings.glowEnabled;
             setSpeed.value = settings.glowSpeed;
             setOpacity.value = settings.glowOpacity;
@@ -732,6 +736,10 @@
             settings.pingTrackerEnabled = setPingTracker.checked;
             saveSettings();
             syncPingTracker();
+        };
+        setStreakSnipe.onchange = () => {
+            settings.streakSnipeEnabled = setStreakSnipe.checked;
+            saveSettings();
         };
         setGlow.onchange = () => { settings.glowEnabled = setGlow.checked; saveSettings(); applyGlowSettings(); };
         setSpeed.oninput = () => { settings.glowSpeed = parseFloat(setSpeed.value); saveSettings(); applyGlowSettings(); };
@@ -2706,52 +2714,52 @@
   100% { opacity: 0; transform: scale(1.04); }
 }
 @keyframes rgSnipeSway {
-  0%, 7% { transform: translate(12px,-9px) rotate(-1.2deg); }
-  16% { transform: translate(-9px,7px) rotate(.9deg); }
-  25% { transform: translate(5px,-4px) rotate(-.5deg); }
-  34% { transform: translate(-2px,2px) rotate(.2deg); }
-  42%, 100% { transform: translate(0,0) rotate(0); }
+  0%, 4% { transform: translate(12px,-9px) rotate(-1.2deg); }
+  10% { transform: translate(-9px,7px) rotate(.9deg); }
+  16% { transform: translate(5px,-4px) rotate(-.5deg); }
+  22% { transform: translate(-2px,2px) rotate(.2deg); }
+  28%, 100% { transform: translate(0,0) rotate(0); }
 }
 @keyframes rgSnipeCompass {
-  0%, 6% { opacity: 0; }
-  10%, 46% { opacity: 1; }
-  52%, 100% { opacity: 0; }
+  0%, 3% { opacity: 0; }
+  6%, 29% { opacity: 1; }
+  34%, 100% { opacity: 0; }
 }
 @keyframes rgSnipeBreath {
-  0%, 6% { opacity: 0; }
-  10%, 42% { opacity: 1; }
-  48%, 100% { opacity: 0; }
+  0%, 3% { opacity: 0; }
+  6%, 29% { opacity: 1; }
+  34%, 100% { opacity: 0; }
 }
 @keyframes rgSnipeBreathDrain {
-  0%, 10% { transform: scaleX(1); }
-  42%, 100% { transform: scaleX(.06); }
+  0%, 6% { transform: scaleX(1); }
+  29%, 100% { transform: scaleX(.06); }
 }
 @keyframes rgSnipeMuzzle {
-  0%, 43% { opacity: 0; transform: scale(.35); }
-  45% { opacity: .98; transform: scale(1.18); }
-  49%, 100% { opacity: 0; transform: scale(1.65); }
+  0%, 29% { opacity: 0; transform: scale(.35); }
+  31% { opacity: .98; transform: scale(1.18); }
+  35%, 100% { opacity: 0; transform: scale(1.65); }
 }
 @keyframes rgSnipeKick {
-  0%, 43% { transform: translateY(0) rotate(0); }
-  46% { transform: translateY(-34px) rotate(-2.8deg); }
-  54% { transform: translateY(5px) rotate(.5deg); }
-  60%, 100% { transform: translateY(0) rotate(0); }
+  0%, 29% { transform: translateY(0) rotate(0); }
+  32% { transform: translateY(-34px) rotate(-2.8deg); }
+  39% { transform: translateY(5px) rotate(.5deg); }
+  44%, 100% { transform: translateY(0) rotate(0); }
 }
 @keyframes rgSnipeHit {
-  0%, 47% { opacity: 0; transform: scale(.55); }
-  50% { opacity: 1; transform: scale(1.35); }
-  55% { opacity: 1; transform: scale(1); }
-  62%, 100% { opacity: 0; }
+  0%, 33% { opacity: 0; transform: scale(.55); }
+  36% { opacity: 1; transform: scale(1.35); }
+  41% { opacity: 1; transform: scale(1); }
+  48%, 100% { opacity: 0; }
 }
 @keyframes rgSnipeFinishRing {
-  0%, 50% { opacity: 0; transform: scale(1.65) rotate(14deg); }
-  57% { opacity: .95; transform: scale(.96) rotate(0); }
+  0%, 36% { opacity: 0; transform: scale(1.65) rotate(14deg); }
+  43% { opacity: .95; transform: scale(.96) rotate(0); }
   96.5% { opacity: .72; transform: scale(1) rotate(0); }
   100% { opacity: 0; transform: scale(1.04); }
 }
 @keyframes rgSnipeFinishCard {
-  0%, 53.5% { opacity: 0; transform: scale(.84); filter: blur(8px); }
-  58.5%, 96.5% { opacity: 1; transform: scale(1); filter: blur(0); }
+  0%, 39.5% { opacity: 0; transform: scale(.84); filter: blur(8px); }
+  45%, 96.5% { opacity: 1; transform: scale(1); filter: blur(0); }
   100% { opacity: 0; transform: scale(1.04); }
 }
 #rgStreakSnipe {
@@ -2967,6 +2975,7 @@
     }
 
     function maybeShowStreakSnipe(prevRatings, nextRatings, opponents, config = _remoteConfigMemo) {
+        if (settings.streakSnipeEnabled === false) return null;
         const candidates = streakSnipeCandidates(
             prevRatings,
             nextRatings,

@@ -2388,17 +2388,11 @@
     /* 22 Scope Shot + Precision Finish */
     .killfeedscope { background: #0a0e14; }
     .killfeedscope .lens { border-color: rgba(174, 184, 196, .4); }
-    .killfeedscope .vignette,
-    .killfeedscope .muzzle,
-    .killfeedscope .compass,
-    .killfeedscope .kick,
-    .killfeedscope .lens,
-    .killfeedscope .sway,
-    .killfeedscope .hitmarker,
-    .killfeedscope .breath,
-    .killfeedscope .breath i {
-      animation-duration: 6.2s;
-    }
+    .killfeedscope .sway { animation-name: kfFastSway; }
+    .killfeedscope .muzzle { animation-name: kfFastMuzzle; }
+    .killfeedscope .kick { animation-name: kfFastKick; }
+    .killfeedscope .breath { animation-name: kfFastBreath; }
+    .killfeedscope .breath i { animation-name: kfFastBreathDrain; }
     .killfeedscope .cross-h, .killfeedscope .cross-v {
       position: absolute;
       background: rgba(230, 235, 240, .75);
@@ -2489,25 +2483,52 @@
       word-break: break-word;
     }
     @keyframes kfCompass {
-      0%, 10% { opacity: 0; }
-      18%, 58% { opacity: 1; }
-      66%, 100% { opacity: 0; }
+      0%, 3% { opacity: 0; }
+      6%, 29% { opacity: 1; }
+      34%, 100% { opacity: 0; }
+    }
+    @keyframes kfFastSway {
+      0%, 4% { transform: translate(10px, -8px) rotate(-1.2deg); }
+      10% { transform: translate(-8px, 6px) rotate(.9deg); }
+      16% { transform: translate(5px, -3px) rotate(-.5deg); }
+      22% { transform: translate(-2px, 2px) rotate(.2deg); }
+      28%, 100% { transform: translate(0, 0) rotate(0); }
+    }
+    @keyframes kfFastBreath {
+      0%, 3% { opacity: 0; }
+      6%, 29% { opacity: 1; }
+      34%, 100% { opacity: 0; }
+    }
+    @keyframes kfFastBreathDrain {
+      0%, 6% { transform: scaleX(1); }
+      29%, 100% { transform: scaleX(.08); }
+    }
+    @keyframes kfFastMuzzle {
+      0%, 29% { opacity: 0; }
+      31% { opacity: .95; }
+      35%, 100% { opacity: 0; }
+    }
+    @keyframes kfFastKick {
+      0%, 29% { transform: translateY(0) rotate(0); }
+      32% { transform: translateY(-28px) rotate(-2.5deg); }
+      39% { transform: translateY(4px) rotate(.4deg); }
+      44%, 100% { transform: translateY(0) rotate(0); }
     }
     @keyframes kfHit {
-      0%, 50% { opacity: 0; transform: scale(.6); }
-      54% { opacity: 1; transform: scale(1.3); }
-      62% { opacity: 1; transform: scale(1); }
-      75%, 100% { opacity: 0; }
+      0%, 33% { opacity: 0; transform: scale(.6); }
+      36% { opacity: 1; transform: scale(1.3); }
+      41% { opacity: 1; transform: scale(1); }
+      48%, 100% { opacity: 0; }
     }
     @keyframes kfFinishRing {
-      0%, 50% { opacity: 0; transform: scale(1.65) rotate(14deg); }
-      57% { opacity: .95; transform: scale(.96) rotate(0); }
+      0%, 36% { opacity: 0; transform: scale(1.65) rotate(14deg); }
+      43% { opacity: .95; transform: scale(.96) rotate(0); }
       96.5% { opacity: .72; transform: scale(1) rotate(0); }
       100% { opacity: 0; transform: scale(1.04); }
     }
     @keyframes kfFinishCard {
-      0%, 53.5% { opacity: 0; transform: scale(.84); filter: blur(8px); }
-      58.5%, 96.5% { opacity: 1; transform: scale(1); filter: blur(0); }
+      0%, 39.5% { opacity: 0; transform: scale(.84); filter: blur(8px); }
+      45%, 96.5% { opacity: 1; transform: scale(1); filter: blur(0); }
       100% { opacity: 0; transform: scale(1.04); }
     }
 
