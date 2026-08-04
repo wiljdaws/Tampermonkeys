@@ -376,8 +376,8 @@ test("optional current streak remains compatible with merged submissions", async
     ref,
     submissionPayload({
       currentStreak: 6,
-      scriptVersion: "17.0",
-      versionNum: 17.0,
+      scriptVersion: "16.3",
+      versionNum: 16.3,
     }),
     { merge: true },
   ));
@@ -395,8 +395,8 @@ test("optional current streak remains compatible with merged submissions", async
     ref,
     submissionPayload({
       currentStreak: -2,
-      scriptVersion: "17.0",
-      versionNum: 17.0,
+      scriptVersion: "16.3",
+      versionNum: 16.3,
     }),
     { merge: true },
   ));
