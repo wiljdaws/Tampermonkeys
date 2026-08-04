@@ -68,7 +68,7 @@ function hudFunctionSource(name) {
 }
 
 test("dev metadata stays on the dev update channel", () => {
-  assert.match(hudSource, /^\/\/ @version\s+16\.6-dev$/m);
+  assert.match(hudSource, /^\/\/ @version\s+16\.7-dev$/m);
   assert.match(hudSource, /refs\/heads\/dev\/rg_hud_dev\.user\.js/);
 });
 
@@ -240,6 +240,20 @@ test("remote config controls the streak-snipe threshold safely", () => {
   const maybeShowSource = hudFunctionSource("maybeShowStreakSnipe");
   assert.match(maybeShowSource, /streakSnipeMinimum\(config\)/);
   assert.doesNotMatch(maybeShowSource, /getRemoteConfig/);
+});
+
+test("dev settings preview the streak snipe without Firebase traffic", () => {
+  assert.match(hudSource, /id="rgSetPreviewStreakSnipe"/);
+  const start = hudSource.indexOf(
+    'document.getElementById("rgSetPreviewStreakSnipe").onclick',
+  );
+  assert.notEqual(start, -1);
+  const end = hudSource.indexOf("\n        };", start);
+  assert.notEqual(end, -1);
+  const handler = hudSource.slice(start, end);
+  assert.match(handler, /showStreakSnipeOverlay/);
+  assert.match(handler, /Preview Opponent/);
+  assert.doesNotMatch(handler, /(?:getRemoteConfig|initFirebase|getDoc|setDoc)/);
 });
 
 test("ranked opponent popup shows a streak but teammate popup does not", () => {
