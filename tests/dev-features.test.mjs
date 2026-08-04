@@ -68,7 +68,7 @@ function hudFunctionSource(name) {
 }
 
 test("dev metadata stays on the dev update channel", () => {
-  assert.match(hudSource, /^\/\/ @version\s+16\.5-dev$/m);
+  assert.match(hudSource, /^\/\/ @version\s+16\.6-dev$/m);
   assert.match(hudSource, /refs\/heads\/dev\/rg_hud_dev\.user\.js/);
 });
 
@@ -227,6 +227,19 @@ test("only a ranked win can produce streak-snipe candidates", () => {
     ))),
     [],
   );
+});
+
+test("remote config controls the streak-snipe threshold safely", () => {
+  const streakSnipeMinimum = extractHudFunction("streakSnipeMinimum", {
+    STREAK_SNIPE_MIN: 3,
+  });
+  assert.equal(streakSnipeMinimum({ streakSnipeMin: 8 }), 8);
+  assert.equal(streakSnipeMinimum({ streakSnipeMin: 0 }), 1);
+  assert.equal(streakSnipeMinimum({ streakSnipeMin: 500 }), 100);
+  assert.equal(streakSnipeMinimum({ streakSnipeMin: "nope" }), 3);
+  const maybeShowSource = hudFunctionSource("maybeShowStreakSnipe");
+  assert.match(maybeShowSource, /streakSnipeMinimum\(config\)/);
+  assert.doesNotMatch(maybeShowSource, /getRemoteConfig/);
 });
 
 test("ranked opponent popup shows a streak but teammate popup does not", () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      16.5-dev
+// @version      16.6-dev
 // @description  Dev build of ATLAS with Name Forge fixes, clan parity, opponent streaks, and streak-snipe effects.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -355,7 +355,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2119,11 +2119,13 @@
     // leaderboard docs store playlist as "1v1"/"2v2"/"3v3", not the mode name
     const RG_LB_MODE_TO_PLAYLIST = { Competitive1v1: "1v1", Competitive2v2: "2v2", Competitive3v3: "3v3" };
     const RG_LB_TOP_N = 100;
+    const STREAK_SNIPE_MIN = 3;
     const RG_LB_DEFAULT_CONFIG = {
         popupDurationMs: 6000,
         popupEnabled: true,
         cacheRefreshHours: 3,
         minRankToShow: 100,
+        streakSnipeMin: STREAK_SNIPE_MIN,
     };
     const RANKED_POPUP_PREFERENCES = Object.freeze({
         popupShowOpponents: true,
@@ -2133,7 +2135,6 @@
         popupPosition: "top-right",
     });
     const OPPONENT_STREAK_CACHE_KEY = "rgHudOpponentStreak_v1";
-    const STREAK_SNIPE_MIN = 3;
     let opponentStreakCache = {};
     try {
         opponentStreakCache = JSON.parse(
@@ -2674,6 +2675,13 @@
             .sort((a, b) => Number(b.streak) - Number(a.streak));
     }
 
+    function streakSnipeMinimum(config) {
+        const configured = Math.trunc(Number(config?.streakSnipeMin));
+        return Number.isFinite(configured)
+            ? Math.max(1, Math.min(100, configured))
+            : STREAK_SNIPE_MIN;
+    }
+
     function ensureStreakSnipeStyles() {
         if (document.getElementById("rgStreakSnipeStyle")) return;
         const style = document.createElement("style");
@@ -2950,11 +2958,12 @@
         );
     }
 
-    function maybeShowStreakSnipe(prevRatings, nextRatings, opponents) {
+    function maybeShowStreakSnipe(prevRatings, nextRatings, opponents, config = _remoteConfigMemo) {
         const candidates = streakSnipeCandidates(
             prevRatings,
             nextRatings,
             opponents,
+            streakSnipeMinimum(config),
         );
         if (!candidates.length) return null;
         const target = candidates[0];
