@@ -1294,6 +1294,43 @@ test("raw preview omits synthetic Scored text when Hide is selected", () => {
   assert.equal(collectText(visible).includes("Scored!"), true);
 });
 
+test("stolen raw preview supports TMP color and superscript tags", () => {
+  const fakeDocument = {
+    createElement(tagName) {
+      return {
+        tagName,
+        style: {},
+        children: [],
+        textContent: "",
+        appendChild(child) {
+          this.children.push(child);
+          return child;
+        },
+      };
+    },
+  };
+  const renderRawTMP = extractHudFunction("renderRawTMP", {
+    document: fakeDocument,
+    SPRITES: [],
+  });
+  const preview = renderRawTMP(
+    "<color=#000000>Croxyyys</color><br>"
+      + "<sup><color=#00FFEF>Ending</color>"
+      + "<color=#FF0000>Maker</sup></color>",
+  );
+  const [nameLine, titleLine] = preview.children;
+  const firstNameLetter = nameLine.children[0];
+  const firstTitleLetter = titleLine.children[0];
+  const firstRedLetter = titleLine.children[6];
+
+  assert.equal(firstNameLetter.style.color, "#000000");
+  assert.equal(firstTitleLetter.style.color, "#00FFEF");
+  assert.equal(firstTitleLetter.style.verticalAlign, "super");
+  assert.ok(parseFloat(firstTitleLetter.style.fontSize) < 18);
+  assert.equal(firstRedLetter.style.color, "#FF0000");
+  assert.equal(firstRedLetter.style.verticalAlign, "super");
+});
+
 test("legacy repeated sub tags normalize to zero-width Hide Scored", () => {
   const base =
     "<#f00101>NewSoulzzs<br><sup><#ff0000>Mechanical Maniac";

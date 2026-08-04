@@ -42,7 +42,9 @@ contract. Contract tests use `../../rgleaderboard` and
 
 The fixture documents ceilings for active leaderboard load, cold and warm
 popup cache, match sync, clan reopen, structural actions, and five concurrent
-member matches. Snapshot manifests record the same operation model.
+member matches. With `useLeaderboardCache`, cold popup cache is 2 reads
+(config + aggregate). Snapshot manifests record the same operation model.
+See `docs/leaderboard-cache-rollout.md` for enablement and rollback.
 
 Rules have two explicit emulator modes:
 
@@ -60,6 +62,7 @@ Both modes test the same deployable `firestore.rules`. Compatibility mode sets
 Public reads are limited to paths used by ATLAS and the two websites:
 
 - `leaderboard`, `script_submissions`, `iconKey`, and `atlas_config`
+- `leaderboard_cache` (trusted playlist aggregates + iconKey manifest)
 - `events`, `clans`, `clans_directory`, and `clan_notices`
 - `clan_name_keys`, `clan_tag_keys`, `clan_memberships`, and `clan_devices`
 - `admin/blacklist` and `admin/clanPerms`
@@ -77,6 +80,38 @@ rule access limits.
 Legacy clan documents stay readable. While the compatibility flag is true,
 ATLAS 16.1 can update an unmigrated legacy document. A document with
 `lockVersion: 1` can never be changed back to the legacy shape.
+
+## Trusted leaderboard cache aggregates
+
+`leaderboard_cache/{1v1,2v2,3v3}` and `leaderboard_cache/iconKey` are built by
+a dry-run-first script. Clients may read; only admins/service accounts write.
+Rows are compact (`uid`, `name`, `mmr`, `rank`) and never freeze live streaks —
+ATLAS still reads `script_submissions` for opponent streaks.
+
+```bash
+# Offline help
+npm run build:leaderboard-cache -- --help
+
+# Dry run against production (no writes)
+npm run build:leaderboard-cache -- --project rgleaderboard
+
+# Apply after review
+npm run build:leaderboard-cache -- --project rgleaderboard --apply
+```
+
+Unchanged `sourceHash` values skip the write. Oversized docs are refused.
+GitHub Actions workflow `.github/workflows/firestore-aggregates.yml` runs every
+3 hours with Workload Identity Federation (`GCP_WIF_PROVIDER`,
+`GCP_SA_EMAIL`). Manual dispatch defaults to dry-run.
+
+Rollout flag on `atlas_config/hud`:
+
+- `useLeaderboardCache: true` — ATLAS prefers the aggregate (1 read) when fresh
+- omit/false — ATLAS keeps the direct `leaderboard` query fallback
+
+Rollback: set `useLeaderboardCache` false (or delete the field). Aggregates can
+also be left stale; clients fall back when `builtAt` is older than
+`cacheRefreshHours`.
 
 ## Read-only production snapshot
 

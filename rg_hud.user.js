@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      16.3
+// @version      16.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -356,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2134,7 +2134,10 @@
         cacheRefreshHours: 3,
         minRankToShow: 100,
         streakSnipeMin: STREAK_SNIPE_MIN,
+        // Remote flag: prefer leaderboard_cache/{playlist} (1 read) when true.
+        useLeaderboardCache: false,
     };
+    const LEADERBOARD_CACHE_COLLECTION = "leaderboard_cache";
     const RANKED_POPUP_PREFERENCES = Object.freeze({
         popupShowOpponents: true,
         popupShowTeammates: true,
@@ -2233,38 +2236,64 @@
         }
     }
 
+    // Same-match streak memo: roster + end-of-match popups often re-resolve
+    // the same opponent; skip duplicate script_submissions gets for ~60s.
+    const STREAK_READ_MEMO_TTL_MS = 60 * 1000;
+    const _streakReadMemo = new Map();
+    const _streakInFlight = new Map();
+
     async function resolveOpponentStreak(uid) {
         if (!uid) return { streak: 0, confident: false };
-        try {
-            const fb = await initFirebase();
-            if (!fb) return { streak: 0, confident: false };
-            const snap = await fb.getDoc(
-                fb.doc(fb.db, LEADERBOARD_COLLECTION, uid)
-            );
-            if (!snap.exists()) return { streak: 0, confident: false };
-            const data = snap.data() || {};
-            const totals = submissionTotals(data.stats);
-            if (!totals) return { streak: 0, confident: false };
-            // Older clients merge their snapshot and leave unknown fields in
-            // place, so only trust a streak when this version wrote the doc.
-            const supportsPublishedStreak = Number(data.versionNum) >= 16.3;
-            const published = supportsPublishedStreak
-                && Number.isFinite(Number(data.currentStreak))
-                ? Number(data.currentStreak)
-                : null;
-            const next = advanceOpponentStreak(
-                opponentStreakCache[uid],
-                totals.wins,
-                totals.matches,
-                published,
-            );
-            opponentStreakCache[uid] = next;
-            saveOpponentStreakCache();
-            return next;
-        } catch (e) {
-            dbg("opponent streak read failed: " + (e && e.message ? e.message : e));
-            return { streak: 0, confident: false };
+        const memo = _streakReadMemo.get(uid);
+        if (memo && Date.now() - memo.at < STREAK_READ_MEMO_TTL_MS) {
+            return memo.value;
         }
+        if (_streakInFlight.has(uid)) return _streakInFlight.get(uid);
+        const pending = (async () => {
+            try {
+                const fb = await initFirebase();
+                if (!fb) return { streak: 0, confident: false };
+                const snap = await fb.getDoc(
+                    fb.doc(fb.db, LEADERBOARD_COLLECTION, uid)
+                );
+                if (!snap.exists()) {
+                    const miss = { streak: 0, confident: false };
+                    _streakReadMemo.set(uid, { at: Date.now(), value: miss });
+                    return miss;
+                }
+                const data = snap.data() || {};
+                const totals = submissionTotals(data.stats);
+                if (!totals) {
+                    const miss = { streak: 0, confident: false };
+                    _streakReadMemo.set(uid, { at: Date.now(), value: miss });
+                    return miss;
+                }
+                // Older clients merge their snapshot and leave unknown fields in
+                // place, so only trust a streak when this version wrote the doc.
+                const supportsPublishedStreak = Number(data.versionNum) >= 16.3;
+                const published = supportsPublishedStreak
+                    && Number.isFinite(Number(data.currentStreak))
+                    ? Number(data.currentStreak)
+                    : null;
+                const next = advanceOpponentStreak(
+                    opponentStreakCache[uid],
+                    totals.wins,
+                    totals.matches,
+                    published,
+                );
+                opponentStreakCache[uid] = next;
+                saveOpponentStreakCache();
+                _streakReadMemo.set(uid, { at: Date.now(), value: next });
+                return next;
+            } catch (e) {
+                dbg("opponent streak read failed: " + (e && e.message ? e.message : e));
+                return { streak: 0, confident: false };
+            } finally {
+                _streakInFlight.delete(uid);
+            }
+        })();
+        _streakInFlight.set(uid, pending);
+        return pending;
     }
 
     function normalizePopupPreferences(raw) {
@@ -2379,29 +2408,92 @@
         return { ...RG_LB_DEFAULT_CONFIG, fetchedAt: 0 };
     }
 
+    function normalizeAggregateEntries(rows) {
+        if (!Array.isArray(rows)) return [];
+        const entries = [];
+        for (let index = 0; index < rows.length; index += 1) {
+            const row = rows[index] || {};
+            const uid = String(row.uid || row.sourceUserId || "").trim();
+            const mmr = Number(row.mmr);
+            if (!uid || !Number.isFinite(mmr)) continue;
+            entries.push({
+                uid,
+                name: String(row.name || ""),
+                mmr,
+                rank: Number(row.rank) > 0 ? Number(row.rank) : entries.length + 1,
+            });
+        }
+        return entries;
+    }
+
+    async function fetchLeaderboardCacheFromAggregate(fb, mode, playlist, ttlMs) {
+        const snap = await fb.getDoc(
+            fb.doc(fb.db, LEADERBOARD_CACHE_COLLECTION, playlist)
+        );
+        if (!snap.exists()) return null;
+        const data = snap.data() || {};
+        const builtAt = Date.parse(data.builtAt || "")
+            || Number(data.builtAt)
+            || 0;
+        if (!builtAt || Date.now() - builtAt > ttlMs) {
+            dbg(`leaderboard aggregate stale (${playlist})`);
+            return null;
+        }
+        const entries = normalizeAggregateEntries(data.rows);
+        if (!entries.length) return null;
+        dbg(`leaderboard cache aggregate (${playlist}:${entries.length})`);
+        return {
+            modes: { [mode]: entries },
+            fetchedAt: Date.now(),
+            source: "aggregate",
+        };
+    }
+
+    async function fetchLeaderboardCacheDirect(fb, mode, playlist) {
+        const q = fb.query(
+            fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+            fb.where("playlist", "==", playlist),
+            fb.orderBy("mmr", "desc"),
+            fb.limit(RG_LB_TOP_N),
+        );
+        const snap = await fb.getDocs(q);
+        const entries = [];
+        let rank = 0;
+        snap.forEach(doc => {
+            rank++;
+            const d = doc.data();
+            entries.push({ uid: d.sourceUserId, name: d.name, mmr: d.mmr, rank });
+        });
+        dbg(`leaderboard cache refreshed (${mode.replace("Competitive", "")}:${entries.length})`);
+        return {
+            modes: { [mode]: entries },
+            fetchedAt: Date.now(),
+            source: "query",
+        };
+    }
+
     async function fetchLeaderboardCache(mode) {
         try {
             const fb = await initFirebase();
             if (!fb) return null;
             const playlist = RG_LB_MODE_TO_PLAYLIST[mode];
             if (!playlist) return null;
-            const q = fb.query(
-                fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                fb.where("playlist", "==", playlist),
-                fb.orderBy("mmr", "desc"),
-                fb.limit(RG_LB_TOP_N),
-            );
-            const snap = await fb.getDocs(q);
-            const entries = [];
-            let rank = 0;
-            snap.forEach(doc => {
-                rank++;
-                const d = doc.data();
-                entries.push({ uid: d.sourceUserId, name: d.name, mmr: d.mmr, rank });
-            });
-            const cache = { modes: { [mode]: entries }, fetchedAt: Date.now() };
-            dbg(`leaderboard cache refreshed (${mode.replace("Competitive", "")}:${entries.length})`);
-            return cache;
+            const cfg = await getRemoteConfig();
+            const ttlMs = (cfg.cacheRefreshHours || 24) * 60 * 60 * 1000;
+            if (cfg.useLeaderboardCache) {
+                try {
+                    const aggregate = await fetchLeaderboardCacheFromAggregate(
+                        fb,
+                        mode,
+                        playlist,
+                        ttlMs,
+                    );
+                    if (aggregate) return aggregate;
+                } catch (e) {
+                    dbg("leaderboard aggregate failed, falling back to query");
+                }
+            }
+            return await fetchLeaderboardCacheDirect(fb, mode, playlist);
         } catch (e) {
             dbg("leaderboard cache fetch failed: " + (e && e.message ? e.message : e));
             return null;
@@ -6837,14 +6929,16 @@
             }
 
             view.innerHTML = `<div style="opacity:.8;">Loading clans...</div>`;
-            await loadClanData(true);
+            // Warm reopen: reuse in-memory clan + directory when already loaded
+            // for this account. Live clan doc updates come from the listener;
+            // directory refreshes stay throttled. Force only on first load /
+            // account switch (loadClanData handles that).
+            const warmReopen = clanLoaded && clanLoadedForAccount === myUserId();
+            await loadClanData(!warmReopen);
             const fb = await initFirebase();
-            // v13.6: dropped force=true on the two admin config loaders. they
-            // change so rarely the first session read is fine to cache. saves ~2
-            // Firestore reads per tab open. loadClanData(true) stays because
-            // clanless users have no live listener and need a fresh directory.
             if (fb) await loadEventConfig(fb);
             if (fb) await loadClanRolePerms(fb);
+            if (warmReopen && fb) await refreshDirectoryThrottled(fb);
 
             renderClanViewFromMemory();
             if (myClan) attachClanListener();
@@ -8523,7 +8617,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
   function renderRawTMP(raw) {
     const root = document.createElement('div');
     root.style.lineHeight = '1.35';
-    const st = { color: null, bold: false, italic: false, sub: false, sizePct: 100, rotate: 0, mark: null };
+    const st = {
+      color: null,
+      colorStack: [],
+      bold: false,
+      italic: false,
+      sub: false,
+      sup: false,
+      sizePct: 100,
+      rotate: 0,
+      mark: null,
+    };
     let line = document.createElement('div');
     root.appendChild(line);
     let i = 0;
@@ -8533,12 +8637,25 @@ _rgnfFab = fab; _rgnfPanel = panel;
       let m;
       if ((m = rest.match(/^<br\s*\/?\s*>/i))) { line = document.createElement('div'); root.appendChild(line); i += m[0].length; continue; }
       if ((m = rest.match(/^<(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)>/))) { st.color = m[1]; i += m[0].length; continue; }
+      if ((m = rest.match(/^<color\s*=\s*(["']?)(#[0-9A-Fa-f]{3}(?:[0-9A-Fa-f])?|#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)\1\s*>/i))) {
+        st.colorStack.push(st.color);
+        st.color = m[2];
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<\/color\s*>/i))) {
+        st.color = st.colorStack.length ? st.colorStack.pop() : null;
+        i += m[0].length;
+        continue;
+      }
       if ((m = rest.match(/^<b>/i)))   { st.bold = true;  i += m[0].length; continue; }
       if ((m = rest.match(/^<\/b>/i))) { st.bold = false; i += m[0].length; continue; }
       if ((m = rest.match(/^<i>/i)))   { st.italic = true;  i += m[0].length; continue; }
       if ((m = rest.match(/^<\/i>/i))) { st.italic = false; i += m[0].length; continue; }
-      if ((m = rest.match(/^<sub>/i)))   { st.sub = true;  i += m[0].length; continue; }
+      if ((m = rest.match(/^<sub>/i)))   { st.sub = true; st.sup = false; i += m[0].length; continue; }
       if ((m = rest.match(/^<\/sub>/i))) { st.sub = false; i += m[0].length; continue; }
+      if ((m = rest.match(/^<sup>/i)))   { st.sup = true; st.sub = false; i += m[0].length; continue; }
+      if ((m = rest.match(/^<\/sup>/i))) { st.sup = false; i += m[0].length; continue; }
       if ((m = rest.match(/^<size=(\d+)%?>/i))) {
         const parsedSize = Number(m[1]);
         st.sizePct = Number.isFinite(parsedSize) ? parsedSize : 100;
@@ -8563,7 +8680,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if (st.italic) span.style.fontStyle = 'italic';
       if (st.mark) span.style.background = st.mark;
       let size = 18 * (st.sizePct / 100);
-      if (st.sub) { size *= 0.65; span.style.verticalAlign = 'sub'; }
+      if (st.sub || st.sup) {
+        size *= 0.65;
+        span.style.verticalAlign = st.sup ? 'super' : 'sub';
+      }
       if (st.sizePct <= 0) {
         span.style.display = 'none';
       } else {
