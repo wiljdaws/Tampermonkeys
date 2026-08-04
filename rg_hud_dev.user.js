@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS Dev
 // @namespace    https://rocketgoal.io/dev
-// @version      16.6-dev
+// @version      16.7-dev
 // @description  Dev build of ATLAS with Name Forge fixes, clan parity, opponent streaks, and streak-snipe effects.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -355,7 +355,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -546,6 +546,7 @@
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
+                        <button id="rgSetPreviewStreakSnipe" class="rgBtn" style="width:100%;margin-top:4px;">🎯 Preview streak snipe</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
                     </div>
                 </div>
@@ -745,6 +746,13 @@
             applyGlowSettings();
             applyTitle();
             syncPingTracker();
+        };
+        document.getElementById("rgSetPreviewStreakSnipe").onclick = () => {
+            dbg("Preview streak snipe clicked");
+            showStreakSnipeOverlay({
+                playerName: "Preview Opponent",
+                streak: 8,
+            });
         };
 
         // trim player data, don't dump the whole login blob
