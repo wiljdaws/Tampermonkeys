@@ -68,7 +68,7 @@ function hudFunctionSource(name) {
 }
 
 test("dev metadata stays on the dev update channel", () => {
-  assert.match(hudSource, /^\/\/ @version\s+16\.7-dev$/m);
+  assert.match(hudSource, /^\/\/ @version\s+16\.9-dev$/m);
   assert.match(hudSource, /refs\/heads\/dev\/rg_hud_dev\.user\.js/);
 });
 
@@ -256,6 +256,17 @@ test("dev settings preview the streak snipe without Firebase traffic", () => {
   assert.doesNotMatch(handler, /(?:getRemoteConfig|initFirebase|getDoc|setDoc)/);
 });
 
+test("automatic streak snipe can be turned off locally", () => {
+  assert.match(hudSource, /streakSnipeEnabled:\s*true/);
+  assert.match(hudSource, /id="rgSetStreakSnipe"/);
+  assert.match(hudSource, /setStreakSnipe\.checked = settings\.streakSnipeEnabled !== false/);
+  assert.match(hudSource, /settings\.streakSnipeEnabled = setStreakSnipe\.checked/);
+  assert.match(
+    hudFunctionSource("maybeShowStreakSnipe"),
+    /settings\.streakSnipeEnabled === false\) return null/,
+  );
+});
+
 test("ranked opponent popup shows a streak but teammate popup does not", () => {
   let stack = null;
   class FakeElement {
@@ -352,7 +363,8 @@ test("streak snipe uses the scoped shot and readable precision finish", () => {
   assert.match(styles, /rg-snipe-lens/);
   assert.match(styles, /rg-snipe-hit/);
   assert.match(styles, /rg-snipe-finish-ring/);
-  assert.match(styles, /58\.5%, 96\.5%/);
+  assert.match(styles, /0%, 29% \{ opacity: 0; transform: scale\(\.35\); \}/);
+  assert.match(styles, /45%, 96\.5%/);
   assert.doesNotMatch(styles, /rg-snipe-spark/);
   assert.match(overlay, /You sniped/);
   assert.match(overlay, /7250/);
