@@ -445,6 +445,60 @@
                     font-size: 12px;
                 }
                 #rgHUD input[type="range"] { width: 110px; }
+                /* Grouped subsection inside settings (e.g. Ranked Player Popups). */
+                #rgHUD .rgSetSection {
+                    background: rgba(0, 191, 255, 0.06);
+                    border: 1px solid #00bfff33;
+                    border-radius: 8px;
+                    padding: 6px 8px 8px;
+                    margin: 8px 0 4px;
+                }
+                #rgHUD .rgSetSectionHead {
+                    font-size: 10px;
+                    color: #7ec8ff;
+                    text-transform: uppercase;
+                    letter-spacing: .7px;
+                    font-weight: 600;
+                    margin-bottom: 4px;
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                }
+                #rgHUD .rgSetSectionHead::before {
+                    content: '';
+                    width: 4px;
+                    height: 4px;
+                    border-radius: 50%;
+                    background: #00bfff;
+                    box-shadow: 0 0 4px #00bfff;
+                }
+                #rgHUD .rgSetSection .rgSettingRow { margin: 4px 0; }
+                #rgHUD .rgSetSection select,
+                #rgHUD .rgSetSection input[type="number"] {
+                    background: #10181f;
+                    color: #d7f3ff;
+                    border: 1px solid #00bfff55;
+                    border-radius: 6px;
+                    padding: 3px 6px;
+                    font-size: 12px;
+                    width: 118px;
+                    box-sizing: border-box;
+                }
+                #rgHUD .rgSetSection input[type="number"] { text-align: right; }
+                #rgHUD .rgSetPair {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 4px 10px;
+                    margin: 4px 0 6px;
+                    font-size: 12px;
+                }
+                #rgHUD .rgSetPair label {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 6px;
+                    cursor: pointer;
+                }
                 /* scroll inside the HUD so buttons don't fall off the bottom */
                 #rgBody { max-height: calc(100vh - 170px); overflow-y: auto; overflow-x: hidden; }
                 #rgHUD input[type="color"] {
@@ -551,12 +605,16 @@
                         <div class="rgSettingRow"><span>Vibrancy</span><input type="range" id="rgSetOpacity" min="0.1" max="1" step="0.05"></div>
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
-                        <div style="border-top:1px solid #00bfff33;margin:6px 0 4px;padding-top:5px;font-size:10px;color:#7ec8ff;text-transform:uppercase;letter-spacing:.7px;">Ranked player popups</div>
-                        <div class="rgSettingRow"><span>Opponents</span><input type="checkbox" id="rgSetPopupOpponents"></div>
-                        <div class="rgSettingRow"><span>Teammates</span><input type="checkbox" id="rgSetPopupTeammates"></div>
-                        <div class="rgSettingRow"><span>Show through rank</span><input type="number" id="rgSetPopupMaxRank" min="1" max="100" step="1" style="width:62px;"></div>
-                        <div class="rgSettingRow"><span>Duration</span><select id="rgSetPopupDuration" style="width:112px;"><option value="0">ATLAS default</option><option value="3000">3 seconds</option><option value="6000">6 seconds</option><option value="10000">10 seconds</option></select></div>
-                        <div class="rgSettingRow"><span>Corner</span><select id="rgSetPopupPosition" style="width:112px;"><option value="top-right">Top right</option><option value="top-left">Top left</option><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></div>
+                        <div class="rgSetSection">
+                            <div class="rgSetSectionHead">Ranked player popups</div>
+                            <div class="rgSetPair">
+                                <label><span>Opponents</span><input type="checkbox" id="rgSetPopupOpponents"></label>
+                                <label><span>Teammates</span><input type="checkbox" id="rgSetPopupTeammates"></label>
+                            </div>
+                            <div class="rgSettingRow"><span>Show through rank</span><input type="number" id="rgSetPopupMaxRank" min="1" max="100" step="1"></div>
+                            <div class="rgSettingRow"><span>Duration</span><select id="rgSetPopupDuration"><option value="0">ATLAS default</option><option value="3000">3 seconds</option><option value="6000">6 seconds</option><option value="10000">10 seconds</option></select></div>
+                            <div class="rgSettingRow"><span>Corner</span><select id="rgSetPopupPosition"><option value="top-right">Top right</option><option value="top-left">Top left</option><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></div>
+                        </div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
                     </div>
