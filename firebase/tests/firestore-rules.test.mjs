@@ -368,6 +368,41 @@ test("sourced leaderboard rows use deterministic IDs", async () => {
   );
 });
 
+test("optional current streak remains compatible with merged submissions", async () => {
+  const db = publicDb();
+  const ref = doc(db, "script_submissions", "player-a");
+
+  await assertSucceeds(setDoc(
+    ref,
+    submissionPayload({
+      currentStreak: 6,
+      scriptVersion: "17.0",
+      versionNum: 17.0,
+    }),
+    { merge: true },
+  ));
+  await assertSucceeds(setDoc(
+    ref,
+    submissionPayload({
+      scriptVersion: "16.2",
+      versionNum: 16.2,
+    }),
+    { merge: true },
+  ));
+  assert.equal((await getDoc(ref)).data().currentStreak, 6);
+
+  await assertSucceeds(setDoc(
+    ref,
+    submissionPayload({
+      currentStreak: -2,
+      scriptVersion: "17.0",
+      versionNum: 17.0,
+    }),
+    { merge: true },
+  ));
+  assert.equal((await getDoc(ref)).data().currentStreak, -2);
+});
+
 test("version floor and blacklist block sourced writes", async () => {
   const db = publicDb();
   await assertFails(
