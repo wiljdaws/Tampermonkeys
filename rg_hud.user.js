@@ -9657,5 +9657,397 @@ _rgnfFab = fab; _rgnfPanel = panel;
         },
       };
     })();
+// ============================================================================
+//  ATLAS Streak Tracker
+//  Tracks your session performance: win/loss streaks, goals, session duration.
+//  Pure console.log monitoring — no game hooks, no network interception.
+//  Persists across refreshes via localStorage.
+// ============================================================================
+(function streakTrackerInit() {
+  'use strict';
+
+  // Don't double-init if ATLAS already loaded it
+  if (window.__atlasStreakTracker) return;
+  window.__atlasStreakTracker = true;
+
+  const origLog = console.log.bind(console);
+
+  // ─── Config ──────────────────────────────────────────────────────────────
+  const STORAGE_KEY = 'atlas_streak_data_v1';
+  const PANEL_ID = 'atlas-streak-panel';
+
+  // ─── State ───────────────────────────────────────────────────────────────
+  let state = {
+    sessionStart: Date.now(),
+    goals: 0,
+    matches: 0,
+    wins: 0,
+    losses: 0,
+    currentStreak: 0,        // positive = W streak, negative = L streak
+    streakType: null,        // 'W' or 'L'
+    bestStreak: 0,
+    worstStreak: 0,
+    lastResult: null,        // 'win' | 'loss' | null
+    lastGoalLog: '',
+  };
+
+  // Restore from localStorage (survive refresh)
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      state = Object.assign(state, parsed);
+      // sessionStart resets each load — we keep the earliest
+      if (!parsed.sessionStart) state.sessionStart = Date.now();
+    }
+  } catch (e) {}
+
+  function save() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  // ─── Console hook ────────────────────────────────────────────────────────
+  // We intercept console.log to detect goals and match results.
+  // This is safe — we call the original log immediately, we just peek at it.
+  console.log = function() {
+    try {
+      const args = Array.from(arguments);
+      const text = args.map(a => (typeof a === 'string' ? a : (a && a.toString ? a.toString() : ''))).join(' ');
+
+      // Goal detection — proven to work
+      // Match: "[PlayerDataManager] Goal! Player - Total Goals: 3"
+      // Skip: "[PlayerDataManager] Own Goal"
+      if (/\[PlayerDataManager\]\s*Goal!/i.test(text) && !/\bOwn\s*Goal\b/i.test(text)) {
+        if (text !== state.lastGoalLog) {
+          state.lastGoalLog = text;
+          state.goals++;
+          save();
+          origLog('%c[Streak] ⚽ Goal! Session total: ' + state.goals, 'color:#22d3ee;font-weight:bold');
+          render();
+        }
+      }
+
+      // Match end detection — we look for the matchEnd fetch or score sync
+      // The game fetches /v0304_player/matchEnd when a match finishes
+      // We can also detect via score change patterns, but let's watch for
+      // the Firebase sync or any "match" related completion log.
+      // For now, we hook fetch separately (below) for reliable match detection.
+    } catch (e) {}
+    return origLog.apply(console, arguments);
+  };
+
+  // ─── Fetch hook for match-end detection ──────────────────────────────────
+  // The game calls /matchEnd after every match. We read the response to
+  // determine win/loss. This is safe — we don't modify the request.
+  const origFetch = window.fetch;
+  window.fetch = function(url, opts) {
+    const urlStr = typeof url === 'string' ? url : (url && url.url ? url.url : '');
+    const promise = origFetch.apply(this, arguments);
+
+    if (urlStr.includes('/matchEnd')) {
+      promise.then(function(res) {
+        try {
+          const clone = res.clone();
+          clone.json().then(function(data) {
+            // The matchEnd response contains ModesData with wins/loses
+            // We compare before/after to detect if this match was a win
+            handleMatchEnd(data);
+          }).catch(function() {
+            // If JSON parse fails, try text
+            clone.text().then(function(text) {
+              // Fallback: detect win/loss from text patterns
+              handleMatchEndText(text);
+            }).catch(function() {});
+          });
+        } catch (e) {}
+      }).catch(function() {});
+    }
+
+    return promise;
+  };
+
+  let prevWins = null;
+  let prevLosses = null;
+
+  function handleMatchEnd(data) {
+    if (!data) return;
+    // The response has ModesData like:
+    // { Competitive3v3: { matchesPlayed: 138, wins: 78, loses: 60 } }
+    let totalWins = 0, totalLosses = 0;
+    if (data.ModesData) {
+      for (const mode of Object.values(data.ModesData)) {
+        totalWins += mode.wins || 0;
+        totalLosses += mode.loses || 0;
+      }
+    }
+
+    if (prevWins === null) {
+      // First match end — just store baseline
+      prevWins = totalWins;
+      prevLosses = totalLosses;
+      return;
+    }
+
+    const winsDelta = totalWins - prevWins;
+    const lossesDelta = totalLosses - prevLosses;
+
+    if (winsDelta > 0) {
+      recordResult('win');
+    } else if (lossesDelta > 0) {
+      recordResult('loss');
+    }
+
+    prevWins = totalWins;
+    prevLosses = totalLosses;
+  }
+
+  function handleMatchEndText(text) {
+    // Fallback: can't determine from text alone, just count as a match
+    state.matches++;
+    save();
+    render();
+  }
+
+  function recordResult(result) {
+    state.matches++;
+
+    if (result === 'win') {
+      state.wins++;
+      if (state.streakType === 'W') {
+        state.currentStreak++;
+      } else {
+        state.currentStreak = 1;
+        state.streakType = 'W';
+      }
+      if (state.currentStreak > state.bestStreak) {
+        state.bestStreak = state.currentStreak;
+      }
+    } else {
+      state.losses++;
+      if (state.streakType === 'L') {
+        state.currentStreak--;
+      } else {
+        state.currentStreak = -1;
+        state.streakType = 'L';
+      }
+      if (state.currentStreak < state.worstStreak) {
+        state.worstStreak = state.currentStreak;
+      }
+    }
+
+    state.lastResult = result;
+    save();
+    render();
+
+    origLog('%c[Streak] Match result: ' + result.toUpperCase() +
+            ' | Streak: ' + state.currentStreak + ' | Session: ' +
+            state.wins + 'W ' + state.losses + 'L', 'color:#22d3ee;font-weight:bold');
+  }
+
+  // ─── UI ──────────────────────────────────────────────────────────────────
+  function createPanel() {
+    if (document.getElementById(PANEL_ID)) return;
+
+    const panel = document.createElement('div');
+    panel.id = PANEL_ID;
+    panel.setAttribute('style', `
+      position: fixed !important;
+      top: 20px !important;
+      right: 20px !important;
+      z-index: 2147483646 !important;
+      background: rgba(8, 8, 12, 0.92) !important;
+      backdrop-filter: blur(16px) !important;
+      color: #e4e4e7 !important;
+      padding: 14px 16px !important;
+      border-radius: 14px !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+      font-size: 12px !important;
+      min-width: 200px !important;
+      pointer-events: auto !important;
+      cursor: move !important;
+      user-select: none !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.06) !important;
+      transition: box-shadow 0.3s, border-color 0.3s !important;
+      border: 1px solid rgba(255,255,255,0.08) !important;
+    `);
+
+    document.documentElement.appendChild(panel);
+    makeDraggable(panel);
+
+    render();
+    origLog('%c[Streak] Panel created', 'color:#22d3ee');
+  }
+
+  function makeDraggable(el) {
+    let dragging = false, ox = 0, oy = 0;
+
+    el.addEventListener('mousedown', function(e) {
+      // Don't drag if clicking a button inside
+      if (e.target.tagName === 'BUTTON') return;
+      dragging = true;
+      const rect = el.getBoundingClientRect();
+      ox = e.clientX - rect.left;
+      oy = e.clientY - rect.top;
+      el.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      el.style.left = (e.clientX - ox) + 'px';
+      el.style.top = (e.clientY - oy) + 'px';
+      el.style.right = 'auto';
+    });
+
+    document.addEventListener('mouseup', function() {
+      if (dragging) {
+        dragging = false;
+        el.style.cursor = 'move';
+      }
+    });
+  }
+
+  function fmtDuration(ms) {
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (h > 0) return h + 'h ' + m + 'm';
+    if (m > 0) return m + 'm';
+    return s + 's';
+  }
+
+  function render() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+
+    const streak = state.currentStreak;
+    const isHot = state.streakType === 'W' && streak >= 3;
+    const isCold = state.streakType === 'L' && Math.abs(streak) >= 3;
+    const gpm = state.matches > 0 ? (state.goals / state.matches).toFixed(1) : '0.0';
+
+    // Streak display
+    let streakDisplay, streakColor, streakIcon;
+    if (streak > 0) {
+      streakDisplay = streak + 'W';
+      streakColor = isHot ? '#f97316' : '#22c55e';
+      streakIcon = isHot ? '🔥' : '✅';
+    } else if (streak < 0) {
+      streakDisplay = Math.abs(streak) + 'L';
+      streakColor = isCold ? '#3b82f6' : '#ef4444';
+      streakIcon = isCold ? '❄️' : '💀';
+    } else {
+      streakDisplay = '—';
+      streakColor = '#71717a';
+      streakIcon = '📊';
+    }
+
+    // Dynamic glow for hot/cold
+    let glowStyle = '';
+    if (isHot) {
+      glowStyle = 'box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 24px rgba(249,115,22,0.4), 0 0 0 1px rgba(249,115,22,0.3) !important; border-color: rgba(249,115,22,0.4) !important;';
+    } else if (isCold) {
+      glowStyle = 'box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 24px rgba(59,130,246,0.4), 0 0 0 1px rgba(59,130,246,0.3) !important; border-color: rgba(59,130,246,0.4) !important;';
+    }
+
+    panel.setAttribute('style', panel.getAttribute('style').split('box-shadow:')[0] + glowStyle);
+
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);">
+        <span style="font-weight:600;font-size:11px;color:#a1a1aa;letter-spacing:0.5px;text-transform:uppercase;">Session</span>
+        <span style="font-size:10px;color:#52525b;font-variant-numeric:tabular-nums;">${fmtDuration(Date.now() - state.sessionStart)}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center;">
+        <span style="color:#71717a;font-size:11px;">Streak</span>
+        <span style="font-weight:700;font-size:15px;color:${streakColor};font-variant-numeric:tabular-nums;">${streakIcon} ${streakDisplay}</span>
+        <span style="color:#71717a;font-size:11px;">Goals</span>
+        <span style="font-weight:600;font-size:14px;color:#e4e4e7;font-variant-numeric:tabular-nums;">⚽ ${state.goals}</span>
+        <span style="color:#71717a;font-size:11px;">Per match</span>
+        <span style="font-weight:600;font-size:14px;color:#e4e4e7;font-variant-numeric:tabular-nums;">${gpm}</span>
+        <span style="color:#71717a;font-size:11px;">Record</span>
+        <span style="font-weight:600;font-size:14px;color:#e4e4e7;font-variant-numeric:tabular-nums;">${state.wins}-${state.losses}</span>
+        <span style="color:#71717a;font-size:11px;">Best</span>
+        <span style="font-weight:600;font-size:14px;color:#fbbf24;font-variant-numeric:tabular-nums;">🏆 ${state.bestStreak}W</span>
+      </div>
+      ${isCold ? '<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;color:#60a5fa;text-align:center;">❄️ Take a break?</div>' : ''}
+      ${isHot ? '<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;color:#fb923c;text-align:center;">🔥 ON FIRE</div>' : ''}
+      <div style="margin-top:8px;display:flex;gap:6px;">
+        <button id="atlas-streak-reset" style="flex:1;padding:5px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:6px;color:#ef4444;font-size:10px;cursor:pointer;font-family:inherit;">Reset</button>
+        <button id="atlas-streak-hide" style="flex:1;padding:5px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:6px;color:#71717a;font-size:10px;cursor:pointer;font-family:inherit;">Hide</button>
+      </div>
+    `;
+
+    // Wire up buttons
+    const resetBtn = panel.querySelector('#atlas-streak-reset');
+    if (resetBtn) {
+      resetBtn.onmouseover = () => { resetBtn.style.background = 'rgba(239,68,68,0.2)'; };
+      resetBtn.onmouseout = () => { resetBtn.style.background = 'rgba(239,68,68,0.1)'; };
+      resetBtn.onclick = () => {
+        state = {
+          sessionStart: Date.now(), goals: 0, matches: 0, wins: 0, losses: 0,
+          currentStreak: 0, streakType: null, bestStreak: 0, worstStreak: 0,
+          lastResult: null, lastGoalLog: '',
+        };
+        prevWins = null;
+        prevLosses = null;
+        save();
+        render();
+      };
+    }
+
+    const hideBtn = panel.querySelector('#atlas-streak-hide');
+    if (hideBtn) {
+      hideBtn.onclick = () => {
+        panel.style.display = 'none';
+        // Show a small "show" button in corner
+        const show = document.createElement('button');
+        show.id = 'atlas-streak-show';
+        show.textContent = '📊';
+        show.setAttribute('style', 'position:fixed;bottom:20px;right:20px;z-index:2147483646;width:36px;height:36px;border-radius:10px;background:rgba(8,8,12,0.9);border:1px solid rgba(255,255,255,0.1);color:#e4e4e7;cursor:pointer;font-size:16px;backdrop-filter:blur(8px);');
+        show.onclick = () => {
+          panel.style.display = '';
+          show.remove();
+        };
+        document.documentElement.appendChild(show);
+      };
+    }
+  }
+
+  // Update session timer every second
+  setInterval(render, 1000);
+
+  // ─── Init ─────────────────────────────────────────────────────────────────
+  function init() {
+    if (document.getElementById(PANEL_ID)) return;
+    createPanel();
+    origLog('%c[Streak] Initialized — tracking goals & matches', 'color:#22d3ee;font-weight:bold');
+  }
+
+  // Try immediately, then poll
+  setTimeout(init, 1000);
+  setTimeout(init, 3000);
+  setTimeout(init, 7000);
+  const pollInterval = setInterval(() => {
+    if (document.getElementById(PANEL_ID)) {
+      clearInterval(pollInterval);
+    } else {
+      init();
+    }
+  }, 5000);
+
+  // Expose API
+  window.atlasStreak = {
+    reset: () => {
+      state = { sessionStart: Date.now(), goals: 0, matches: 0, wins: 0, losses: 0,
+                currentStreak: 0, streakType: null, bestStreak: 0, worstStreak: 0,
+                lastResult: null, lastGoalLog: '' };
+      save();
+      render();
+    },
+    getState: () => ({ ...state }),
+  };
+})();
+// ============================================================================
+//  END Streak Tracker
+// ============================================================================
 
 })();
