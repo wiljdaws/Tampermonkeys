@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      17.1
+// @version      17.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -356,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3407,6 +3407,16 @@
             ? (Number.isFinite(sessionStart?.lastSeen) ? sessionStart.lastSeen : null)
             : null;
 
+        // Mirror the streak already tracked for script_submissions so the
+        // public leaderboard site and the opponent popup can show it right
+        // away instead of having to reconstruct it from wins/matches deltas.
+        // Same total-across-modes value goes on every playlist doc so 1v1,
+        // 2v2, 3v3, and wins can all show the streak chip without joining
+        // sibling docs client-side.
+        const publishedStreak = streakData?.accountId === data.Id
+            ? Math.trunc(Number(streakData.streak) || 0)
+            : 0;
+
         for (const [mode, playlist] of Object.entries(modeToPlaylist)) {
             const mmr = data.ModesGlicko?.[mode]?.displayRating;
             if (typeof mmr !== "number") continue; // never played this mode
@@ -3420,19 +3430,13 @@
                 sessionMmrDelta,
                 sessionStartedAt,
                 sessionLastSeen,
+                currentStreak: publishedStreak,
             });
         }
 
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
         const totalWins = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.wins ?? 0), 0);
         const totalMatches = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
-
-        // Mirror the streak already tracked for script_submissions so the
-        // public leaderboard site and the opponent popup can show it right
-        // away instead of having to reconstruct it from wins/matches deltas.
-        const publishedStreak = streakData?.accountId === data.Id
-            ? Math.trunc(Number(streakData.streak) || 0)
-            : 0;
 
         await upsertIfChanged(fb, sourceUserId, "wins", {
             name: shownName,
