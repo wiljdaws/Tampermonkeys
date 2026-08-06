@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      16.4
+// @version      16.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -356,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3328,10 +3328,18 @@
         const totalWins = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.wins ?? 0), 0);
         const totalMatches = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
+        // Mirror the streak already tracked for script_submissions so the
+        // public leaderboard site and the opponent popup can show it right
+        // away instead of having to reconstruct it from wins/matches deltas.
+        const publishedStreak = streakData?.accountId === data.Id
+            ? Math.trunc(Number(streakData.streak) || 0)
+            : 0;
+
         await upsertIfChanged(fb, sourceUserId, "wins", {
             name: shownName,
             wins: totalWins,
             matches: totalMatches,
+            currentStreak: publishedStreak,
         });
       } catch (e) {
         dbg("syncToRealLeaderboard threw: " + (e && e.message ? e.message : e));
