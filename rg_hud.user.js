@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      17.2
+// @version      17.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -356,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3044,12 +3044,39 @@
   margin-top: 18px; color: #94a3b8; font: 800 12px/1 Arial,sans-serif;
   letter-spacing: .24em; text-transform: uppercase;
 }
+#rgStreakSnipe .rg-snipe-actions {
+  margin-top: 26px; display: inline-flex; gap: 10px; flex-wrap: wrap;
+  justify-content: center; opacity: 0;
+  animation: rgSnipeFinishActions 7.2s cubic-bezier(.16,.9,.28,1.05) both;
+}
+#rgStreakSnipe .rg-snipe-action {
+  pointer-events: auto; cursor: pointer;
+  padding: 10px 18px; border-radius: 999px;
+  font: 800 11px/1 Arial,sans-serif; letter-spacing: .18em; text-transform: uppercase;
+  border: 1px solid; transition: transform .15s ease, background .15s ease, color .15s ease;
+}
+#rgStreakSnipe .rg-snipe-save {
+  background: rgba(34,211,238,.16); border-color: rgba(34,211,238,.65); color: #67e8f9;
+  text-shadow: 0 0 12px rgba(34,211,238,.4);
+}
+#rgStreakSnipe .rg-snipe-save:hover { background: rgba(34,211,238,.32); color: #fff; transform: translateY(-1px); }
+#rgStreakSnipe .rg-snipe-save[disabled] { opacity: .6; cursor: default; transform: none; }
+#rgStreakSnipe .rg-snipe-close {
+  background: transparent; border-color: rgba(148,163,184,.35); color: #94a3b8;
+}
+#rgStreakSnipe .rg-snipe-close:hover { border-color: rgba(148,163,184,.65); color: #cbd5e1; }
+@keyframes rgSnipeFinishActions {
+  0%, 62% { opacity: 0; transform: translateY(6px); }
+  70%, 96.5% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(0); }
+}
 @media (max-width: 560px) {
   #rgStreakSnipe .rg-snipe-lens { width: min(84vmin,520px); }
   #rgStreakSnipe .rg-snipe-finish-ring { width: min(78vw,420px); }
   #rgStreakSnipe .rg-snipe-card { width: 90vw; padding: 26px 18px; }
   #rgStreakSnipe .rg-snipe-kicker { font-size: 10px; letter-spacing: .2em; }
   #rgStreakSnipe .rg-snipe-foot { font-size: 10px; letter-spacing: .16em; }
+  #rgStreakSnipe .rg-snipe-action { padding: 9px 14px; font-size: 10px; letter-spacing: .14em; }
 }
 @media (prefers-reduced-motion: reduce) {
   #rgStreakSnipe { animation-duration: 4.8s; }
@@ -3123,14 +3150,81 @@
         const foot = document.createElement("div");
         foot.className = "rg-snipe-foot";
         foot.textContent = "Direct hit confirmed";
-        card.append(kicker, title, value, foot);
+        const actions = document.createElement("div");
+        actions.className = "rg-snipe-actions";
+        const savePng = document.createElement("button");
+        savePng.type = "button";
+        savePng.className = "rg-snipe-action rg-snipe-save";
+        savePng.textContent = "📸 Save PNG";
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "rg-snipe-action rg-snipe-close";
+        closeBtn.textContent = "Close";
+        actions.append(savePng, closeBtn);
+        card.append(kicker, title, value, foot, actions);
         finish.append(finishRing, card);
         overlay.append(vignette, muzzle, compass, kick, breath, finish);
         document.body.appendChild(overlay);
-        setTimeout(
+
+        // Auto-dismiss unless the user reaches for a button. Hovering the card
+        // pauses the timer so the fade-out doesn't start under someone's cursor.
+        let removeTimer = setTimeout(
             () => overlay.remove(),
             prefersReducedPopupMotion() ? 4850 : 7250,
         );
+        const holdOpen = () => {
+            if (removeTimer) { clearTimeout(removeTimer); removeTimer = null; }
+            overlay.style.animation = "none";
+            overlay.style.opacity = "1";
+            card.style.animation = "none";
+            card.style.opacity = "1";
+            card.style.filter = "none";
+            card.style.transform = "none";
+            actions.style.animation = "none";
+            actions.style.opacity = "1";
+        };
+        // Pointer events cascade — the overlay is non-interactive by default,
+        // so a mouseenter on card would never fire. Instead, hovering either
+        // button (which has pointer-events:auto) pauses the auto-dismiss.
+        savePng.addEventListener("mouseenter", holdOpen);
+        closeBtn.addEventListener("mouseenter", holdOpen);
+
+        savePng.addEventListener("click", async () => {
+            holdOpen();
+            savePng.disabled = true;
+            const original = savePng.textContent;
+            savePng.textContent = "Rendering…";
+            try {
+                const { toPng } = await import("https://esm.sh/html-to-image@1.11.13");
+                const dataUrl = await toPng(card, {
+                    backgroundColor: "#030a14",
+                    pixelRatio: 2,
+                    // Hide the action buttons in the saved image so it's clean
+                    // for sharing — the file is the celebration, not the UI.
+                    filter: (n) => !n.classList?.contains?.("rg-snipe-actions"),
+                });
+                const slug = String(playerName || "opponent")
+                    .replace(/[^\w-]+/g, "")
+                    .slice(0, 20) || "opponent";
+                const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+                const a = document.createElement("a");
+                a.href = dataUrl;
+                a.download = `atlas-snipe-${slug}-x${Math.trunc(Number(streak) || 1)}-${stamp}.png`;
+                a.click();
+                savePng.textContent = "Saved ✓";
+            } catch (e) {
+                console.error("[RG HUD] snipe PNG export failed:", e);
+                savePng.textContent = "Save failed — retry";
+                savePng.disabled = false;
+                return;
+            }
+            setTimeout(() => { savePng.textContent = original; savePng.disabled = false; }, 2200);
+        });
+
+        closeBtn.addEventListener("click", () => {
+            if (removeTimer) { clearTimeout(removeTimer); removeTimer = null; }
+            overlay.remove();
+        });
     }
 
     function maybeShowStreakSnipe(prevRatings, nextRatings, opponents, config = _remoteConfigMemo) {
