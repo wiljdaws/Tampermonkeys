@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      16.7
+// @version      16.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -356,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1619,6 +1619,82 @@
         }
         updateRequiredChecked = true;
         return updateRequired;
+    }
+
+    // ---------- Soft update nudge ----------
+    // admin/latest_version is the current recommended release. If we're older
+    // (and not already dismissed for this exact version), show a persistent
+    // click-to-install banner. Non-blocking — the hard gate lives in
+    // admin/blacklist.minVersion.
+    let updateNudgeChecked = false;
+    const DEFAULT_UPDATE_URL =
+        "https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js";
+
+    async function maybeShowUpdateNudge() {
+        if (updateNudgeChecked) return;
+        updateNudgeChecked = true;
+        try {
+            const fb = await initFirebase();
+            if (!fb) return;
+            const snap = await fb.getDoc(fb.doc(fb.db, "admin", "latest_version"));
+            if (!snap.exists()) return;
+            const data = snap.data() || {};
+            const latest = Number(data.versionNum);
+            if (!Number.isFinite(latest) || SCRIPT_VERSION_NUM >= latest) return;
+
+            const dismissedKey = `rgAtlasUpdateDismissed_v${latest}`;
+            try { if (localStorage.getItem(dismissedKey) === "1") return; } catch (e) {}
+
+            const versionLabel = typeof data.version === "string" ? data.version : String(latest);
+            const updateUrl = typeof data.updateUrl === "string" && /^https:\/\//.test(data.updateUrl)
+                ? data.updateUrl
+                : DEFAULT_UPDATE_URL;
+            showUpdateNudge(versionLabel, updateUrl, dismissedKey);
+        } catch (e) {
+            dbg("maybeShowUpdateNudge failed (non-fatal): " + (e && e.message ? e.message : e));
+        }
+    }
+
+    function showUpdateNudge(version, url, dismissedKey) {
+        createHUD();
+        if (!hud || document.getElementById("rgUpdateNudge")) return;
+        const bar = document.createElement("div");
+        bar.id = "rgUpdateNudge";
+        bar.style.cssText = `
+            position:absolute;
+            top:-38px;
+            left:0;
+            right:0;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:8px;
+            padding:6px 10px;
+            border:1px solid #5bb1ff;
+            border-radius:8px;
+            background:rgba(10,14,18,0.95);
+            color:#5bb1ff;
+            font:600 12px system-ui, sans-serif;
+            z-index:5;
+        `;
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = `↻ ATLAS ${version} available — click to update`;
+        link.style.cssText = "color:#5bb1ff;text-decoration:none;flex:1;cursor:pointer";
+        const dismiss = document.createElement("button");
+        dismiss.type = "button";
+        dismiss.textContent = "×";
+        dismiss.title = "Dismiss until next release";
+        dismiss.style.cssText = "all:unset;cursor:pointer;color:#5bb1ff;font-weight:bold;padding:0 4px";
+        dismiss.addEventListener("click", () => {
+            try { localStorage.setItem(dismissedKey, "1"); } catch (e) {}
+            bar.remove();
+        });
+        bar.appendChild(link);
+        bar.appendChild(dismiss);
+        hud.appendChild(bar);
     }
 
     async function atlasMutationAllowed(fb, label) {
@@ -7378,6 +7454,7 @@
         if (document.body) {
             clearInterval(wait);
             createHUD();
+            maybeShowUpdateNudge();
             console.log("[RG HUD] loaded and running, waiting for login/matchEnd data...");
         }
     }, 100);
