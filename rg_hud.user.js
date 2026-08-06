@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      16.5
+// @version      16.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -356,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "16.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3318,10 +3318,34 @@
             Competitive3v3: "3v3",
         };
 
+        // Same rationale as currentStreak below: publish the per-mode session
+        // delta so the public leaderboard can show recent MMR movement the
+        // moment it reads the doc, instead of waiting to reconstruct history
+        // from live snapshots after every page load. sessionLastSeen lets the
+        // site tell when a session is actually still going vs. stale after the
+        // HUD stopped writing.
+        const sessionOwnedByAccount = sessionStart?.accountId === data.Id;
+        const sessionStartedAt = sessionOwnedByAccount
+            ? (Number.isFinite(sessionStart?.startedAt) ? sessionStart.startedAt : null)
+            : null;
+        const sessionLastSeen = sessionOwnedByAccount
+            ? (Number.isFinite(sessionStart?.lastSeen) ? sessionStart.lastSeen : null)
+            : null;
+
         for (const [mode, playlist] of Object.entries(modeToPlaylist)) {
             const mmr = data.ModesGlicko?.[mode]?.displayRating;
             if (typeof mmr !== "number") continue; // never played this mode
-            await upsertIfChanged(fb, sourceUserId, playlist, { name: shownName, mmr });
+            const sessionBase = sessionOwnedByAccount && typeof sessionStart?.[mode] === "number"
+                ? sessionStart[mode]
+                : null;
+            const sessionMmrDelta = sessionBase === null ? 0 : Math.trunc(mmr - sessionBase);
+            await upsertIfChanged(fb, sourceUserId, playlist, {
+                name: shownName,
+                mmr,
+                sessionMmrDelta,
+                sessionStartedAt,
+                sessionLastSeen,
+            });
         }
 
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
@@ -3340,6 +3364,8 @@
             wins: totalWins,
             matches: totalMatches,
             currentStreak: publishedStreak,
+            sessionStartedAt,
+            sessionLastSeen,
         });
       } catch (e) {
         dbg("syncToRealLeaderboard threw: " + (e && e.message ? e.message : e));

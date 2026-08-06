@@ -370,6 +370,61 @@ test("sourced leaderboard rows use deterministic IDs", async () => {
   );
 });
 
+test("leaderboard rows accept published session fields and currentStreak", async () => {
+  const db = publicDb();
+  await assertSucceeds(
+    setDoc(doc(db, "script_submissions", "player-a"), submissionPayload()),
+  );
+
+  await assertSucceeds(setDoc(
+    doc(db, "leaderboard", "player-a_1v1"),
+    leaderboardPayload({
+      sessionMmrDelta: 42,
+      sessionStartedAt: 1_700_000_000_000,
+      sessionLastSeen: 1_700_000_000_500,
+    }),
+  ));
+  assert.equal(
+    (await getDoc(doc(db, "leaderboard", "player-a_1v1"))).data().sessionMmrDelta,
+    42,
+  );
+
+  await assertSucceeds(setDoc(
+    doc(db, "leaderboard", "player-a_wins"),
+    {
+      sourceUserId: "player-a",
+      playlist: "wins",
+      name: "Player Alpha",
+      wins: 20,
+      matches: 30,
+      deviceId: "device-a",
+      scriptVersion: "16.7",
+      versionNum: 16.7,
+      lastWriteAt: serverTimestamp(),
+      currentStreak: 6,
+      sessionStartedAt: 1_700_000_000_000,
+      sessionLastSeen: 1_700_000_000_500,
+    },
+  ));
+  assert.equal(
+    (await getDoc(doc(db, "leaderboard", "player-a_wins"))).data().currentStreak,
+    6,
+  );
+
+  for (const bad of [
+    { sessionMmrDelta: 999_999 },
+    { sessionMmrDelta: "42" },
+    { sessionStartedAt: -1 },
+    { sessionLastSeen: "now" },
+    { currentStreak: 5_000 },
+  ]) {
+    await assertFails(setDoc(
+      doc(db, "leaderboard", "player-a_1v1"),
+      leaderboardPayload(bad),
+    ));
+  }
+});
+
 test("public leaderboard names reject placeholders, emoji, and profanity", async () => {
   const db = publicDb();
   await assertSucceeds(
