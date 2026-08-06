@@ -22,7 +22,8 @@
     "apply:migrations": "node scripts/apply-migrations.mjs",
     "snapshot:production": "node scripts/snapshot-production.mjs",
     "verify:baseline": "node scripts/verify-baseline.mjs",
-    "build:leaderboard-cache": "node scripts/build-leaderboard-cache.mjs"
+    "build:leaderboard-cache": "node scripts/build-leaderboard-cache.mjs",
+    "publish:latest-version": "node scripts/publish-latest-version.mjs"
   },
   "engines": {
     "node": ">=20"
