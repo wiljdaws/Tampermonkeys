@@ -1645,11 +1645,10 @@
             const dismissedKey = `rgAtlasUpdateDismissed_v${latest}`;
             try { if (localStorage.getItem(dismissedKey) === "1") return; } catch (e) {}
 
-            const versionLabel = typeof data.version === "string" ? data.version : String(latest);
             const updateUrl = typeof data.updateUrl === "string" && /^https:\/\//.test(data.updateUrl)
                 ? data.updateUrl
                 : DEFAULT_UPDATE_URL;
-            showUpdateNudge(versionLabel, updateUrl, dismissedKey);
+            showUpdateNudge(String(latest), updateUrl, dismissedKey);
         } catch (e) {
             dbg("maybeShowUpdateNudge failed (non-fatal): " + (e && e.message ? e.message : e));
         }
