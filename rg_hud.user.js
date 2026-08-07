@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      17.5
+// @version      17.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -22,6 +22,31 @@
     const _rgLogBuf = [];
     const _rgWarnBuf = [];
     const _rgErrorBuf = [];
+    // Ring buffer of Firestore write attempts. When a user reports a sync
+    // error, this tells us the exact payload, the rule-error code, and
+    // Firestore's serverResponse — everything needed to diagnose without
+    // having to guess.
+    const _rgWriteBuf = [];
+    function _sanitizeWriteValue(v) {
+        if (v === null || v === undefined) return v;
+        if (typeof v === "number" || typeof v === "boolean") return v;
+        if (typeof v === "string") return v.length > 512 ? `<str:len=${v.length}>` : v;
+        if (Array.isArray(v)) return `<array:len=${v.length}>`;
+        if (typeof v === "object") {
+            // serverTimestamp() etc are SDK sentinels — mark them so we can see they were used
+            if (v.constructor && v.constructor.name && v.constructor.name !== "Object") {
+                return `<${v.constructor.name}>`;
+            }
+            const out = {};
+            for (const k of Object.keys(v)) out[k] = _sanitizeWriteValue(v[k]);
+            return out;
+        }
+        return `<${typeof v}>`;
+    }
+    function _pushWriteAttempt(entry) {
+        _rgWriteBuf.push(entry);
+        if (_rgWriteBuf.length > 40) _rgWriteBuf.shift();
+    }
     function dbg(msg) {
         const line = `[RG HUD ${(performance.now() / 1000).toFixed(2)}s] ${msg}`;
         _rgLogBuf.push(line);
@@ -356,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -831,6 +856,7 @@
                     } : null,
                     warnings: _rgWarnBuf,
                     errors: _rgErrorBuf,
+                    firestoreWrites: _rgWriteBuf,
                     log: _rgLogBuf.slice(-100),
                 };
                 const redactions = [
@@ -1823,9 +1849,33 @@
         if (!(await atlasMutationAllowed(fb, label))) return false;
         logWrite(label);
         const stamped = atlasStampedMutationData(ref, data);
-        if (options === undefined) await fb.setDoc(ref, stamped);
-        else await fb.setDoc(ref, stamped, options);
-        return true;
+        const startedAt = Date.now();
+        const attempt = {
+            at: startedAt,
+            label,
+            path: ref && ref.path,
+            merge: !!(options && options.merge),
+            payloadKeys: Object.keys(stamped),
+            payload: _sanitizeWriteValue(stamped),
+        };
+        try {
+            if (options === undefined) await fb.setDoc(ref, stamped);
+            else await fb.setDoc(ref, stamped, options);
+            _pushWriteAttempt({ ...attempt, ok: true, latencyMs: Date.now() - startedAt });
+            return true;
+        } catch (e) {
+            _pushWriteAttempt({
+                ...attempt,
+                ok: false,
+                latencyMs: Date.now() - startedAt,
+                errCode: e && e.code,
+                errName: e && e.name,
+                errMsg: e && e.message,
+                serverResponse: e && e.customData && e.customData.serverResponse,
+                stack: e && e.stack ? String(e.stack).split("\n").slice(0, 6).join(" | ") : null,
+            });
+            throw e;
+        }
     }
 
     async function atlasDeleteDoc(fb, label, ref) {
@@ -2254,6 +2304,7 @@
                 clearError();
                 return true;
             } catch (e) {
+                pushError(e, `upsertPlaylistEntry:${playlist}`);
                 console.error(`[RG HUD] Real leaderboard sync failed for ${playlist}:`, e);
                 showError(`Leaderboard sync failed for ${playlist} -- check console`);
                 return false;
