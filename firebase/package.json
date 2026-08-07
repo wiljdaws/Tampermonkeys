@@ -6,8 +6,9 @@
   "description": "Versioned Firestore rules, emulator tests, snapshots, and migration planning for rgleaderboard.",
   "scripts": {
     "test": "npm run test:core && npm run test:contracts",
-    "test:core": "npm run test:rules && npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots && npm run test:leaderboard-cache",
+    "test:core": "npm run test:rules && npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots && npm run test:leaderboard-cache && npm run test:firestore-usage",
     "test:leaderboard-cache": "node --test tests/leaderboard-cache.test.mjs",
+    "test:firestore-usage": "node --test tests/fetch-firestore-usage.test.mjs",
     "test:rules": "npm run test:rules:compatibility && npm run test:rules:final",
     "test:rules:compatibility": "node scripts/run-emulator-test.mjs --config firebase.json -- \"RULES_MODE=compatibility node --test tests/firestore-rules.test.mjs\"",
     "test:rules:final": "node scripts/run-emulator-test.mjs --config firebase.json -- \"RULES_MODE=final node --test tests/firestore-rules.test.mjs\"",
@@ -25,7 +26,8 @@
     "build:leaderboard-cache": "node scripts/build-leaderboard-cache.mjs",
     "build:leaderboard-json": "node scripts/build-leaderboard-cache.mjs --emit-json",
     "start:cloud-run": "node scripts/cloud-run-server.mjs",
-    "publish:latest-version": "node scripts/publish-latest-version.mjs"
+    "publish:latest-version": "node scripts/publish-latest-version.mjs",
+    "fetch:firestore-usage": "node scripts/fetch-firestore-usage.mjs"
   },
   "engines": {
     "node": ">=20"
