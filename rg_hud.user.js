@@ -4036,17 +4036,6 @@
                     if (wroteClan) {
                         dbg(`Clan MMR sync committed (${reason}): ${prevMine ?? "unset"} -> ${myMMR}`);
 
-                        // one-time serverNow calibration per session
-                        if (serverNowOffset === null) {
-                            try {
-                                const back = await fb.getDoc(fb.doc(fb.db, "clans", myClan.id));
-                                const ts = back.exists() ? back.data().lastSyncAt : null;
-                                if (ts?.toMillis) learnServerTime(ts.toMillis());
-                            } catch (e) {
-                                dbg("serverNow calibration read failed, will retry next session");
-                            }
-                        }
-
                         // throttled directory rebuild, instant local, Firestore at most every 3m
                         await refreshDirectoryThrottled(fb);
                     }
