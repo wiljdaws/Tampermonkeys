@@ -1,0 +1,11 @@
+{
+  "name": "gcp-to-discord",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloud Run shim that forwards GCP Monitoring alert webhooks to a Discord channel.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node index.mjs"
+  }
+}
