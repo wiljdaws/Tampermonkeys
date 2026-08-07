@@ -16,13 +16,16 @@ name: Deploy leaderboard rebuild service
 # steps and the runtime SA IAM bindings.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "firebase/scripts/**"
-      - "firebase/package.json"
-      - "firebase/package-lock.json"
-      - ".github/workflows/deploy-rebuild-service.yml"
+  # Auto-deploy on push is off until the rgleaderboard GCP project has
+  # billing attached. Cloud Run + Cloud Build require a billing account
+  # even at $0 usage. Uncomment the push block once billing is enabled.
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - "firebase/scripts/**"
+  #     - "firebase/package.json"
+  #     - "firebase/package-lock.json"
+  #     - ".github/workflows/deploy-rebuild-service.yml"
   workflow_dispatch:
     inputs:
       project:
