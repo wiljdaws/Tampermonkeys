@@ -59,10 +59,14 @@ dumps to stdout):
   npm run build:leaderboard-cache -- --project rgleaderboard --emit-json
   npm run build:leaderboard-cache -- --project rgleaderboard --emit-json --skip-firestore
 
+Write playlist JSON to a local directory (for GitHub Actions + Pages/jsDelivr):
+  npm run build:leaderboard-cache -- --project rgleaderboard --emit-json --skip-firestore --output-dir ./data
+
 Optional:
   --playlists 1v1,2v2,3v3[,wins]
   --top 100
   --json-prefix leaderboard/         (R2 key prefix, default "leaderboard/")
+  --output-dir ./data                (write JSON to disk instead of R2)
 
 Safety:
   - Dry run is the default.
@@ -72,6 +76,7 @@ Safety:
   - Unchanged sourceHash skips the write.
   - Oversized documents are refused.
   - --emit-json without R2 env vars is a no-op upload (prints JSON to stdout).
+  - --output-dir writes to disk and skips R2 entirely.
 `;
 
 function argumentKey(argument) {
@@ -99,6 +104,7 @@ export function parseCacheArguments(args) {
   let emitJson = false;
   let skipFirestore = false;
   let jsonPrefix = "leaderboard/";
+  let outputDir = "";
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -124,6 +130,18 @@ export function parseCacheArguments(args) {
     }
     if (argument.startsWith("--json-prefix=")) {
       jsonPrefix = argument.slice("--json-prefix=".length);
+      continue;
+    }
+    if (argument === "--output-dir") {
+      if (!args[index + 1] || args[index + 1].startsWith("-")) {
+        throw new Error("--output-dir requires a path");
+      }
+      outputDir = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--output-dir=")) {
+      outputDir = argument.slice("--output-dir=".length);
       continue;
     }
     if (argument === "--project") {
@@ -200,6 +218,10 @@ export function parseCacheArguments(args) {
   }
   if (jsonPrefix && !jsonPrefix.endsWith("/")) jsonPrefix += "/";
 
+  if (outputDir && !emitJson) {
+    throw new Error("--output-dir requires --emit-json");
+  }
+
   return {
     help: false,
     project,
@@ -209,6 +231,7 @@ export function parseCacheArguments(args) {
     emitJson,
     skipFirestore,
     jsonPrefix,
+    outputDir,
   };
 }
 
@@ -745,7 +768,9 @@ export async function main(argv = process.argv.slice(2), options = {}) {
   }
 
   let uploadJsonImpl = null;
-  if (parsed.emitJson) {
+  if (parsed.emitJson && !parsed.outputDir) {
+    // Local --output-dir mode skips R2 entirely. Only try to resolve the R2
+    // uploader when we're not writing to disk.
     uploadJsonImpl = await resolveUploader(options);
   }
 
@@ -760,6 +785,18 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     uploadJsonImpl,
     ...options,
   });
+
+  if (parsed.emitJson && parsed.outputDir) {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const path = await import("node:path");
+    await mkdir(parsed.outputDir, { recursive: true });
+    for (const blob of result.jsonBlobs) {
+      const filePath = path.join(parsed.outputDir, `${blob.playlist}.json`);
+      const body = JSON.stringify(blob.blob);
+      await writeFile(filePath, body, "utf8");
+      console.log(`WROTE ${filePath} rows=${blob.blob.rowCount} bytes=${body.length}`);
+    }
+  }
 
   for (const plan of result.plans) {
     const bytes = estimateDocumentBytes(plan.document);
