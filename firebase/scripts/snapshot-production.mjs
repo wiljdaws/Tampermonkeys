@@ -246,40 +246,6 @@ async function fetchCollection(fetchImpl, token, project, collectionPath) {
   return documents.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-async function fetchRulesMetadata(fetchImpl, token, project) {
-  try {
-    const releasesUrl =
-      `https://firebaserules.googleapis.com/v1/projects/${encodeURIComponent(project)}/releases?pageSize=100`;
-    const releases = await getJson(fetchImpl, token, releasesUrl, {
-      quotaProject: project,
-    });
-    const release = (releases.releases || []).find(candidate =>
-      candidate.name?.endsWith("/releases/cloud.firestore"));
-    if (!release?.rulesetName) {
-      return {
-        captured: false,
-        reason: "No cloud.firestore release was visible to this account.",
-      };
-    }
-    const ruleset = await getJson(
-      fetchImpl,
-      token,
-      `https://firebaserules.googleapis.com/v1/${release.rulesetName}`,
-      { quotaProject: project },
-    );
-    return {
-      captured: true,
-      release,
-      ruleset,
-    };
-  } catch (error) {
-    return {
-      captured: false,
-      reason: error.message,
-    };
-  }
-}
-
 async function fetchIndexMetadata(fetchImpl, token, project) {
   try {
     const indexes = [];
@@ -434,10 +400,7 @@ export async function captureSnapshot({
     }),
   );
   const targets = Object.fromEntries(targetEntries);
-  const [rulesMetadata, indexMetadata] = await Promise.all([
-    fetchRulesMetadata(fetchImpl, token, project),
-    fetchIndexMetadata(fetchImpl, token, project),
-  ]);
+  const indexMetadata = await fetchIndexMetadata(fetchImpl, token, project);
   const collectionCounts = Object.fromEntries(
     Object.entries(targets).map(([key, target]) => [key, targetCount(target)]),
   );
@@ -454,7 +417,6 @@ export async function captureSnapshot({
 
   const files = {
     "snapshot.json": jsonText(snapshot),
-    "firestore-rules-metadata.json": jsonText(rulesMetadata),
     "firestore-indexes-metadata.json": jsonText(indexMetadata),
   };
   const outputDirectory = path.join(

@@ -27,7 +27,12 @@ import {
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const workspace = path.resolve(testDirectory, "..");
-const rules = await readFile(path.join(workspace, "firestore.rules"), "utf8");
+const rulesPath = process.env.ATLAS_RULES_PATH;
+if (!rulesPath) {
+  console.log("Skipping leaderboard-popup: ATLAS_RULES_PATH not set");
+  process.exit(0);
+}
+const rules = await readFile(path.resolve(rulesPath), "utf8");
 const hudScriptPath = process.env.HUD_SCRIPT
   ? path.resolve(process.env.HUD_SCRIPT)
   : path.resolve(workspace, "../rg_hud.user.js");

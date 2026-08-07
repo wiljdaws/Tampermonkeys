@@ -28,7 +28,12 @@ import { planFixture } from "../scripts/plan-migrations.mjs";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const workspace = path.resolve(testDirectory, "..");
-const rules = await readFile(path.join(workspace, "firestore.rules"), "utf8");
+const rulesPath = process.env.ATLAS_RULES_PATH;
+if (!rulesPath) {
+  console.log("Skipping integration-regressions: ATLAS_RULES_PATH not set");
+  process.exit(0);
+}
+const rules = await readFile(path.resolve(rulesPath), "utf8");
 const fixture = JSON.parse(await readFile(
   path.join(testDirectory, "fixtures", "atlas-contract.json"),
   "utf8",

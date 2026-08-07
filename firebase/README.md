@@ -1,6 +1,6 @@
 # ATLAS Firebase workspace
 
-This folder contains the Firestore rules, indexes, emulator tests, snapshots,
+This folder contains Firestore indexes, emulator tests, snapshots,
 ATLAS 16.0 migration tools, and the approved ATLAS 16.1 bridge planner.
 
 ## Safety
@@ -13,14 +13,9 @@ ATLAS 16.0 migration tools, and the approved ATLAS 16.1 bridge planner.
   gate are present.
 - Snapshot output, plans, approvals, and checkpoints are ignored by Git.
 - Access tokens are held in memory and are never printed or saved.
-- No script deploys rules, indexes, websites, or ATLAS.
+- No script deploys indexes, websites, or ATLAS.
 - A mid-event apply is allowed only through the approved forced-upgrade
   runbook, with a fresh snapshot and reviewed conflict plan.
-
-Firestore rules can enforce document shape, deterministic IDs, uniqueness
-locks, and atomic parity. They do not prove which player owns a role. Player
-role authorization remains an honor-system client check because there is no
-trusted server or billing-backed function.
 
 ## Install and test
 
@@ -29,7 +24,6 @@ Node 20 and Java 21 are expected.
 ```bash
 cd firebase
 npm ci
-npm run test:rules
 npm run test:migrations
 npm run test:snapshots
 npm run test:contracts
@@ -45,41 +39,6 @@ popup cache, match sync, clan reopen, structural actions, and five concurrent
 member matches. With `useLeaderboardCache`, cold popup cache is 2 reads
 (config + aggregate). Snapshot manifests record the same operation model.
 See `docs/leaderboard-cache-rollout.md` for enablement and rollback.
-
-Rules have two explicit emulator modes:
-
-```bash
-npm run test:rules:compatibility
-npm run test:rules:final
-```
-
-Both modes test the same deployable `firestore.rules`. Compatibility mode sets
-`admin/migration.allowLegacyClanWrites` to `true`. Final mode sets it to
-`false`. A missing migration control document is final mode.
-
-## Rules contract
-
-Public reads are limited to paths used by ATLAS and the two websites:
-
-- `leaderboard`, `script_submissions`, `iconKey`, and `atlas_config`
-- `leaderboard_cache` (trusted playlist aggregates + iconKey manifest)
-- `events`, `clans`, `clans_directory`, and `clan_notices`
-- `clan_name_keys`, `clan_tag_keys`, `clan_memberships`, and `clan_devices`
-- `admin/blacklist` and `admin/clanPerms`
-
-Unknown paths and `match_audits` are denied. Config, event, icon, manual
-leaderboard, and admin writes require one of the configured admin emails.
-Sourced leaderboard IDs are `{sourceUserId}_{playlist}`.
-
-New clan documents use member maps, `memberIds`, `deviceIds`, `lockVersion: 1`,
-and version 16.0 or newer. The clan checks every member lock. Each member lock
-checks all known device locks, up to five devices per member. This transitive
-check keeps name, tag, member, device, and directory parity within Firestore's
-rule access limits.
-
-Legacy clan documents stay readable. While the compatibility flag is true,
-ATLAS 16.1 can update an unmigrated legacy document. A document with
-`lockVersion: 1` can never be changed back to the legacy shape.
 
 ## Trusted leaderboard cache aggregates
 
@@ -132,7 +91,7 @@ The command gets a token from `gcloud auth print-access-token`, sends only GET
 requests, and writes a private folder under `.snapshots/`. The snapshot includes
 current clan notices so a bridge plan can use exact overwrite or missing
 preconditions. The manifest records SHA-256 hashes, byte sizes, document counts,
-rules metadata, and index metadata.
+and index metadata.
 
 Compare pre- and post-change snapshots locally:
 

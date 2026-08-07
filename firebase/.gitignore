@@ -13,3 +13,6 @@ emulator-data/
 !.env.example
 *credentials*.json
 *service-account*.json
+
+# Rules live outside the repo; ignore if someone copies them back in
+firestore.rules

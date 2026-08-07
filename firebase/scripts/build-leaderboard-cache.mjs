@@ -16,10 +16,10 @@ export const CACHE_TOP_N = 100;
 export const MAX_CACHE_DOC_BYTES = 900_000;
 export const SCHEMA_VERSION = 1;
 export const JSON_SCHEMA_VERSION = 1;
-// Fields the site renders per row. Kept in sync with the firestore.rules
-// leaderboard shape (`name`, `mmr`, `wins`, `matches`, `currentStreak`,
-// `flag`, `icons`, `iconSize`, `glowColor`, `glowStrength`). Nothing here
-// should be a live/session field that would freeze if the JSON goes stale.
+// Fields the site renders per row. Kept in sync with the leaderboard doc
+// shape (`name`, `mmr`, `wins`, `matches`, `currentStreak`, `flag`, `icons`,
+// `iconSize`, `glowColor`, `glowStrength`). Nothing here should be a
+// live/session field that would freeze if the JSON goes stale.
 export const JSON_ROW_FIELDS = Object.freeze([
   "flag",
   "icons",

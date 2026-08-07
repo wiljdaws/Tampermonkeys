@@ -65,7 +65,7 @@ The dry run does not request a credential or contact Firebase.
 10. Take a post-change snapshot and run `verify:baseline`.
 11. Require exact roster, score, baseline, directory, and lock parity.
 12. Deploy the additive indexes and wait for `playlist + wins DESC` to finish.
-13. Deploy `firestore.rules`.
+13. Deploy the updated ruleset.
 14. Enable reservations.
 15. Set `admin/blacklist.minVersion` to `16.1`.
 16. Set `admin/migration.allowLegacyClanWrites` to `false`.
