@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      17.3
+// @version      17.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -356,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1471,6 +1471,24 @@
         readWarned: false,
         writeWarned: false,
     };
+    // Per-session tallies uploaded to hud_read_stats so we can attribute
+    // reads/writes back to specific HUD features without shipping a new
+    // build. Session start is fixed for the life of the userscript instance;
+    // resets happen when the browser reloads the game page.
+    const HUD_STATS_SESSION_STARTED_AT = new Date().toISOString();
+    const hudSessionReadsByLabel = new Map();
+    const hudSessionWritesByLabel = new Map();
+    function bucketLabel(raw) {
+        // Firestore doc paths carry slashes and ids that would explode the
+        // perLabel map — normalize to the "collection[/subcoll]" prefix.
+        const str = String(raw || "unknown");
+        const parts = str.split("/").filter(Boolean);
+        if (parts.length <= 1) return parts[0] || "unknown";
+        // For paths like "clans/xyz" → "clans"; for "clans/xyz/members/abc" → "clans/members"
+        const buckets = [];
+        for (let i = 0; i < parts.length; i += 2) buckets.push(parts[i]);
+        return buckets.join("/").slice(0, 80);
+    }
 
     function nextFirestoreBudgetWindow(window, now = Date.now()) {
         const startedAt = Number(window?.startedAt);
@@ -1493,6 +1511,8 @@
         firestoreBudgetWindow = nextFirestoreBudgetWindow(firestoreBudgetWindow);
         firestoreReadCount += charged;
         firestoreBudgetWindow.reads += charged;
+        const bucket = bucketLabel(label);
+        hudSessionReadsByLabel.set(bucket, (hudSessionReadsByLabel.get(bucket) || 0) + charged);
         console.log(`[RG HUD] Firestore read +${charged} #${firestoreReadCount} (${label}; ${firestoreBudgetWindow.reads}/${FIRESTORE_READ_BUDGET} in 10m)`);
         if (!firestoreBudgetWindow.readWarned
             && firestoreBudgetWindow.reads > FIRESTORE_READ_BUDGET) {
@@ -1505,6 +1525,8 @@
         firestoreBudgetWindow = nextFirestoreBudgetWindow(firestoreBudgetWindow);
         firestoreWriteCount++;
         firestoreBudgetWindow.writes++;
+        const bucket = bucketLabel(label);
+        hudSessionWritesByLabel.set(bucket, (hudSessionWritesByLabel.get(bucket) || 0) + 1);
         console.log(`[RG HUD] Firestore write #${firestoreWriteCount} (${label}; ${firestoreBudgetWindow.writes}/${FIRESTORE_WRITE_BUDGET} in 10m)`);
         if (!firestoreBudgetWindow.writeWarned
             && firestoreBudgetWindow.writes > FIRESTORE_WRITE_BUDGET) {
@@ -1512,6 +1534,85 @@
             dbgWarn(`Firestore write budget passed (${firestoreBudgetWindow.writes}/${FIRESTORE_WRITE_BUDGET} in 10m)`);
         }
     }
+
+    // ---------- Persistent read-stats telemetry ----------
+    // Every ~5 minutes and on tab unload the HUD uploads its session read/
+    // write breakdown to hud_read_stats/{yyyy-mm-dd}_{sourceUserId}. This
+    // lets us reconstruct which HUD features drove Firestore reads over
+    // a day, not just the aggregate from Firebase's console. Zero-cost
+    // when nothing has changed since the last upload.
+    const HUD_STATS_UPLOAD_INTERVAL_MS = 5 * 60 * 1000;
+    let hudStatsUploadHandle = null;
+    let hudStatsUploadInFlight = false;
+    let hudStatsLastPayloadKey = "";
+
+    function hudStatsToday() {
+        return new Date().toISOString().slice(0, 10);
+    }
+
+    async function uploadHudReadStats({ final = false } = {}) {
+        if (hudStatsUploadInFlight) return;
+        const uid = (typeof myUserId === "function") ? myUserId() : null;
+        if (!uid) return; // no identity yet — can't authenticate the write
+        const fb = firestoreReady;
+        if (!fb) return;
+        const totalReads = firestoreReadCount;
+        const totalWrites = firestoreWriteCount;
+        const perLabelReads = Object.fromEntries(hudSessionReadsByLabel);
+        const perLabelWrites = Object.fromEntries(hudSessionWritesByLabel);
+        // Skip identical payloads (a quiet session doesn't spam writes).
+        // A `final` flush always uploads so the last state is captured.
+        const key = `${totalReads}:${totalWrites}:${JSON.stringify(perLabelReads)}:${JSON.stringify(perLabelWrites)}`;
+        if (!final && key === hudStatsLastPayloadKey) return;
+        hudStatsUploadInFlight = true;
+        try {
+            const date = hudStatsToday();
+            const docId = `${date}_${uid}`;
+            const payload = {
+                date,
+                sourceUserId: uid,
+                deviceId: getDeviceId(),
+                scriptVersion: SCRIPT_VERSION,
+                versionNum: SCRIPT_VERSION_NUM,
+                startedAt: HUD_STATS_SESSION_STARTED_AT,
+                updatedAt: new Date().toISOString(),
+                readTotal: totalReads,
+                writeTotal: totalWrites,
+                perLabelReads,
+                perLabelWrites,
+                lastWriteAt: fb.serverTimestamp(),
+            };
+            const ref = fb.doc(fb.db, "hud_read_stats", docId);
+            // atlasSetDoc goes through the blacklist gate + logWrite, so the
+            // telemetry write itself is counted. Small overhead (1 write per
+            // 5 min per HUD), well below any budget.
+            const wrote = await atlasSetDoc(fb, "hud_read_stats", ref, payload, { merge: true });
+            if (wrote) hudStatsLastPayloadKey = key;
+        } catch (err) {
+            dbg("uploadHudReadStats failed (non-fatal): " + (err && err.message ? err.message : err));
+        } finally {
+            hudStatsUploadInFlight = false;
+        }
+    }
+
+    function scheduleHudStatsUpload() {
+        if (hudStatsUploadHandle != null) return;
+        // First upload happens after the initial interval, giving the HUD a
+        // chance to warm up and produce something worth reporting.
+        hudStatsUploadHandle = setInterval(() => {
+            uploadHudReadStats().catch(() => {});
+        }, HUD_STATS_UPLOAD_INTERVAL_MS);
+        if (typeof window !== "undefined") {
+            const flush = () => { uploadHudReadStats({ final: true }).catch(() => {}); };
+            window.addEventListener("beforeunload", flush);
+            window.addEventListener("pagehide", flush);
+        }
+    }
+
+    // Kick off the uploader after firestoreReady lands. initFirebase() sets
+    // firestoreReady synchronously at end-of-init, so a slightly delayed
+    // scheduler doesn't miss the boot phase.
+    setTimeout(() => scheduleHudStatsUpload(), 15_000);
 
     async function initFirebase() {
         if (!FIREBASE_CONFIG) return null;
