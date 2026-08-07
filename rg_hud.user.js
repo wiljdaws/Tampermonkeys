@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      17.4
+// @version      17.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -356,7 +356,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3612,6 +3612,18 @@
             ? Math.trunc(Number(streakData.streak) || 0)
             : 0;
 
+        // Only send the session fields when we actually have real numbers
+        // for them. On a fresh install (or right after auto-update),
+        // sessionStart isn't set yet and these come back as null.
+        // Firestore rejects the whole write if a field is null when the
+        // rule expects a number, so we just leave the field off.
+        function payloadWithSession(base) {
+            const p = { ...base };
+            if (Number.isFinite(sessionStartedAt)) p.sessionStartedAt = sessionStartedAt;
+            if (Number.isFinite(sessionLastSeen)) p.sessionLastSeen = sessionLastSeen;
+            return p;
+        }
+
         for (const [mode, playlist] of Object.entries(modeToPlaylist)) {
             const mmr = data.ModesGlicko?.[mode]?.displayRating;
             if (typeof mmr !== "number") continue; // never played this mode
@@ -3619,28 +3631,24 @@
                 ? sessionStart[mode]
                 : null;
             const sessionMmrDelta = sessionBase === null ? 0 : Math.trunc(mmr - sessionBase);
-            await upsertIfChanged(fb, sourceUserId, playlist, {
+            await upsertIfChanged(fb, sourceUserId, playlist, payloadWithSession({
                 name: shownName,
                 mmr,
                 sessionMmrDelta,
-                sessionStartedAt,
-                sessionLastSeen,
                 currentStreak: publishedStreak,
-            });
+            }));
         }
 
         const modes = ["Competitive3v3", "Competitive2v2", "Competitive1v1", "Casual"];
         const totalWins = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.wins ?? 0), 0);
         const totalMatches = modes.reduce((sum, m) => sum + (data.ModesData?.[m]?.matchesPlayed ?? 0), 0);
 
-        await upsertIfChanged(fb, sourceUserId, "wins", {
+        await upsertIfChanged(fb, sourceUserId, "wins", payloadWithSession({
             name: shownName,
             wins: totalWins,
             matches: totalMatches,
             currentStreak: publishedStreak,
-            sessionStartedAt,
-            sessionLastSeen,
-        });
+        }));
       } catch (e) {
         dbg("syncToRealLeaderboard threw: " + (e && e.message ? e.message : e));
       }
