@@ -333,6 +333,17 @@ export function buildJsonRow(raw, rank, playlist) {
   if (Number.isFinite(Number(raw?.currentStreak))) {
     row.currentStreak = Math.trunc(Number(raw.currentStreak));
   }
+  // Session fields drive "Last played N ago" and the +delta pill on the site.
+  // Without them every row hovers to "Last played: unknown".
+  if (Number.isFinite(Number(raw?.sessionStartedAt))) {
+    row.sessionStartedAt = Math.trunc(Number(raw.sessionStartedAt));
+  }
+  if (Number.isFinite(Number(raw?.sessionLastSeen))) {
+    row.sessionLastSeen = Math.trunc(Number(raw.sessionLastSeen));
+  }
+  if (Number.isFinite(Number(raw?.sessionMmrDelta))) {
+    row.sessionMmrDelta = Math.trunc(Number(raw.sessionMmrDelta));
+  }
   return row;
 }
 
