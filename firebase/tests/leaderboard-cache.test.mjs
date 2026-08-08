@@ -27,6 +27,7 @@ test("parseCacheArguments defaults to dry-run and validates playlists", () => {
       emitJson: false,
       skipFirestore: false,
       jsonPrefix: "leaderboard/",
+      outputDir: "",
     },
   );
   assert.equal(parseCacheArguments(["--help"]).help, true);
