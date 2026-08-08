@@ -1041,6 +1041,75 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     }
   }
 
+  // Emit a compact per-run status + rolling history for the admin panel.
+  // Sits alongside the per-playlist state files under --state-dir.
+  if (parsed.stateDir && result.stateSummary?.length) {
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const path = await import("node:path");
+    const statusPath = path.join(parsed.stateDir, "status.json");
+    const historyPath = path.join(parsed.stateDir, "history.json");
+    const builtAt = new Date().toISOString();
+    const perPlaylist = {};
+    let deltaTotal = 0;
+    let snapshotTotal = 0;
+    let anyFallback = false;
+    let anyFull = false;
+    for (const entry of result.stateSummary) {
+      const deltaRows = entry.deltaRows ?? entry.snapshotRows;
+      perPlaylist[entry.playlist] = {
+        mode: entry.mode,
+        deltaRows,
+        snapshotRows: entry.snapshotRows,
+        since: entry.nextSince,
+      };
+      deltaTotal += deltaRows || 0;
+      snapshotTotal += entry.snapshotRows || 0;
+      if (entry.mode === "full-fallback") anyFallback = true;
+      if (entry.mode === "full") anyFull = true;
+    }
+    const readsProjectedFullScan = snapshotTotal;
+    const readsSaved = Math.max(0, readsProjectedFullScan - deltaTotal);
+    const readsSavedPct = readsProjectedFullScan > 0
+      ? Math.round((readsSaved / readsProjectedFullScan) * 1000) / 10
+      : 0;
+    const status = {
+      builtAt,
+      forceFull: Boolean(parsed.forceFull),
+      overallMode: anyFallback ? "full-fallback" : anyFull ? "full" : "delta",
+      readsThisRun: deltaTotal,
+      readsProjectedFullScan,
+      readsSaved,
+      readsSavedPct,
+      playlists: perPlaylist,
+    };
+    await writeFile(statusPath, JSON.stringify(status), "utf8");
+    console.log(`STATUS ${statusPath} mode=${status.overallMode} reads=${deltaTotal}/${readsProjectedFullScan}`);
+
+    // Rolling last-96 history so the admin panel can sparkline delta
+    // counts / reads-saved over the last day (at hourly cadence) or the
+    // last 24h (at 15-min cadence).
+    let history = { runs: [] };
+    try {
+      const raw = await readFile(historyPath, "utf8");
+      const parsedHistory = JSON.parse(raw);
+      if (Array.isArray(parsedHistory?.runs)) history = parsedHistory;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    history.runs.push({
+      builtAt,
+      overallMode: status.overallMode,
+      reads: deltaTotal,
+      readsSaved,
+      playlists: Object.fromEntries(
+        Object.entries(perPlaylist).map(([pl, v]) => [pl, v.deltaRows]),
+      ),
+    });
+    if (history.runs.length > 96) history.runs = history.runs.slice(-96);
+    await writeFile(historyPath, JSON.stringify(history), "utf8");
+    console.log(`HISTORY ${historyPath} entries=${history.runs.length}`);
+  }
+
   for (const plan of result.plans) {
     const bytes = estimateDocumentBytes(plan.document);
     console.log(
