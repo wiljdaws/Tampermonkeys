@@ -15,13 +15,22 @@ name: Publish leaderboard JSON
 
 on:
   schedule:
+    # Hourly CDC delta publish — only fetches docs that changed since last run.
     - cron: "0 * * * *"
+    # Daily full re-scan at 10:13 UTC (3:13 AM CDT) — catches deletions and
+    # any drift that a delta-only pipeline can't detect.
+    - cron: "13 10 * * *"
   workflow_dispatch:
     inputs:
       project:
         description: GCP project ID
         required: false
         default: rgleaderboard
+      force_full:
+        description: Force full re-scan (ignore CDC state)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -64,15 +73,6 @@ jobs:
         with:
           project_id: ${{ env.PROJECT }}
 
-      - name: Build JSON blobs
-        working-directory: firebase
-        run: |
-          npm run build:leaderboard-cache -- \
-            --project "$PROJECT" \
-            --emit-json \
-            --skip-firestore \
-            --output-dir "$GITHUB_WORKSPACE/out"
-
       - name: Check out site repo (data branch)
         uses: actions/checkout@v4
         with:
@@ -109,6 +109,37 @@ jobs:
           git -c user.name="rgleaderboard-bot" -c user.email="bot@rgleaderboard" commit -m "chore: init data branch"
           git push origin "$DATA_BRANCH"
 
+      - name: Decide CDC mode
+        id: cdc_mode
+        run: |
+          # Force a full re-scan on the daily 10:13 UTC cron entry or when a
+          # workflow_dispatch caller sets force_full=true. Everything else
+          # runs the CDC delta path (--state-dir points at persisted state
+          # so the build script auto-falls-back to full when state is empty).
+          FORCE_FULL="false"
+          if [ "${{ github.event.schedule }}" = "13 10 * * *" ]; then
+            FORCE_FULL="true"
+          fi
+          if [ "${{ github.event.inputs.force_full }}" = "true" ]; then
+            FORCE_FULL="true"
+          fi
+          echo "force_full=$FORCE_FULL" >> "$GITHUB_OUTPUT"
+          echo "Force full: $FORCE_FULL"
+
+      - name: Build JSON blobs
+        working-directory: firebase
+        env:
+          FORCE_FULL_FLAG: ${{ steps.cdc_mode.outputs.force_full == 'true' && '--force-full' || '' }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/site-repo/state"
+          npm run build:leaderboard-cache -- \
+            --project "$PROJECT" \
+            --emit-json \
+            --skip-firestore \
+            --output-dir "$GITHUB_WORKSPACE/out" \
+            --state-dir "$GITHUB_WORKSPACE/site-repo/state" \
+            $FORCE_FULL_FLAG
+
       - name: Copy JSON blobs into site repo
         run: |
           mkdir -p "$GITHUB_WORKSPACE/site-repo/leaderboard"
@@ -120,7 +151,7 @@ jobs:
         run: |
           git config user.name "rgleaderboard-bot"
           git config user.email "bot@rgleaderboard"
-          git add leaderboard/
+          git add leaderboard/ state/
           if git diff --staged --quiet; then
             echo "No changes to commit"
             exit 0

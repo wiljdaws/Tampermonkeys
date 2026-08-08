@@ -105,6 +105,8 @@ export function parseCacheArguments(args) {
   let skipFirestore = false;
   let jsonPrefix = "leaderboard/";
   let outputDir = "";
+  let stateDir = "";
+  let forceFull = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -142,6 +144,22 @@ export function parseCacheArguments(args) {
     }
     if (argument.startsWith("--output-dir=")) {
       outputDir = argument.slice("--output-dir=".length);
+      continue;
+    }
+    if (argument === "--state-dir") {
+      if (!args[index + 1] || args[index + 1].startsWith("-")) {
+        throw new Error("--state-dir requires a path");
+      }
+      stateDir = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--state-dir=")) {
+      stateDir = argument.slice("--state-dir=".length);
+      continue;
+    }
+    if (argument === "--force-full") {
+      forceFull = true;
       continue;
     }
     if (argument === "--project") {
@@ -232,11 +250,13 @@ export function parseCacheArguments(args) {
     skipFirestore,
     jsonPrefix,
     outputDir,
+    stateDir,
+    forceFull,
   };
 }
 
 export function compactLeaderboardRow(raw, rank) {
-  const uid = String(raw?.sourceUserId || raw?.uid || "").trim();
+  const uid = String(raw?.sourceUserId || raw?.uid || raw?._docId || "").trim();
   const name = String(raw?.name || "").trim();
   const mmr = Number(raw?.mmr);
   if (!uid || !Number.isFinite(mmr)) return null;
@@ -286,7 +306,7 @@ export function buildCacheDocument(playlist, rows, {
 // currentStreak is deliberately included but the caller should treat it as
 // possibly stale — the JSON is rebuilt on a debounced timer, not live.
 export function buildJsonRow(raw, rank, playlist) {
-  const uid = String(raw?.sourceUserId || raw?.uid || "").trim();
+  const uid = String(raw?.sourceUserId || raw?.uid || raw?._docId || "").trim();
   const name = String(raw?.name || "").trim();
   if (!uid) return null;
   const row = {
@@ -525,9 +545,114 @@ export async function queryPlaylistRows(
   for (const entry of body || []) {
     if (!entry?.document) continue;
     const decoded = decodeFirestoreDocument(entry.document);
-    rows.push(decoded.fields);
+    // Carry the doc id + updateTime alongside the fields. The id is a
+    // last-resort uid fallback for legacy admin rows that never had a
+    // sourceUserId written; updateTime is what the CDC delta query
+    // orders by.
+    rows.push({ ...decoded.fields, _docId: decoded.id, _updateTime: decoded.updateTime });
   }
   return rows;
+}
+
+// CDC delta query: pull only rows whose lastWriteAt advanced past `since`.
+// Requires the composite index (playlist ASC, lastWriteAt ASC). Callers
+// should fall back to queryPlaylistRows on FAILED_PRECONDITION so a
+// missing index degrades gracefully to full-scan behavior.
+export async function queryPlaylistDelta(
+  fetchImpl,
+  token,
+  project,
+  playlist,
+  since,
+) {
+  const body = await apiJson(
+    fetchImpl,
+    token,
+    `${documentsBase(project)}:runQuery`,
+    {
+      method: "POST",
+      quotaProject: project,
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: "leaderboard" }],
+          where: {
+            compositeFilter: {
+              op: "AND",
+              filters: [
+                {
+                  fieldFilter: {
+                    field: { fieldPath: "playlist" },
+                    op: "EQUAL",
+                    value: { stringValue: playlist },
+                  },
+                },
+                {
+                  fieldFilter: {
+                    field: { fieldPath: "lastWriteAt" },
+                    op: "GREATER_THAN",
+                    value: { timestampValue: since },
+                  },
+                },
+              ],
+            },
+          },
+          orderBy: [
+            { field: { fieldPath: "lastWriteAt" }, direction: "ASCENDING" },
+          ],
+        },
+      }),
+    },
+  );
+  const rows = [];
+  for (const entry of body || []) {
+    if (!entry?.document) continue;
+    const decoded = decodeFirestoreDocument(entry.document);
+    rows.push({ ...decoded.fields, _docId: decoded.id, _updateTime: decoded.updateTime });
+  }
+  return rows;
+}
+
+// Merge a delta of changed rows into a previous snapshot (upsert by doc id).
+// Rows without _docId are ignored — they'd have no stable key.
+export function mergeSnapshot(previous, delta) {
+  const byId = new Map();
+  for (const row of Array.isArray(previous) ? previous : []) {
+    if (row?._docId) byId.set(row._docId, row);
+  }
+  for (const row of Array.isArray(delta) ? delta : []) {
+    if (row?._docId) byId.set(row._docId, row);
+  }
+  return Array.from(byId.values());
+}
+
+// Sort a snapshot the same way Firestore would for the playlist's leaderboard.
+// Wins uses matches as a secondary tiebreaker to match the site's ordering.
+export function sortSnapshotForPlaylist(rows, playlist) {
+  const primary = playlist === "wins" ? "wins" : "mmr";
+  return [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {
+    const aValue = Number(a?.[primary]);
+    const bValue = Number(b?.[primary]);
+    const aFinite = Number.isFinite(aValue);
+    const bFinite = Number.isFinite(bValue);
+    if (!aFinite && !bFinite) return 0;
+    if (!aFinite) return 1;
+    if (!bFinite) return -1;
+    return bValue - aValue;
+  });
+}
+
+// Pick the max `lastWriteAt` timestamp across a set of rows. Used to
+// advance the per-playlist "since" cursor after a successful publish.
+// decodeFirestoreDocument wraps timestamps as { __firestoreType, value };
+// accept plain RFC3339 strings too for tests that pass raw rows.
+export function maxLastWriteAt(rows) {
+  let max = null;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const raw = row?.lastWriteAt;
+    const ts = typeof raw === "string" ? raw : raw?.value;
+    if (typeof ts === "string" && (!max || ts > max)) max = ts;
+  }
+  return max;
 }
 
 export async function readCacheDocument(
@@ -624,6 +749,9 @@ export async function buildLeaderboardCaches({
   jsonPrefix = "leaderboard/",
   uploadJsonImpl = null,
   onJsonBlob = null,
+  loadStateFor = null,
+  saveStateFor = null,
+  forceFull = false,
 }) {
   if (typeof fetchImpl !== "function") {
     throw new Error("fetch is required");
@@ -634,15 +762,70 @@ export async function buildLeaderboardCaches({
   const writes = [];
   const jsonBlobs = [];
   const uploads = [];
+  const stateSummary = [];
 
   for (const playlist of playlists) {
-    const rows = await queryPlaylistRows(
-      fetchImpl,
-      token,
-      project,
+    // CDC path: if we have a prior snapshot + a "since" cursor, pull only the
+    // rows whose lastWriteAt advanced past it and merge into the snapshot.
+    // Falls back to full-scan on missing state, forceFull, or index errors.
+    const priorState = (!forceFull && typeof loadStateFor === "function")
+      ? (await loadStateFor(playlist)) || {}
+      : {};
+    const priorSnapshot = Array.isArray(priorState.snapshot) ? priorState.snapshot : null;
+    const priorSince = typeof priorState.since === "string" ? priorState.since : null;
+
+    let rows;
+    let deltaRows = null;
+    let mode = "full";
+    if (priorSnapshot && priorSince && !forceFull) {
+      try {
+        deltaRows = await queryPlaylistDelta(
+          fetchImpl,
+          token,
+          project,
+          playlist,
+          priorSince,
+        );
+        rows = mergeSnapshot(priorSnapshot, deltaRows);
+        mode = "delta";
+      } catch (error) {
+        const message = error?.message || String(error);
+        if (/FAILED_PRECONDITION|requires an index/i.test(message)) {
+          console.log(`[cdc:${playlist}] delta query rejected (index not ready?), falling back to full scan`);
+          rows = await queryPlaylistRows(fetchImpl, token, project, playlist, top);
+          mode = "full-fallback";
+        } else {
+          throw error;
+        }
+      }
+    } else {
+      rows = await queryPlaylistRows(fetchImpl, token, project, playlist, top);
+    }
+
+    // Sort by playlist's primary ranking field and slice to top-N for the
+    // published outputs. The full merged snapshot (rows) is what we hand
+    // back to saveStateFor so the next run can diff against it.
+    const sortedForPlaylist = sortSnapshotForPlaylist(rows, playlist);
+    const topSlice = sortedForPlaylist.slice(0, top);
+
+    // Advance the cursor to the max lastWriteAt we saw. Falls back to the
+    // prior cursor if this run produced no rows (nothing to advance past).
+    const nextSince = maxLastWriteAt(mode === "delta" ? deltaRows : rows)
+      || priorSince
+      || builtAt;
+    stateSummary.push({
       playlist,
-      top,
-    );
+      mode,
+      snapshotRows: rows.length,
+      deltaRows: deltaRows?.length ?? null,
+      nextSince,
+    });
+    if (typeof saveStateFor === "function") {
+      await saveStateFor(playlist, { since: nextSince, snapshot: rows });
+    }
+
+    // Downstream steps see the sorted-and-sliced top-N, same as before.
+    rows = topSlice;
 
     // Firestore leaderboard_cache write path (unchanged behavior).
     if (!skipFirestore) {
@@ -753,6 +936,7 @@ export async function buildLeaderboardCaches({
     commitResult,
     jsonBlobs,
     uploads,
+    stateSummary,
   };
 }
 
@@ -785,6 +969,39 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     uploadJsonImpl = await resolveUploader(options);
   }
 
+  // When --state-dir is set, wire up filesystem-backed CDC state I/O so the
+  // build script only fetches docs that changed since the last publish.
+  // Absence of the dir (or of state files inside it) triggers a full scan
+  // and creates the files for the next run.
+  let loadStateFor = null;
+  let saveStateFor = null;
+  const pendingSaves = [];
+  if (parsed.stateDir) {
+    const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+    const path = await import("node:path");
+    await mkdir(parsed.stateDir, { recursive: true });
+    const statePath = playlist => path.join(parsed.stateDir, `${playlist}.json`);
+    loadStateFor = async playlist => {
+      try {
+        const text = await readFile(statePath(playlist), "utf8");
+        const parsedState = JSON.parse(text);
+        return {
+          since: typeof parsedState?.since === "string" ? parsedState.since : null,
+          snapshot: Array.isArray(parsedState?.snapshot) ? parsedState.snapshot : null,
+        };
+      } catch (error) {
+        if (error?.code === "ENOENT") return {};
+        throw error;
+      }
+    };
+    saveStateFor = async (playlist, state) => {
+      // Defer the write until after the successful publish so a failure
+      // partway through doesn't leave the cursor advanced past docs we
+      // didn't actually process.
+      pendingSaves.push({ playlist, path: statePath(playlist), state });
+    };
+  }
+
   const result = await buildLeaderboardCaches({
     project: parsed.project,
     apply: parsed.apply,
@@ -794,6 +1011,9 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     skipFirestore: parsed.skipFirestore,
     jsonPrefix: parsed.jsonPrefix,
     uploadJsonImpl,
+    loadStateFor,
+    saveStateFor,
+    forceFull: parsed.forceFull,
     ...options,
   });
 
@@ -806,6 +1026,18 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       const body = JSON.stringify(blob.blob);
       await writeFile(filePath, body, "utf8");
       console.log(`WROTE ${filePath} rows=${blob.blob.rowCount} bytes=${body.length}`);
+    }
+  }
+
+  // Flush deferred CDC state writes now that the publish outputs landed.
+  // If disk writes above failed, we never reach this point — pending
+  // state stays unwritten and the next run replays the same window.
+  if (pendingSaves.length) {
+    const { writeFile } = await import("node:fs/promises");
+    for (const pending of pendingSaves) {
+      const body = JSON.stringify(pending.state);
+      await writeFile(pending.path, body, "utf8");
+      console.log(`STATE ${pending.path} since=${pending.state.since} snapshotRows=${pending.state.snapshot?.length ?? 0}`);
     }
   }
 
@@ -839,6 +1071,13 @@ export async function main(argv = process.argv.slice(2), options = {}) {
         console.log(`FAILED ${upload.key}: ${upload.error}`);
       }
     }
+  }
+
+  for (const entry of result.stateSummary || []) {
+    const deltaLabel = entry.deltaRows == null ? "-" : entry.deltaRows;
+    console.log(
+      `CDC ${entry.playlist} mode=${entry.mode} snapshotRows=${entry.snapshotRows} deltaRows=${deltaLabel} nextSince=${entry.nextSince}`,
+    );
   }
 
   const firestoreSummary = parsed.skipFirestore

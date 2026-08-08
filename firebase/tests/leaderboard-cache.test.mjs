@@ -10,8 +10,11 @@ import {
   buildLeaderboardCaches,
   buildLeaderboardJson,
   compactLeaderboardRow,
+  maxLastWriteAt,
+  mergeSnapshot,
   parseCacheArguments,
   planCacheWrite,
+  sortSnapshotForPlaylist,
   sourceHashForRows,
 } from "../scripts/build-leaderboard-cache.mjs";
 
@@ -28,6 +31,8 @@ test("parseCacheArguments defaults to dry-run and validates playlists", () => {
       skipFirestore: false,
       jsonPrefix: "leaderboard/",
       outputDir: "",
+      stateDir: "",
+      forceFull: false,
     },
   );
   assert.equal(parseCacheArguments(["--help"]).help, true);
@@ -230,6 +235,75 @@ test("buildJsonRow preserves flag/icons/glow and switches shape for wins", () =>
     matches: 100,
   });
   assert.equal(buildJsonRow({ name: "no uid" }, 1, "1v1"), null);
+
+  // Legacy admin rows have no sourceUserId/uid; fall back to the Firestore
+  // doc id so they still make it into the JSON instead of leaving a gap.
+  const legacyRow = buildJsonRow({
+    _docId: "manual_top_dog",
+    name: "Legacy Admin",
+    mmr: 22000,
+  }, 1, "1v1");
+  assert.equal(legacyRow.uid, "manual_top_dog");
+  assert.equal(legacyRow.mmr, 22000);
+
+  const legacyCompact = compactLeaderboardRow({
+    _docId: "manual_top_dog",
+    name: "Legacy Admin",
+    mmr: 22000,
+  }, 1);
+  assert.equal(legacyCompact.uid, "manual_top_dog");
+});
+
+test("mergeSnapshot upserts by _docId and preserves untouched rows", () => {
+  const prior = [
+    { _docId: "a", name: "Ace", mmr: 1500 },
+    { _docId: "b", name: "Bravo", mmr: 1400 },
+  ];
+  const delta = [
+    { _docId: "b", name: "Bravo", mmr: 1450 },  // updated
+    { _docId: "c", name: "Charlie", mmr: 1350 }, // new
+  ];
+  const merged = mergeSnapshot(prior, delta);
+  assert.equal(merged.length, 3);
+  const byId = new Map(merged.map(row => [row._docId, row]));
+  assert.equal(byId.get("a").mmr, 1500);
+  assert.equal(byId.get("b").mmr, 1450);
+  assert.equal(byId.get("c").mmr, 1350);
+});
+
+test("mergeSnapshot ignores rows without _docId", () => {
+  const merged = mergeSnapshot(
+    [{ _docId: "a", mmr: 1 }],
+    [{ name: "no-id" }, { _docId: "b", mmr: 2 }],
+  );
+  assert.equal(merged.length, 2);
+});
+
+test("sortSnapshotForPlaylist sorts by mmr desc for ranked, wins desc for wins", () => {
+  const rows = [
+    { _docId: "a", mmr: 100, wins: 5 },
+    { _docId: "b", mmr: 300, wins: 2 },
+    { _docId: "c", mmr: 200, wins: 8 },
+  ];
+  const byMmr = sortSnapshotForPlaylist(rows, "1v1");
+  assert.deepEqual(byMmr.map(r => r._docId), ["b", "c", "a"]);
+  const byWins = sortSnapshotForPlaylist(rows, "wins");
+  assert.deepEqual(byWins.map(r => r._docId), ["c", "a", "b"]);
+});
+
+test("maxLastWriteAt handles decoded timestamp objects and strings", () => {
+  const wrapped = [
+    { lastWriteAt: { __firestoreType: "timestamp", value: "2026-08-08T20:00:00Z" } },
+    { lastWriteAt: { __firestoreType: "timestamp", value: "2026-08-08T21:00:00Z" } },
+    { lastWriteAt: null },
+    { /* no lastWriteAt */ },
+  ];
+  assert.equal(maxLastWriteAt(wrapped), "2026-08-08T21:00:00Z");
+  assert.equal(
+    maxLastWriteAt([{ lastWriteAt: "2026-08-08T22:00:00Z" }]),
+    "2026-08-08T22:00:00Z",
+  );
+  assert.equal(maxLastWriteAt([]), null);
 });
 
 test("buildLeaderboardJson hashes over ranking fields only", () => {
