@@ -3728,6 +3728,14 @@
                 dbg("match-end clan sync skipped: Firebase unavailable");
                 return;
             }
+            // Standings don't move outside an active event, so the write
+            // wouldn't affect anything anyone can see. Skip it and save the
+            // read+write on every match-end during the ~50 weeks/yr of downtime.
+            await loadEventConfig(fb);
+            if (eventPhase() !== "active") {
+                dbg("match-end clan sync skipped: no active event");
+                return;
+            }
             const result = await queueClanMMRSync(fb, data, {
                 force: true,
                 reason: "matchEnd",
@@ -4090,6 +4098,45 @@
     let ranksFetchedThisSession = false;
     const lastRankedMMR = new Map(); // playlist -> mmr at last query
 
+    // Cache the last-known rank+MMR per account in localStorage so a HUD reload
+    // doesn't force a fresh Firestore fetch. Your rank only meaningfully moves
+    // when you play — match-end force=true takes care of that. 24h TTL is just
+    // a safety net against drift if someone leapfrogs you while you're idle.
+    const RANK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+    function rankCacheKey(uid) { return `rgHudRankCache_${uid}`; }
+
+    function hydrateRankCache(uid) {
+        if (!uid) return false;
+        try {
+            const raw = localStorage.getItem(rankCacheKey(uid));
+            if (!raw) return false;
+            const parsed = JSON.parse(raw);
+            if (!parsed?.ranks || typeof parsed.savedAt !== "number") return false;
+            if (Date.now() - parsed.savedAt > RANK_CACHE_TTL_MS) return false;
+            for (const [playlist, entry] of Object.entries(parsed.ranks)) {
+                if (typeof entry?.rank === "number") cachedRanks.set(playlist, entry.rank);
+                if (typeof entry?.mmr === "number") lastRankedMMR.set(playlist, entry.mmr);
+                if (typeof entry?.gap === "number") cachedMmrToNext.set(playlist, entry.gap);
+            }
+            return true;
+        } catch { return false; }
+    }
+
+    function persistRankCache(uid) {
+        if (!uid) return;
+        try {
+            const ranks = {};
+            for (const [playlist, rank] of cachedRanks) {
+                ranks[playlist] = {
+                    rank,
+                    mmr: lastRankedMMR.get(playlist),
+                    gap: cachedMmrToNext.get(playlist),
+                };
+            }
+            localStorage.setItem(rankCacheKey(uid), JSON.stringify({ ranks, savedAt: Date.now() }));
+        } catch {}
+    }
+
     function resetAccountRankState() {
         cachedRanks.clear();
         cachedMmrToNext.clear();
@@ -4099,6 +4146,12 @@
     }
 
     async function refreshRanks(fb, data, force = false) {
+        // Warm boot: pull the last saved ranks for this account so the first
+        // refresh doesn't hit Firestore if MMR hasn't changed since last visit.
+        if (!ranksFetchedThisSession && data?.Id && hydrateRankCache(data.Id)) {
+            ranksFetchedThisSession = true;
+            if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
+        }
         if (!force && ranksFetchedThisSession) return;
 
         const modeToPlaylist = {
@@ -4114,8 +4167,8 @@
 
                 // skip modes whose MMR hasn't moved since last query. usually
                 // skips 2 of 3 modes on a match-triggered refresh, saves ~4
-                // reads/match. cold session still refreshes everything.
-                if (ranksFetchedThisSession && lastRankedMMR.get(playlist) === mmr) continue;
+                // reads/match. hydrated cache extends this across sessions.
+                if (lastRankedMMR.get(playlist) === mmr) continue;
 
                 const q = fb.query(
                     fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
@@ -4153,6 +4206,7 @@
             }
 
             ranksFetchedThisSession = true;
+            persistRankCache(data?.Id);
 
             checkRankTransitions();
 
@@ -4858,6 +4912,9 @@
     let clanDirectory = [];     // lightweight list of all clans for browsing
     let clanLoaded = false;
     let clanLoadedForAccount = null; // which account the above was loaded for
+    let clanLoadInFlight = null;     // shared promise so parallel callers dedupe
+    let clanLoadFailedAt = 0;        // ms; skip retries until cooldown passes
+    const CLAN_LOAD_FAILURE_COOLDOWN_MS = 60_000;
 
     // reads events/current.maxMembers so the cap can be changed live
     const DEFAULT_CLAN_MAX_MEMBERS = 5;
@@ -5179,18 +5236,38 @@
     }
 
     async function loadClanData(force = false) {
+        // Parallel callers (submit + updateMyClanMMR fire together at match-end)
+        // share one round trip instead of each issuing their own reads.
+        if (clanLoadInFlight) return clanLoadInFlight;
+        clanLoadInFlight = loadClanDataInner(force).finally(() => {
+            clanLoadInFlight = null;
+        });
+        return clanLoadInFlight;
+    }
+
+    async function loadClanDataInner(force = false) {
         const uid = myUserId();
         if (!uid) return;
 
-        // new account since last load, reset
+        // new account since last load, reset (and drop any pending cooldown
+        // so a fresh account isn't blocked by the previous one's failure)
         if (clanLoadedForAccount !== uid) {
             force = true;
             myClan = null;
             clanDirectory = [];
             clanLoaded = false;
+            clanLoadFailedAt = 0;
         }
 
         if (clanLoaded && !force) return;
+
+        // Failure cooldown: after a rejected read (e.g. Firebase quota), skip
+        // retries for a minute so each match-end doesn't hammer the same failure.
+        if (clanLoadFailedAt
+            && Date.now() - clanLoadFailedAt < CLAN_LOAD_FAILURE_COOLDOWN_MS) {
+            return;
+        }
+
         const fb = await initFirebase();
         if (!fb) return;
 
@@ -5230,14 +5307,21 @@
                 mine = findDirectoryMembership(clanDirectory, uid);
             }
             if (mine?.id) {
-                const clanSnap = await fb.getDoc(
-                    fb.doc(fb.db, "clans", mine.id)
-                );
-                if (clanSnap.exists()) {
-                    myClan = sanitizeClanDoc({
-                        id: mine.id,
-                        ...clanSnap.data(),
-                    });
+                // Skip the one-shot fetch if the live clan listener is already
+                // streaming this clan — the in-memory myClan is fresher than
+                // a getDoc would be anyway.
+                const listenerCoversClan =
+                    _clanListenerId === mine.id && myClan?.id === mine.id;
+                if (!listenerCoversClan) {
+                    const clanSnap = await fb.getDoc(
+                        fb.doc(fb.db, "clans", mine.id)
+                    );
+                    if (clanSnap.exists()) {
+                        myClan = sanitizeClanDoc({
+                            id: mine.id,
+                            ...clanSnap.data(),
+                        });
+                    }
                 }
             }
             if (myClan) {
@@ -5276,7 +5360,9 @@
             }
             clanLoaded = true;
             clanLoadedForAccount = uid;
+            clanLoadFailedAt = 0;
         } catch (e) {
+            clanLoadFailedAt = Date.now();
             dbg("loadClanData failed: " + (e && e.message ? e.message : e));
             console.warn("[RG HUD] Clan load failed:", e);
         }
