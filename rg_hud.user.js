@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      17.6
+// @version      17.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3679,14 +3679,9 @@
             const mmr = data.ModesGlicko?.[mode]?.displayRating;
             if (typeof mmr !== "number") continue; // never played this mode
 
-            // Skip when this playlist's MMR is unchanged since the last write.
-            // Restores the original "3v3 match only touches 3v3+wins" design
-            // — before this guard, sessionLastSeen and currentStreak (both
-            // session-total values) advanced on every match and re-triggered
-            // a write on every playlist doc, forcing the CDC publisher to
-            // read all 4 docs per active player instead of the 1–2 that
-            // actually changed. First-ever write for a playlist is never
-            // skipped (no cached state to compare against).
+            // Skip if MMR hasn't changed for this playlist since we last
+            // wrote it — session-total fields kept re-triggering writes on
+            // every doc even when only one mode was actually played.
             const stateKey = `${sourceUserId}_${playlist}`;
             const priorRaw = lastEntryState.get(stateKey);
             if (priorRaw) {

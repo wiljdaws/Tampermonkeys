@@ -545,19 +545,14 @@ export async function queryPlaylistRows(
   for (const entry of body || []) {
     if (!entry?.document) continue;
     const decoded = decodeFirestoreDocument(entry.document);
-    // Carry the doc id + updateTime alongside the fields. The id is a
-    // last-resort uid fallback for legacy admin rows that never had a
-    // sourceUserId written; updateTime is what the CDC delta query
-    // orders by.
+    // _docId is a uid fallback for legacy admin rows with no sourceUserId.
     rows.push({ ...decoded.fields, _docId: decoded.id, _updateTime: decoded.updateTime });
   }
   return rows;
 }
 
-// CDC delta query: pull only rows whose lastWriteAt advanced past `since`.
-// Requires the composite index (playlist ASC, lastWriteAt ASC). Callers
-// should fall back to queryPlaylistRows on FAILED_PRECONDITION so a
-// missing index degrades gracefully to full-scan behavior.
+// Only pull rows that changed since `since`. Needs the (playlist,
+// lastWriteAt) composite index; callers fall back to full-scan if not ready.
 export async function queryPlaylistDelta(
   fetchImpl,
   token,
@@ -612,8 +607,7 @@ export async function queryPlaylistDelta(
   return rows;
 }
 
-// Merge a delta of changed rows into a previous snapshot (upsert by doc id).
-// Rows without _docId are ignored — they'd have no stable key.
+// Upsert changed rows into the previous snapshot by doc id.
 export function mergeSnapshot(previous, delta) {
   const byId = new Map();
   for (const row of Array.isArray(previous) ? previous : []) {
@@ -625,8 +619,7 @@ export function mergeSnapshot(previous, delta) {
   return Array.from(byId.values());
 }
 
-// Sort a snapshot the same way Firestore would for the playlist's leaderboard.
-// Wins uses matches as a secondary tiebreaker to match the site's ordering.
+// Sort by the playlist's primary ranking field, desc.
 export function sortSnapshotForPlaylist(rows, playlist) {
   const primary = playlist === "wins" ? "wins" : "mmr";
   return [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {
@@ -641,10 +634,7 @@ export function sortSnapshotForPlaylist(rows, playlist) {
   });
 }
 
-// Pick the max `lastWriteAt` timestamp across a set of rows. Used to
-// advance the per-playlist "since" cursor after a successful publish.
-// decodeFirestoreDocument wraps timestamps as { __firestoreType, value };
-// accept plain RFC3339 strings too for tests that pass raw rows.
+// Newest lastWriteAt across the batch — becomes next "since" cursor.
 export function maxLastWriteAt(rows) {
   let max = null;
   for (const row of Array.isArray(rows) ? rows : []) {
@@ -765,9 +755,8 @@ export async function buildLeaderboardCaches({
   const stateSummary = [];
 
   for (const playlist of playlists) {
-    // CDC path: if we have a prior snapshot + a "since" cursor, pull only the
-    // rows whose lastWriteAt advanced past it and merge into the snapshot.
-    // Falls back to full-scan on missing state, forceFull, or index errors.
+    // If prior state exists, pull only what changed since then. Otherwise
+    // (or on --force-full / index-not-ready) do a full scan.
     const priorState = (!forceFull && typeof loadStateFor === "function")
       ? (await loadStateFor(playlist)) || {}
       : {};
@@ -802,14 +791,11 @@ export async function buildLeaderboardCaches({
       rows = await queryPlaylistRows(fetchImpl, token, project, playlist, top);
     }
 
-    // Sort by playlist's primary ranking field and slice to top-N for the
-    // published outputs. The full merged snapshot (rows) is what we hand
-    // back to saveStateFor so the next run can diff against it.
+    // Full snapshot goes back to saveStateFor; top-N slice is what we publish.
     const sortedForPlaylist = sortSnapshotForPlaylist(rows, playlist);
     const topSlice = sortedForPlaylist.slice(0, top);
 
-    // Advance the cursor to the max lastWriteAt we saw. Falls back to the
-    // prior cursor if this run produced no rows (nothing to advance past).
+    // Advance the cursor; keep the prior one if no rows came back this run.
     const nextSince = maxLastWriteAt(mode === "delta" ? deltaRows : rows)
       || priorSince
       || builtAt;
@@ -969,10 +955,8 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     uploadJsonImpl = await resolveUploader(options);
   }
 
-  // When --state-dir is set, wire up filesystem-backed CDC state I/O so the
-  // build script only fetches docs that changed since the last publish.
-  // Absence of the dir (or of state files inside it) triggers a full scan
-  // and creates the files for the next run.
+  // --state-dir turns on CDC. Missing state files = full scan + write them
+  // for next time.
   let loadStateFor = null;
   let saveStateFor = null;
   const pendingSaves = [];
@@ -995,9 +979,8 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       }
     };
     saveStateFor = async (playlist, state) => {
-      // Defer the write until after the successful publish so a failure
-      // partway through doesn't leave the cursor advanced past docs we
-      // didn't actually process.
+      // Defer until after publish succeeds so a mid-run crash doesn't
+      // advance the cursor past unprocessed docs.
       pendingSaves.push({ playlist, path: statePath(playlist), state });
     };
   }
@@ -1029,9 +1012,7 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     }
   }
 
-  // Flush deferred CDC state writes now that the publish outputs landed.
-  // If disk writes above failed, we never reach this point — pending
-  // state stays unwritten and the next run replays the same window.
+  // Publish landed — safe to flush the deferred state writes now.
   if (pendingSaves.length) {
     const { writeFile } = await import("node:fs/promises");
     for (const pending of pendingSaves) {
