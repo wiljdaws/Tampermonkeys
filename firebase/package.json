@@ -6,9 +6,10 @@
   "description": "Emulator tests, snapshots, and migration planning for rgleaderboard.",
   "scripts": {
     "test": "npm run test:core && npm run test:contracts",
-    "test:core": "npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots && npm run test:leaderboard-cache && npm run test:firestore-usage",
+    "test:core": "npm run test:leaderboard-popup && npm run test:hud-client && npm run test:hud-races && npm run test:migrations && npm run test:snapshots && npm run test:leaderboard-cache && npm run test:firestore-usage && npm run test:read-stats-snapshot",
     "test:leaderboard-cache": "node --test tests/leaderboard-cache.test.mjs",
     "test:firestore-usage": "node --test tests/fetch-firestore-usage.test.mjs",
+    "test:read-stats-snapshot": "node --test tests/build-read-stats-snapshot.test.mjs",
     "test:leaderboard-popup": "node scripts/run-emulator-test.mjs --config firebase.json -- \"node --test tests/leaderboard-popup.test.mjs\"",
     "test:hud-client": "node --test tests/hud-client-audit.test.mjs",
     "test:hud-races": "node scripts/run-emulator-test.mjs --config firebase.json -- \"node --test tests/hud-races.test.mjs\"",
@@ -22,6 +23,7 @@
     "verify:baseline": "node scripts/verify-baseline.mjs",
     "build:leaderboard-cache": "node scripts/build-leaderboard-cache.mjs",
     "build:leaderboard-json": "node scripts/build-leaderboard-cache.mjs --emit-json",
+    "build:read-stats-snapshot": "node scripts/build-read-stats-snapshot.mjs",
     "start:cloud-run": "node scripts/cloud-run-server.mjs",
     "publish:latest-version": "node scripts/publish-latest-version.mjs",
     "fetch:firestore-usage": "node scripts/fetch-firestore-usage.mjs"

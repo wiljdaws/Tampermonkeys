@@ -141,6 +141,17 @@ jobs:
             --state-dir "$GITHUB_WORKSPACE/site-repo/state" \
             $FORCE_FULL_FLAG
 
+      - name: Build read-stats snapshot
+        working-directory: firebase
+        run: |
+          # Read admin_read_stats + hud_read_stats for the rolling 30-day
+          # window and publish a CDN snapshot alongside the leaderboard
+          # JSON. The Reads admin dashboard prefers this over live
+          # Firestore queries — see rg_player_leaderboard/js/read-stats-query.js.
+          npm run build:read-stats-snapshot -- \
+            --project "$PROJECT" \
+            --state-dir "$GITHUB_WORKSPACE/site-repo/state"
+
       - name: Copy JSON blobs into site repo
         run: |
           mkdir -p "$GITHUB_WORKSPACE/site-repo/leaderboard"
@@ -171,7 +182,7 @@ jobs:
           # State + CDC status files that the admin Sync tab reads. Without
           # these purges the tab shows "Last sync N hours ago" long after
           # the actual publish landed.
-          for state in status.json history.json lifetime.json 1v1.json 2v2.json 3v3.json wins.json; do
+          for state in status.json history.json lifetime.json 1v1.json 2v2.json 3v3.json wins.json read-stats.json; do
             url="https://purge.jsdelivr.net/gh/${SITE_REPO}@${DATA_BRANCH}/state/${state}"
             echo "Purging $url"
             curl -sS -o /dev/null -w "%{http_code}\n" "$url" || true
