@@ -4545,6 +4545,7 @@
                     endTime: d.endTime?.toMillis ? d.endTime.toMillis() : (d.endTime ?? 0),
                     // applies outside the event window too
                     maxMembers: (typeof d.maxMembers === "number") ? d.maxMembers : null,
+                    startingLineupSize: (typeof d.startingLineupSize === "number") ? d.startingLineupSize : null,
                     useClanReservations: d.useClanReservations === true,
                     perms: { ...EVENT_PERM_DEFAULTS, ...storedPerms },
                 };
@@ -4938,12 +4939,16 @@
     // reads events/current.maxMembers so the cap can be changed live
     const DEFAULT_CLAN_MAX_MEMBERS = 5;
     const BENCH_CLAN_MAX_MEMBERS = 6;
-    const STARTING_LINEUP_SIZE = 5;
+    const DEFAULT_STARTING_LINEUP_SIZE = 5;
     function benchFeatureEnabled() {
         // Read the raw perm value — eventPerm() returns true outside active
         // events, which would flip the cap when we don't want it to.
         const p = eventConfig?.perms;
         return p?.useBench === true;
+    }
+    function startingLineupSize() {
+        const n = eventConfig?.startingLineupSize;
+        return (typeof n === "number" && n > 0 && n <= 20) ? n : DEFAULT_STARTING_LINEUP_SIZE;
     }
     function clanMaxMembers() {
         const n = eventConfig?.maxMembers;
@@ -4962,11 +4967,11 @@
         const explicit = Array.isArray(clan?.startingLineup)
             ? clan.startingLineup.filter(uid => members.some(m => m.userId === uid))
             : [];
-        if (explicit.length) return explicit.slice(0, STARTING_LINEUP_SIZE);
+        if (explicit.length) return explicit.slice(0, startingLineupSize());
         // Default: oldest-first fill of the 5 starter slots.
         return [...members]
             .sort((a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0))
-            .slice(0, STARTING_LINEUP_SIZE)
+            .slice(0, startingLineupSize())
             .map(m => m.userId)
             .filter(Boolean);
     }
