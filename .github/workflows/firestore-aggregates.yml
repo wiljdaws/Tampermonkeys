@@ -66,14 +66,3 @@ jobs:
             args+=(--apply)
           fi
           npm run build:leaderboard-cache -- "${args[@]}"
-
-      - name: Fetch Firestore usage metrics
-        env:
-          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-        run: |
-          set -euo pipefail
-          args=(--project "$FIREBASE_PROJECT")
-          if [[ "$DRY_RUN" != "true" ]]; then
-            args+=(--apply)
-          fi
-          npm run fetch:firestore-usage -- "${args[@]}"
