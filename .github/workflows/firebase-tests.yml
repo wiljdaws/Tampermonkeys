@@ -38,11 +38,11 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check out main leaderboard
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: AbuArqob/rgleaderboard
           ref: ${{ inputs.main_site_ref || 'main' }}
@@ -50,14 +50,14 @@ jobs:
 
       - name: Check out clan leaderboard
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: wiljdaws/RG_Clan_Leaderboard
           ref: ${{ inputs.clan_site_ref || 'main' }}
           path: .integration/RG_Clan_Leaderboard
 
       - name: Use Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
