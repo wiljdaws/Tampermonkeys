@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      18.0
+// @version      18.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -4546,6 +4546,9 @@
                     // applies outside the event window too
                     maxMembers: (typeof d.maxMembers === "number") ? d.maxMembers : null,
                     startingLineupSize: (typeof d.startingLineupSize === "number") ? d.startingLineupSize : null,
+                    // ms to keep the "Ended" banner visible after endTime; then
+                    // the banner hides itself until the next event. Default 48h.
+                    postEventGracePeriodMs: (typeof d.postEventGracePeriodMs === "number") ? d.postEventGracePeriodMs : null,
                     useClanReservations: d.useClanReservations === true,
                     perms: { ...EVENT_PERM_DEFAULTS, ...storedPerms },
                 };
@@ -4790,9 +4793,18 @@
 
     // `clan` may be null (clanless players see the banner without their numbers).
     // returns "" when there's no event.
+    const DEFAULT_POST_EVENT_GRACE_MS = 48 * 60 * 60 * 1000;
     function eventBannerHtml(clan, uid) {
         const phase = eventPhase();
         if (phase === "none") return "";
+        // Hide the "Ended" banner once the grace window closes so it
+        // doesn't sit forever between events.
+        if (phase === "ended") {
+            const grace = typeof eventConfig?.postEventGracePeriodMs === "number"
+                ? eventConfig.postEventGracePeriodMs
+                : DEFAULT_POST_EVENT_GRACE_MS;
+            if (serverNow() > eventConfig.endTime + grace) return "";
+        }
 
         const gold = "#ffd700";
         const standings = eventStandings();
