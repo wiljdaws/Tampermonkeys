@@ -7014,6 +7014,91 @@
         document.getElementById("rgEditCancel").onclick = renderClanView;
     }
 
+    function showLineupPicker() {
+        const view = document.getElementById("rgClanView");
+        if (!view || !myClan) return;
+        const members = clanMembers(myClan);
+        const size = startingLineupSize();
+        const selected = new Set(startingLineupUids(myClan));
+        const rowsHtml = members.map(m => `
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:${selected.has(m.userId) ? "#0a2038" : "transparent"};" data-uid="${m.userId}">
+                <input type="checkbox" class="rgLineupCheck" data-uid="${m.userId}" ${selected.has(m.userId) ? "checked" : ""}>
+                <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(m.name)}</span>
+                <span style="opacity:.6;font-size:10px;text-transform:uppercase;">${m.role}</span>
+            </label>`).join("");
+
+        view.innerHTML = `
+            <b>Starting ${size} for this event</b>
+            <div style="font-size:11px;opacity:.75;margin:4px 0 8px;">
+                Check exactly ${size}. Unchecked members sit on the bench and don't score.
+            </div>
+            <div id="rgLineupList" style="display:flex;flex-direction:column;gap:2px;max-height:260px;overflow-y:auto;">
+                ${rowsHtml}
+            </div>
+            <div id="rgLineupErr" style="color:#ff6b6b;font-size:11px;min-height:14px;margin:4px 0;"></div>
+            <div style="display:flex;gap:6px;">
+                <button id="rgLineupSave" class="rgBtn" style="flex:1;">Save</button>
+                <button id="rgLineupCancel" class="rgBtn" style="flex:1;">Cancel</button>
+            </div>`;
+
+        const err = document.getElementById("rgLineupErr");
+        const readSelected = () => Array.from(document.querySelectorAll(".rgLineupCheck"))
+            .filter(cb => cb.checked).map(cb => cb.dataset.uid);
+
+        // Cap checkboxes at `size`. Extra clicks nudge the user with the error.
+        document.getElementById("rgLineupList").addEventListener("change", (e) => {
+            if (!e.target.classList.contains("rgLineupCheck")) return;
+            const picks = readSelected();
+            if (picks.length > size) {
+                e.target.checked = false;
+                err.textContent = `Only ${size} starters allowed. Uncheck someone else first.`;
+                return;
+            }
+            err.textContent = "";
+            // Restripe row highlight
+            for (const label of document.querySelectorAll("[data-uid]")) {
+                const cb = label.querySelector("input");
+                if (!cb) continue;
+                label.style.background = cb.checked ? "#0a2038" : "transparent";
+            }
+        });
+
+        document.getElementById("rgLineupSave").onclick = async () => {
+            const picks = readSelected();
+            if (picks.length !== size) {
+                err.textContent = `Pick exactly ${size} (currently ${picks.length}).`;
+                return;
+            }
+            await saveStartingLineup(picks);
+            renderClanView();
+        };
+        document.getElementById("rgLineupCancel").onclick = renderClanView;
+    }
+
+    async function saveStartingLineup(uids) {
+        if (!myClan) return;
+        const fb = await initFirebase();
+        if (!fb) return;
+        // Client-side belt-and-suspenders: role + phase already checked
+        // before the picker opens, but re-check in case the event flipped
+        // to active between opening and saving.
+        const myRole = myClanRole();
+        if (myRole !== "leader" && myRole !== "co-leader") return;
+        if (eventPhase() === "active" && !eventPerm("allowBenchSwapDuringEvent")) {
+            showToast("Lineup is locked during this event.");
+            return;
+        }
+        try {
+            const clanRef = fb.doc(fb.db, "clans", myClan.id);
+            await atlasSetDoc(fb, "clans", clanRef, { startingLineup: uids }, { merge: true });
+            myClan = { ...myClan, startingLineup: uids };
+            showToast("Starting lineup saved");
+        } catch (e) {
+            dbg("saveStartingLineup failed: " + (e && e.message ? e.message : e));
+            showToast("Couldn't save lineup — try again");
+        }
+    }
+
     async function transferLeadership(userId) {
         const fb = await initFirebase();
         if (!fb || !myClan) return;
@@ -7582,12 +7667,18 @@
             return mmr - base;
         };
 
+        const benchOn = benchFeatureEnabled();
+        const starterSet = benchOn ? new Set(startingLineupUids(myClan)) : null;
+        const canEditLineup = benchOn
+            && (myRole === "leader" || myRole === "co-leader")
+            && (eventPhase() !== "active" || eventPerm("allowBenchSwapDuringEvent"));
         const memberRows = clanMembers(myClan)
             .slice()
             .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))
             .map(m => {
                 const actable = canManage && m.userId !== uid && m.role !== "leader"
                     && (ROLE_RANK[m.role] ?? 0) < (ROLE_RANK[myRole] ?? 0);
+                const isBench = starterSet && m.userId && !starterSet.has(m.userId);
                 const stat = effectiveClanMemberStat(myClan, m);
                 const contrib = contribFor(m);
                 // shows staleness so "+0" vs "last synced 2h ago" is clear
@@ -7605,11 +7696,15 @@
                         ? `<span title="Hasn't played during this event yet" style="opacity:.4;font-size:10px;font-family:monospace;">—</span>`
                         : `<span title="Event contribution (current MMR - baseline) ${freshnessNote}" style="color:${contrib >= 0 ? "#00ff66" : "#ff6b6b"};opacity:${stale ? ".45" : "1"};font-size:10px;font-weight:bold;font-family:monospace;">${contrib >= 0 ? "+" : ""}${contrib}</span>`)
                     : "";
+                const benchBadge = isBench
+                    ? `<span title="Bench for this event — MMR not scored" style="font-size:9px;padding:0 4px;border:1px solid #ff9a3c;border-radius:4px;color:#ff9a3c;">BENCH</span>`
+                    : "";
                 return `
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;gap:6px;${isBench ? "opacity:.75;" : ""}">
                     <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                         ${escapeHtml(m.name)}
                         ${typeof stat.mmr === "number" ? `<span style="opacity:.5;font-size:10px;">${stat.mmr}</span>` : ""}
+                        ${benchBadge}
                     </span>
                     <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
                         ${contribHtml}
@@ -7641,6 +7736,7 @@
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${myClan.tag ? `[${escapeHtml(myClan.tag)}] ` : ""}${escapeHtml(myClan.name)}</b>
                 <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    ${canEditLineup ? `<button id="rgLineupBtn" class="rgBtn" style="padding:1px 6px;font-size:10px;" title="Set starting ${startingLineupSize()}">🪑</button>` : ""}
                     ${rolePerm(myRole, "editClanInfo") ? `<button id="rgEditClan" class="rgBtn" style="padding:1px 6px;font-size:10px;">✏️</button>` : ""}
                     <span style="color:#ffd700;font-size:11px;">Rank #${rank || "-"}</span>
                 </span>
@@ -7668,6 +7764,10 @@
         if (rolePerm(myRole, "editClanInfo")) {
             const editBtn = document.getElementById("rgEditClan");
             if (editBtn) editBtn.onclick = showEditClanForm;
+        }
+        if (canEditLineup) {
+            const lineupBtn = document.getElementById("rgLineupBtn");
+            if (lineupBtn) lineupBtn.onclick = showLineupPicker;
         }
 
         // collapsed by default to save HUD height
