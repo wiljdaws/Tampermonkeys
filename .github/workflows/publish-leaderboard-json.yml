@@ -15,12 +15,11 @@ name: Publish leaderboard JSON
 
 on:
   schedule:
-    # Every 15 min CDC delta publish — pulls only docs that changed since
-    # last run. At ~16 reads/sync that's ~1.5K reads/day, well under the
-    # 50K free-tier cap.
-    - cron: "*/15 * * * *"
     # Daily full re-scan at 10:13 UTC (3:13 AM CDT) — catches deletions and
-    # any drift that a delta-only pipeline can't detect.
+    # any drift that the delta pipeline can't detect. The 15-min CDC delta
+    # publishes are triggered externally via workflow_dispatch (cron-job.org)
+    # because GitHub's own scheduler on public repos silently deprioritizes
+    # frequent cron on free tier.
     - cron: "13 10 * * *"
   workflow_dispatch:
     inputs:
