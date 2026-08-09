@@ -3678,6 +3678,23 @@
         for (const [mode, playlist] of Object.entries(modeToPlaylist)) {
             const mmr = data.ModesGlicko?.[mode]?.displayRating;
             if (typeof mmr !== "number") continue; // never played this mode
+
+            // Skip when this playlist's MMR is unchanged since the last write.
+            // Restores the original "3v3 match only touches 3v3+wins" design
+            // — before this guard, sessionLastSeen and currentStreak (both
+            // session-total values) advanced on every match and re-triggered
+            // a write on every playlist doc, forcing the CDC publisher to
+            // read all 4 docs per active player instead of the 1–2 that
+            // actually changed. First-ever write for a playlist is never
+            // skipped (no cached state to compare against).
+            const stateKey = `${sourceUserId}_${playlist}`;
+            const priorRaw = lastEntryState.get(stateKey);
+            if (priorRaw) {
+                let priorMmr = null;
+                try { priorMmr = JSON.parse(priorRaw)?.mmr; } catch {}
+                if (priorMmr === mmr) continue;
+            }
+
             const sessionBase = sessionOwnedByAccount && typeof sessionStart?.[mode] === "number"
                 ? sessionStart[mode]
                 : null;
