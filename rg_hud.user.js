@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      17.7
+// @version      17.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -658,7 +658,7 @@
             const onClanTab = document.getElementById("rgClanView")?.style.display !== "none";
             const url = onClanTab
                 ? "https://wiljdaws.github.io/RG_Clan_Leaderboard/"
-                : "https://abuarqob.github.io/rgleaderboard/";
+                : "https://wiljdaws.github.io/rg_player_leaderboard/";
             window.open(url, "_blank", "noopener");
         };
         document.getElementById("rgRename").onclick = () => {
