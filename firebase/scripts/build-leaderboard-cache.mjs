@@ -1108,6 +1108,28 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     if (history.runs.length > 96) history.runs = history.runs.slice(-96);
     await writeFile(historyPath, JSON.stringify(history), "utf8");
     console.log(`HISTORY ${historyPath} entries=${history.runs.length}`);
+
+    // Lifetime counter. Survives the 96-entry rolling window so the
+    // "reads saved" tile can climb continuously from the day CDC shipped.
+    // First-run initializes with `since` at the current builtAt.
+    const lifetimePath = path.join(parsed.stateDir, "lifetime.json");
+    let lifetime = null;
+    try {
+      const raw = await readFile(lifetimePath, "utf8");
+      lifetime = JSON.parse(raw);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (!lifetime || typeof lifetime !== "object") {
+      lifetime = { since: builtAt, syncs: 0, reads: 0, readsSaved: 0, readsBaseline: 0 };
+    }
+    lifetime.syncs = (lifetime.syncs || 0) + 1;
+    lifetime.reads = (lifetime.reads || 0) + deltaTotal;
+    lifetime.readsSaved = (lifetime.readsSaved || 0) + readsSaved;
+    lifetime.readsBaseline = (lifetime.readsBaseline || 0) + readsProjectedFullScan;
+    lifetime.lastSyncAt = builtAt;
+    await writeFile(lifetimePath, JSON.stringify(lifetime), "utf8");
+    console.log(`LIFETIME ${lifetimePath} syncs=${lifetime.syncs} readsSaved=${lifetime.readsSaved}`);
   }
 
   for (const plan of result.plans) {
