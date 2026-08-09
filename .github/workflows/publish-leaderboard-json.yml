@@ -162,8 +162,17 @@ jobs:
 
       - name: Purge jsDelivr cache
         run: |
+          # Published leaderboard JSON that the public site reads.
           for playlist in 1v1 2v2 3v3 wins; do
             url="https://purge.jsdelivr.net/gh/${SITE_REPO}@${DATA_BRANCH}/leaderboard/${playlist}.json"
+            echo "Purging $url"
+            curl -sS -o /dev/null -w "%{http_code}\n" "$url" || true
+          done
+          # State + CDC status files that the admin Sync tab reads. Without
+          # these purges the tab shows "Last sync N hours ago" long after
+          # the actual publish landed.
+          for state in status.json history.json lifetime.json 1v1.json 2v2.json 3v3.json wins.json; do
+            url="https://purge.jsdelivr.net/gh/${SITE_REPO}@${DATA_BRANCH}/state/${state}"
             echo "Purging $url"
             curl -sS -o /dev/null -w "%{http_code}\n" "$url" || true
           done
