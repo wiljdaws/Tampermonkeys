@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      17.8
+// @version      17.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "17.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -4527,6 +4527,8 @@
         allowTransfer:    false,
         allowRenameClan:  false,
         allowClanCreate:  true,   // new clans don't affect anyone else
+        useBench:         false,  // when true: clans hold 6, only starting 5 score
+        allowBenchSwapDuringEvent: false, // freeze lineup once event goes active
     };
 
     async function loadEventConfig(fb, force = false) {
@@ -4708,7 +4710,11 @@
     function computeClanEventScore(clan) {
         const baseline = clanBaselineForCurrentEvent(clan);
         if (!baseline) return 0;
+        // Only starters count toward event score. Bench MMR is still tracked
+        // (so a mid-event swap has a real baseline) but doesn't contribute.
+        const starters = new Set(startingLineupUids(clan));
         return clanMembers(clan).reduce((sum, m) => {
+            if (starters.size && !starters.has(m.userId)) return sum;
             const base = memberEventBaseline(clan, m);
             const mmr = effectiveClanMemberStat(clan, m).mmr;
             if (base == null || typeof mmr !== "number") return sum;
@@ -4723,6 +4729,7 @@
         const base = memberEventBaseline(clan, me ?? uid);
         const mmr = effectiveClanMemberStat(clan, me).mmr;
         if (base == null || !me || typeof mmr !== "number") return null;
+        if (isMemberBenched(clan, uid)) return 0;
         return mmr - base;
     }
 
@@ -4930,9 +4937,45 @@
 
     // reads events/current.maxMembers so the cap can be changed live
     const DEFAULT_CLAN_MAX_MEMBERS = 5;
+    const BENCH_CLAN_MAX_MEMBERS = 6;
+    const STARTING_LINEUP_SIZE = 5;
+    function benchFeatureEnabled() {
+        // Read the raw perm value — eventPerm() returns true outside active
+        // events, which would flip the cap when we don't want it to.
+        const p = eventConfig?.perms;
+        return p?.useBench === true;
+    }
     function clanMaxMembers() {
         const n = eventConfig?.maxMembers;
-        return (typeof n === "number" && n > 0 && n <= 50) ? n : DEFAULT_CLAN_MAX_MEMBERS;
+        if (typeof n === "number" && n > 0 && n <= 50) return n;
+        return benchFeatureEnabled() ? BENCH_CLAN_MAX_MEMBERS : DEFAULT_CLAN_MAX_MEMBERS;
+    }
+
+    // The uids of the starting-5 for the current event. Uses the clan's
+    // explicit startingLineup when set (leader/co-lead selection), else
+    // defaults to the first 5 members by joinedAt (oldest first). Returns
+    // all member uids when bench feature is off — everyone is a "starter"
+    // in that mode.
+    function startingLineupUids(clan) {
+        const members = clanMembers(clan);
+        if (!benchFeatureEnabled()) return members.map(m => m.userId).filter(Boolean);
+        const explicit = Array.isArray(clan?.startingLineup)
+            ? clan.startingLineup.filter(uid => members.some(m => m.userId === uid))
+            : [];
+        if (explicit.length) return explicit.slice(0, STARTING_LINEUP_SIZE);
+        // Default: oldest-first fill of the 5 starter slots.
+        return [...members]
+            .sort((a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0))
+            .slice(0, STARTING_LINEUP_SIZE)
+            .map(m => m.userId)
+            .filter(Boolean);
+    }
+
+    function isMemberBenched(clan, uidOrMember) {
+        if (!benchFeatureEnabled()) return false;
+        const uid = typeof uidOrMember === "string" ? uidOrMember : uidOrMember?.userId;
+        if (!uid) return false;
+        return !startingLineupUids(clan).includes(uid);
     }
 
     function myUserId() { return lastKnownPlayerData?.Id ?? null; }
