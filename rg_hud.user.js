@@ -7369,8 +7369,13 @@
         if (!fb || !myClan) return;
         const uid = myUserId();
 
+        // Force-refresh event config so a stale in-memory cache can't lock
+        // leave when the event has actually ended.
+        await loadEventConfig(fb, true);
+
         // leader path handled below (disband/transfer)
         if (!eventPerm("allowLeave") && myClan.leaderId !== uid) {
+            dbg(`leaveClan blocked: phase=${eventPhase()} allowLeave=${eventConfig?.perms?.allowLeave} endTime=${eventConfig?.endTime} now=${Date.now()}`);
             showToast("Can't leave during an active event -- ask leader to kick.");
             return;
         }
@@ -7407,6 +7412,7 @@
                 const isSoloLeader = isLeader && liveMembers.length === 1;
                 const deviceIds = clanMemberDeviceIds(liveClan, uid);
                 if (!isLeader && !eventPerm("allowLeave")) {
+                    dbg(`leaveClan tx blocked: phase=${eventPhase()} allowLeave=${eventConfig?.perms?.allowLeave} endTime=${eventConfig?.endTime} now=${Date.now()}`);
                     outcome = "leave-locked";
                     return;
                 }
