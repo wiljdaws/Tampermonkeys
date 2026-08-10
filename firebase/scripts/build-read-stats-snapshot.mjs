@@ -1,24 +1,12 @@
 #!/usr/bin/env node
-// Publish a rolling-30-day snapshot of admin_read_stats + hud_read_stats
-// to the site's `data` branch at state/read-stats.json.
-//
-// The Reads admin dashboard prefers this CDN-served snapshot over the
-// live Firestore queries — 0 charged reads per admin visit instead of
-// ~500. Live Firestore stays as the fallback path when the snapshot is
-// stale, offline, or the picked range extends before the window.
-//
-// PII: adminEmail is stripped before write. sessionId (UUID) and
-// userAgent stay — they're not personally identifying and the client
-// needs them for the sessions table and browser breakdown.
+// Publishes a 30-day snapshot of admin_read_stats + hud_read_stats to
+// state/read-stats.json. The Reads admin dashboard reads from here
+// instead of hitting Firestore. adminEmail is stripped on the way out.
 //
 // Usage:
-//   node scripts/build-read-stats-snapshot.mjs \
-//     --project rgleaderboard \
-//     --state-dir path/to/site-repo/state
+//   node scripts/build-read-stats-snapshot.mjs --state-dir path/to/site-repo/state
 //
-// Auth: same pattern as build-leaderboard-cache — GOOGLE_OAUTH_ACCESS_TOKEN
-// from workload identity in CI, or `gcloud auth print-access-token` locally.
-// Service account needs read access to admin_read_stats + hud_read_stats.
+// Auth: same as build-leaderboard-cache.
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -87,8 +75,7 @@ async function firestorePost(fetchImpl, token, url, body, project) {
   return parsed;
 }
 
-// Query all docs in a collection where `date >= windowStart`. The date
-// field is a string like "2026-08-09" so a string-range filter works.
+// date is a string like "2026-08-09", so a string range filter works.
 export async function queryReadStatsCollection(
   fetchImpl,
   token,
@@ -123,9 +110,7 @@ export async function queryReadStatsCollection(
   return docs;
 }
 
-// Drop admin email so it never leaves Firestore. sessionId (UUID) and
-// userAgent are fine to publish — they aren't personally identifying
-// on their own. The client renders adminEmail as "—" for snapshot rows.
+// adminEmail never leaves Firestore. Client renders "—" instead.
 export function redactAdminDoc(doc) {
   const out = { ...doc };
   delete out.adminEmail;

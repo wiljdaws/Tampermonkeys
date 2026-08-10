@@ -141,13 +141,24 @@ jobs:
             --state-dir "$GITHUB_WORKSPACE/site-repo/state" \
             $FORCE_FULL_FLAG
 
+      - name: Decide read-stats cadence
+        id: read_stats_gate
+        run: |
+          # Only run read-stats on the quarter hour. Every minute is overkill.
+          minute=$(date -u +%M)
+          minute="${minute#0}"   # strip leading zero so bash doesn't parse "08" as octal
+          if [ $(( ${minute:-0} % 15 )) -eq 0 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "minute=$minute — running"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "minute=$minute — skip until next :15"
+          fi
+
       - name: Build read-stats snapshot
+        if: steps.read_stats_gate.outputs.run == 'true'
         working-directory: firebase
         run: |
-          # Read admin_read_stats + hud_read_stats for the rolling 30-day
-          # window and publish a CDN snapshot alongside the leaderboard
-          # JSON. The Reads admin dashboard prefers this over live
-          # Firestore queries — see rg_player_leaderboard/js/read-stats-query.js.
           npm run build:read-stats-snapshot -- \
             --project "$PROJECT" \
             --state-dir "$GITHUB_WORKSPACE/site-repo/state"
