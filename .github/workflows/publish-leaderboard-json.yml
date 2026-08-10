@@ -81,7 +81,7 @@ jobs:
           ref: ${{ env.DATA_BRANCH }}
           token: ${{ secrets.PUBLIC_SITE_PAT }}
           path: site-repo
-          fetch-depth: 2   # need the previous commit for the purge diff
+          fetch-depth: 1
         continue-on-error: true
 
       - name: Initialize data branch if missing
@@ -181,27 +181,3 @@ jobs:
           fi
           git commit -m "chore(data): refresh leaderboard JSON $(date -u +%Y-%m-%dT%H:%MZ)"
           git push origin "$DATA_BRANCH"
-
-      - name: Purge jsDelivr cache
-        working-directory: site-repo
-        run: |
-          # Only purge files that changed in this commit. jsDelivr rate-limits
-          # purges per URL (~30/hr) — at 1-min cadence hitting every file every
-          # run gets throttled fast, then the CDN happily serves stale copies
-          # for hours.
-          if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
-            echo "No previous commit — first publish, nothing to purge yet."
-            exit 0
-          fi
-          changed=$(git diff --name-only HEAD~1 HEAD -- state/ leaderboard/ || true)
-          if [ -z "$changed" ]; then
-            echo "No state/ or leaderboard/ changes in HEAD — skipping purge."
-            exit 0
-          fi
-          echo "Purging changed files:"
-          while IFS= read -r path; do
-            [ -z "$path" ] && continue
-            url="https://purge.jsdelivr.net/gh/${SITE_REPO}@${DATA_BRANCH}/${path}"
-            echo "  $url"
-            curl -sS -o /dev/null -w "  HTTP %{http_code}\n" "$url" || true
-          done <<< "$changed"
