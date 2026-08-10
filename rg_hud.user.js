@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      18.2
+// @version      18.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -4186,10 +4186,15 @@
     }
 
     async function refreshRanks(fb, data, force = false) {
-        // Warm boot: pull the last saved ranks for this account so the first
-        // refresh doesn't hit Firestore if MMR hasn't changed since last visit.
+        // Warm boot: paint last-known ranks immediately so the HUD isn't
+        // blank while the query is in flight. Note: this used to also set
+        // ranksFetchedThisSession=true which then short-circuited the actual
+        // query for the entire session. Result: if another player passed
+        // you in MMR between sessions, your HUD kept showing yesterday's
+        // rank forever. Now we paint from cache but still let the query
+        // below run once per session to catch drift. Same read cost as
+        // before (one query per playlist per session), just accurate.
         if (!ranksFetchedThisSession && data?.Id && hydrateRankCache(data.Id)) {
-            ranksFetchedThisSession = true;
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
         }
         if (!force && ranksFetchedThisSession) return;
