@@ -1504,6 +1504,12 @@
     const HUD_STATS_SESSION_STARTED_AT = new Date().toISOString();
     const hudSessionReadsByLabel = new Map();
     const hudSessionWritesByLabel = new Map();
+    // Per-label deny count, uploaded with the read-stats payload.
+    const hudSessionDeniesByLabel = new Map();
+    function logDeny(label) {
+        const bucket = bucketLabel(label);
+        hudSessionDeniesByLabel.set(bucket, (hudSessionDeniesByLabel.get(bucket) || 0) + 1);
+    }
     function bucketLabel(raw) {
         // Firestore doc paths carry slashes and ids that would explode the
         // perLabel map — normalize to the "collection[/subcoll]" prefix.
@@ -1586,9 +1592,10 @@
         const totalWrites = firestoreWriteCount;
         const perLabelReads = Object.fromEntries(hudSessionReadsByLabel);
         const perLabelWrites = Object.fromEntries(hudSessionWritesByLabel);
+        const perLabelDenies = Object.fromEntries(hudSessionDeniesByLabel);
         // Skip identical payloads (a quiet session doesn't spam writes).
         // A `final` flush always uploads so the last state is captured.
-        const key = `${totalReads}:${totalWrites}:${JSON.stringify(perLabelReads)}:${JSON.stringify(perLabelWrites)}`;
+        const key = `${totalReads}:${totalWrites}:${JSON.stringify(perLabelReads)}:${JSON.stringify(perLabelWrites)}:${JSON.stringify(perLabelDenies)}`;
         if (!final && key === hudStatsLastPayloadKey) return;
         hudStatsUploadInFlight = true;
         try {
@@ -1606,6 +1613,7 @@
                 writeTotal: totalWrites,
                 perLabelReads,
                 perLabelWrites,
+                perLabelDenies,
                 lastWriteAt: fb.serverTimestamp(),
             };
             const ref = fb.doc(fb.db, "hud_read_stats", docId);
@@ -1667,26 +1675,45 @@
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
+            const isDeny = err => err && String(err.code || "").includes("permission-denied");
             const getDoc = async ref => {
-                const snapshot = await rawGetDoc(ref);
-                logRead(ref?.path || "document");
-                return snapshot;
+                try {
+                    const snapshot = await rawGetDoc(ref);
+                    logRead(ref?.path || "document");
+                    return snapshot;
+                } catch (err) {
+                    if (isDeny(err)) logDeny(ref?.path || "document");
+                    throw err;
+                }
             };
             const getDocs = async target => {
-                const snapshot = await rawGetDocs(target);
-                logRead("query", Math.max(1, snapshot.size || 0));
-                return snapshot;
+                try {
+                    const snapshot = await rawGetDocs(target);
+                    logRead("query", Math.max(1, snapshot.size || 0));
+                    return snapshot;
+                } catch (err) {
+                    if (isDeny(err)) logDeny(target?.path || "query");
+                    throw err;
+                }
             };
             const getCountFromServer = async target => {
-                const snapshot = await rawGetCountFromServer(target);
-                logRead("count query");
-                return snapshot;
+                try {
+                    const snapshot = await rawGetCountFromServer(target);
+                    logRead("count query");
+                    return snapshot;
+                } catch (err) {
+                    if (isDeny(err)) logDeny(target?.path || "count query");
+                    throw err;
+                }
             };
             const onSnapshot = (target, onNext, onError) =>
                 rawOnSnapshot(target, snapshot => {
                     logRead(target?.path || "listener", snapshot?.size || 1);
                     onNext(snapshot);
-                }, onError);
+                }, err => {
+                    if (isDeny(err)) logDeny(target?.path || "listener");
+                    if (typeof onError === "function") onError(err);
+                });
 
             firestoreReady = {
                 db,
@@ -1864,6 +1891,7 @@
             _pushWriteAttempt({ ...attempt, ok: true, latencyMs: Date.now() - startedAt });
             return true;
         } catch (e) {
+            if (e && String(e.code || "").includes("permission-denied")) logDeny(label);
             _pushWriteAttempt({
                 ...attempt,
                 ok: false,
