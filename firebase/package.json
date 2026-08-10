@@ -26,6 +26,7 @@
     "build:read-stats-snapshot": "node scripts/build-read-stats-snapshot.mjs",
     "start:cloud-run": "node scripts/cloud-run-server.mjs",
     "publish:latest-version": "node scripts/publish-latest-version.mjs",
+    "publish:tournament-json": "node scripts/publish-tournament-json.mjs",
     "fetch:firestore-usage": "node scripts/fetch-firestore-usage.mjs"
   },
   "engines": {

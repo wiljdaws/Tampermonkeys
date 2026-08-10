@@ -766,6 +766,7 @@ export async function buildLeaderboardCaches({
     let rows;
     let deltaRows = null;
     let mode = "full";
+    let fallbackReason = null;
     if (priorSnapshot && priorSince && !forceFull) {
       try {
         deltaRows = await queryPlaylistDelta(
@@ -783,6 +784,7 @@ export async function buildLeaderboardCaches({
           console.log(`[cdc:${playlist}] delta query rejected (index not ready?), falling back to full scan`);
           rows = await queryPlaylistRows(fetchImpl, token, project, playlist, top);
           mode = "full-fallback";
+          fallbackReason = "index_not_ready";
         } else {
           throw error;
         }
@@ -805,6 +807,7 @@ export async function buildLeaderboardCaches({
       snapshotRows: rows.length,
       deltaRows: deltaRows?.length ?? null,
       nextSince,
+      fallbackReason,
     });
     if (typeof saveStateFor === "function") {
       await saveStateFor(playlist, { since: nextSince, snapshot: rows });
@@ -1035,6 +1038,7 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     let snapshotTotal = 0;
     let anyFallback = false;
     let anyFull = false;
+    const fallbackReasons = {};
     for (const entry of result.stateSummary) {
       const deltaRows = entry.deltaRows ?? entry.snapshotRows;
       perPlaylist[entry.playlist] = {
@@ -1042,10 +1046,14 @@ export async function main(argv = process.argv.slice(2), options = {}) {
         deltaRows,
         snapshotRows: entry.snapshotRows,
         since: entry.nextSince,
+        fallbackReason: entry.fallbackReason ?? null,
       };
       deltaTotal += deltaRows || 0;
       snapshotTotal += entry.snapshotRows || 0;
-      if (entry.mode === "full-fallback") anyFallback = true;
+      if (entry.mode === "full-fallback") {
+        anyFallback = true;
+        if (entry.fallbackReason) fallbackReasons[entry.playlist] = entry.fallbackReason;
+      }
       if (entry.mode === "full") anyFull = true;
     }
     const readsProjectedFullScan = snapshotTotal;

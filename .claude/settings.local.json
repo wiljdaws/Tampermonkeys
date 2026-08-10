@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -c /Users/dawsonwilliams/code/Tampermonkeys/rg_hud.user.js)",
+      "Bash(node --check /Users/dawsonwilliams/code/Tampermonkeys/rg_hud.user.js)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(awk -F: '{ print NR\":\"$0 }')",
+      "Bash(awk '/^    \\\\/\\\\/ [A-Z][a-z]/ { print NR\": \"$0 }' /Users/dawsonwilliams/code/Tampermonkeys/rg_hud.user.js)",
+      "Bash(grep -nE \"// .{80,}\" /Users/dawsonwilliams/code/Tampermonkeys/rg_hud.user.js)",
+      "Bash(awk *)",
+      "Bash(grep -nE \"//.{100,}\" /Users/dawsonwilliams/code/Tampermonkeys/rg_hud.user.js)",
+      "Bash(git commit *)",
+      "Bash(perl -i -pe 'if \\(/^\\\\s*\\\\/\\\\// && !/\\\\@description/\\) { s/ — /, /g }' /Users/dawsonwilliams/code/Tampermonkeys/rg_hud.user.js)",
+      "Bash(grep -nE \"^\\\\s*// -{16,}\" /Users/dawsonwilliams/code/Tampermonkeys/rg_hud.user.js)",
+      "Bash(git checkout *)",
+      "Bash(node --check rg_hud.user.js)",
+      "Bash(open *)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys diff --stat HEAD -- rg_hud.user.js)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys diff HEAD -- rg_hud.user.js)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys checkout HEAD -- rg_hud.user.js)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys status)",
+      "Bash(node --check /Users/dawsonwilliams/code/Tampermonkeys/rg_hud_dev.user.js)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys branch --show-current)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys remote -v)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys ls-remote --heads origin feature/buddy-skin-voice)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys add rg_hud_dev.user.js)",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys diff --stat --cached)",
+      "Bash(git *)",
+      "Bash(node --check _cap.js)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git -C /Users/dawsonwilliams/code/Tampermonkeys show dev:rg_hud_dev.user.js)",
+      "Bash(tail -n +15 /tmp/devscript.js)",
+      "Read(//tmp/**)",
+      "Bash(node --check /Users/dawsonwilliams/code/Tampermonkeys-dev-15.8/rg_hud_dev.user.js)"
+    ]
+  }
+}
