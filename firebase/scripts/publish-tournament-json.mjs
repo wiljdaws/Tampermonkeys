@@ -84,14 +84,15 @@ async function queryTournamentRows(token, project) {
 
 // Kept intentionally slim: only the fields the site actually renders for
 // tournament rows. Session/streak fields don't apply to manual entries.
-function compactTournamentRow(row, rank) {
+// No rank field: the site sorts by score DESC then name ASC and computes
+// rank from array position, so emitting rank here just fights that.
+function compactTournamentRow(row) {
   if (!row) return null;
   const compact = {
     id: row._docId,
     name: String(row.name || ""),
     score: Number(row.score) || 0,
     matches: Number(row.matches) || 0,
-    rank,
   };
   if (row.flag) compact.flag = row.flag;
   if (row.icons) compact.icons = row.icons;
@@ -103,10 +104,15 @@ function compactTournamentRow(row, rank) {
 
 function buildTournamentJson(rows) {
   const enriched = rows
-    .map((row, index) => compactTournamentRow(row, index + 1))
-    .filter(Boolean);
+    .map(compactTournamentRow)
+    .filter(Boolean)
+    // Deterministic tiebreak: score DESC then name ASC. Same order the
+    // site uses so consumers that DO read rank see stable values.
+    .sort((a, b) =>
+      b.score - a.score
+      || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   const compactForHash = enriched.map(row => ({
-    id: row.id, name: row.name, score: row.score, matches: row.matches, rank: row.rank,
+    id: row.id, name: row.name, score: row.score, matches: row.matches,
   }));
   const sourceHash = createHash("sha256")
     .update(JSON.stringify(compactForHash))
