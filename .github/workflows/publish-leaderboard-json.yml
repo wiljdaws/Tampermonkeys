@@ -141,16 +141,16 @@ jobs:
             --state-dir "$GITHUB_WORKSPACE/site-repo/state" \
             $FORCE_FULL_FLAG
 
-      - name: Build tournament JSON
-        working-directory: firebase
-        # Don't take down the ranked refresh if the tournament build blows
-        # up on a transient auth or Firestore hiccup. Tournament is manual
-        # and low-volume, a stale JSON is fine for one cycle.
-        continue-on-error: true
-        run: |
-          npm run publish:tournament-json -- \
-            --project "$PROJECT" \
-            --output-dir "$GITHUB_WORKSPACE/out"
+      # Tournament tab now reads Firestore directly (small collection,
+      # low-volume, admin-only writes). Publisher step disabled so we
+      # don't spend reads generating a JSON nothing consumes.
+      # - name: Build tournament JSON
+      #   working-directory: firebase
+      #   continue-on-error: true
+      #   run: |
+      #     npm run publish:tournament-json -- \
+      #       --project "$PROJECT" \
+      #       --output-dir "$GITHUB_WORKSPACE/out"
 
       - name: Decide read-stats cadence
         id: read_stats_gate
