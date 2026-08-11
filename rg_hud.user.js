@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      18.4
+// @version      18.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9848,6 +9848,20 @@ _rgnfFab = fab; _rgnfPanel = panel;
       presets = Array.isArray(legacyPresets) ? legacyPresets : [];
       if (_currentUserId && presets.length) saveJSON(presetKey(), presets);
     }
+    // one-time cleanup for pre-fix saves: presets stored before the save-time
+    // fix could carry whatever nickname was in state at save time. re-derive
+    // from rawCode so the list, load, and export all agree.
+    let presetsDirty = false;
+    for (const p of presets) {
+      if (p?.state?.rawCode) {
+        const derived = editableFieldsFromRaw(p.state.rawCode).name;
+        if (derived && p.state.name !== derived) {
+          p.state.name = derived;
+          presetsDirty = true;
+        }
+      }
+    }
+    if (presetsDirty) saveJSON(presetKey(), presets);
     const listWrap = el('div', { class: 'rgnf-presets' });
 
     // presets with no folder -> "Ungrouped"
@@ -9949,7 +9963,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
       class: 'rgnf-chip', text: '+ Save current as preset',
       onclick: () => {
         const snap = JSON.parse(JSON.stringify(state));
-        const defaultName = state.name.replace(/<[^>]*>/g, '').slice(0, 30) || 'Preset';
+        // rawCode wins: state.name can be stale (leftover from a prior nickname
+        // or a name-field click) so re-derive the plain-text name from raw
+        // before saving. Otherwise stolen presets export with the current
+        // in-game nickname baked in.
+        if (snap.rawCode) snap.name = editableFieldsFromRaw(snap.rawCode).name;
+        const defaultName = (snap.name || state.name).replace(/<[^>]*>/g, '').slice(0, 30) || 'Preset';
         openFolderPicker(panel, {
           title: 'Save preset',
           nameField: true,
@@ -9983,12 +10002,22 @@ _rgnfFab = fab; _rgnfPanel = panel;
         onclick: (e) => {
           const b = e.currentTarget;
           try {
+            // deep-clone and re-derive state.name from rawCode so old presets
+            // saved before the fix don't leak whatever nickname was in state
+            // at save time.
+            const exportPresets = presets.map((p) => {
+              const clone = JSON.parse(JSON.stringify(p));
+              if (clone?.state?.rawCode) {
+                clone.state.name = editableFieldsFromRaw(clone.state.rawCode).name;
+              }
+              return clone;
+            });
             const payload = {
               schema: 'atlas.nameforge.presets',
               version: 1,
               exportedAt: new Date().toISOString(),
-              count: presets.length,
-              presets,
+              count: exportPresets.length,
+              presets: exportPresets,
             };
             const stamp = new Date().toISOString().slice(0, 10);
             const url = URL.createObjectURL(new Blob(
@@ -10063,6 +10092,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
               const pfx = _prefix();
               if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
               const snap = Object.assign(defaultState(), { rawCode: code });
+              // seed name from raw so the exported preset carries the actual
+              // stolen name, not defaultState().name.
+              snap.name = editableFieldsFromRaw(code).name;
               openFolderPicker(panel, {
                 title: 'Save preset',
                 nameField: true,
