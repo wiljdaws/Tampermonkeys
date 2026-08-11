@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { decodeFirestoreDocument } from "./snapshot-production.mjs";
+import { incrementPipelineReads } from "./pipeline-read-counter.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -912,6 +913,21 @@ export async function buildLeaderboardCaches({
       });
     }
   }
+
+  // Bump the daily pipeline read counter so the admin dashboard can see
+  // how much this cron actually costs. Sum of deltaRows across all
+  // playlists this run; non-fatal on failure.
+  const readsThisRun = stateSummary.reduce(
+    (sum, entry) => sum + (entry.deltaRows ?? entry.snapshotRows ?? 0),
+    0,
+  );
+  await incrementPipelineReads({
+    fetchImpl,
+    token,
+    project,
+    label: "build-leaderboard-cache",
+    reads: readsThisRun,
+  });
 
   return {
     project,

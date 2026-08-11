@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { decodeFirestoreDocument } from "./snapshot-production.mjs";
+import { incrementPipelineReads } from "./pipeline-read-counter.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -148,6 +149,14 @@ async function main() {
   const outPath = join(outputDir, "tournament.json");
   await writeFile(outPath, JSON.stringify(doc), "utf8");
   console.log(`[publish-tournament-json] wrote ${outPath} (${doc.rowCount} rows)`);
+  // Bump the daily pipeline read counter so the admin dashboard can see
+  // how much this cron contributes to the day's total.
+  await incrementPipelineReads({
+    token,
+    project,
+    label: "publish-tournament-json",
+    reads: rows.length,
+  });
 }
 
 main().catch(err => {
