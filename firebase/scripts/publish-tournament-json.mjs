@@ -89,6 +89,8 @@ async function queryTournamentRows(token, project) {
 // rank from array position, so emitting rank here just fights that.
 function compactTournamentRow(row) {
   if (!row) return null;
+  // Soft-deleted rows drop out of the published JSON.
+  if (row.deleted === true) return null;
   const compact = {
     id: row._docId,
     name: String(row.name || ""),

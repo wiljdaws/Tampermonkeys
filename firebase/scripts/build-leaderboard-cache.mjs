@@ -257,6 +257,8 @@ export function parseCacheArguments(args) {
 }
 
 export function compactLeaderboardRow(raw, rank) {
+  // Soft-deleted rows never make it to the published JSON.
+  if (raw?.deleted === true) return null;
   const uid = String(raw?.sourceUserId || raw?.uid || raw?._docId || "").trim();
   const name = String(raw?.name || "").trim();
   const mmr = Number(raw?.mmr);
@@ -307,6 +309,8 @@ export function buildCacheDocument(playlist, rows, {
 // currentStreak is deliberately included but the caller should treat it as
 // possibly stale — the JSON is rebuilt on a debounced timer, not live.
 export function buildJsonRow(raw, rank, playlist) {
+  // Soft-deleted rows are hidden from the JSON blob.
+  if (raw?.deleted === true) return null;
   const uid = String(raw?.sourceUserId || raw?.uid || raw?._docId || "").trim();
   const name = String(raw?.name || "").trim();
   if (!uid) return null;
