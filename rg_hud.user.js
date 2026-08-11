@@ -4186,14 +4186,8 @@
     }
 
     async function refreshRanks(fb, data, force = false) {
-        // Warm boot: paint last-known ranks immediately so the HUD isn't
-        // blank while the query is in flight. Note: this used to also set
-        // ranksFetchedThisSession=true which then short-circuited the actual
-        // query for the entire session. Result: if another player passed
-        // you in MMR between sessions, your HUD kept showing yesterday's
-        // rank forever. Now we paint from cache but still let the query
-        // below run once per session to catch drift. Same read cost as
-        // before (one query per playlist per session), just accurate.
+        // Paint from cache so the badge isn't blank, but still let the
+        // query below run so a stale rank gets corrected.
         if (!ranksFetchedThisSession && data?.Id && hydrateRankCache(data.Id)) {
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
         }
