@@ -920,18 +920,21 @@ export async function buildLeaderboardCaches({
 
   // Bump the daily pipeline read counter so the admin dashboard can see
   // how much this cron actually costs. Sum of deltaRows across all
-  // playlists this run; non-fatal on failure.
-  const readsThisRun = stateSummary.reduce(
-    (sum, entry) => sum + (entry.deltaRows ?? entry.snapshotRows ?? 0),
-    0,
-  );
-  await incrementPipelineReads({
-    fetchImpl,
-    token,
-    project,
-    label: "build-leaderboard-cache",
-    reads: readsThisRun,
-  });
+  // playlists this run; non-fatal on failure. Only fires on --apply so
+  // dry-runs stay read-only.
+  if (apply) {
+    const readsThisRun = stateSummary.reduce(
+      (sum, entry) => sum + (entry.deltaRows ?? entry.snapshotRows ?? 0),
+      0,
+    );
+    await incrementPipelineReads({
+      fetchImpl,
+      token,
+      project,
+      label: "build-leaderboard-cache",
+      reads: readsThisRun,
+    });
+  }
 
   return {
     project,

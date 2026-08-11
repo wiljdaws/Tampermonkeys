@@ -377,7 +377,7 @@ test("buildLeaderboardCaches --emit-json calls the uploader per playlist", async
 });
 
 test("buildLeaderboardCaches --apply commits only changed docs", async () => {
-  let commitBody = null;
+  const commitBodies = [];
   const fetchImpl = async (url, options = {}) => {
     if (String(url).includes(":runQuery")) {
       return {
@@ -401,7 +401,7 @@ test("buildLeaderboardCaches --apply commits only changed docs", async () => {
       };
     }
     if (String(url).includes(":commit")) {
-      commitBody = JSON.parse(options.body);
+      commitBodies.push(JSON.parse(options.body));
       return {
         ok: true,
         status: 200,
@@ -433,9 +433,10 @@ test("buildLeaderboardCaches --apply commits only changed docs", async () => {
   });
 
   assert.equal(result.written, 1);
-  assert.equal(commitBody.writes.length, 1);
-  assert.match(
-    commitBody.writes[0].update.name,
-    /leaderboard_cache\/1v1$/,
+  // pipeline read counter fires a second commit; filter to the cache write
+  const cacheWrites = commitBodies.flatMap(body =>
+    body.writes.filter(w => /leaderboard_cache\/1v1$/.test(w?.update?.name || "")),
   );
+  assert.equal(cacheWrites.length, 1);
+  assert.match(cacheWrites[0].update.name, /leaderboard_cache\/1v1$/);
 });
