@@ -8578,7 +8578,7 @@
       let idx = 0, currentColor = null, currentRotate = 0;
       while (idx < inner.length) {
         const rest = inner.slice(idx);
-        const colorTag = rest.match(/^<(#[0-9A-Fa-f]{6})>/);
+        const colorTag = rest.match(/^<(#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))>/);
         if (colorTag) { currentColor = colorTag[1]; idx += colorTag[0].length; continue; }
         const rotateTag = rest.match(/^<rotate=(-?\d+)>/);
         if (rotateTag) { currentRotate = Number(rotateTag[1]); idx += rotateTag[0].length; continue; }
@@ -9284,7 +9284,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
       const rest = raw.slice(i);
       let m;
       if ((m = rest.match(/^<br\s*\/?\s*>/i))) { line = document.createElement('div'); root.appendChild(line); i += m[0].length; continue; }
-      if ((m = rest.match(/^<(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)>/))) { st.color = m[1]; i += m[0].length; continue; }
+      // TMP accepts 3/4/6/8-char hex shortcuts; match all so the preview lines
+      // up with what the game actually renders (was 6/8 only).
+      if ((m = rest.match(/^<(#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))>/))) { st.color = m[1]; i += m[0].length; continue; }
       if ((m = rest.match(/^<color\s*=\s*(["']?)(#[0-9A-Fa-f]{3}(?:[0-9A-Fa-f])?|#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)\1\s*>/i))) {
         st.colorStack.push(st.color);
         st.color = m[2];
@@ -9312,7 +9314,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }
       if ((m = rest.match(/^<\/size>/i))) { st.sizePct = 100; i += m[0].length; continue; }
       if ((m = rest.match(/^<rotate=(-?\d+)>/i))) { st.rotate = Number(m[1]) || 0; i += m[0].length; continue; }
-      if ((m = rest.match(/^<mark=(#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?)>/i))) { st.mark = m[1]; i += m[0].length; continue; }
+      if ((m = rest.match(/^<mark=(#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))>/i))) { st.mark = m[1]; i += m[0].length; continue; }
       if ((m = rest.match(/^<\/mark>/i))) { st.mark = null; i += m[0].length; continue; }
       if ((m = rest.match(/^<sprite=(\d+)>/i))) {
         const sp = document.createElement('span');
@@ -9974,33 +9976,70 @@ _rgnfFab = fab; _rgnfPanel = panel;
     }));
     secPresets.appendChild(listWrap);
 
-    // export/import for sharing
+    // export/import for sharing — file-based so presets survive a paste round-trip
     secPresets.appendChild(el('div', { class: 'rgnf-row' }, [
       el('button', {
-        class: 'rgnf-chip', text: '📤 Export', title: 'Copy all presets as JSON to share',
-        onclick: async (e) => {
+        class: 'rgnf-chip', text: '📤 Export', title: 'Download all presets as a .json file',
+        onclick: (e) => {
           const b = e.currentTarget;
           try {
-            await navigator.clipboard.writeText(JSON.stringify(presets));
-            b.textContent = 'Copied ✓';
+            const payload = {
+              schema: 'atlas.nameforge.presets',
+              version: 1,
+              exportedAt: new Date().toISOString(),
+              count: presets.length,
+              presets,
+            };
+            const stamp = new Date().toISOString().slice(0, 10);
+            const url = URL.createObjectURL(new Blob(
+              [JSON.stringify(payload, null, 2) + '\n'],
+              { type: 'application/json;charset=utf-8' },
+            ));
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `atlas-nameforge-presets-${stamp}.json`;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 0);
+            b.textContent = 'Downloaded ✓';
           } catch (err) { b.textContent = 'Failed'; }
           setTimeout(() => { b.textContent = '📤 Export'; }, 1200);
         },
       }),
       el('button', {
-        class: 'rgnf-chip', text: '📥 Import', title: 'Paste preset JSON from a friend',
-        onclick: () => {
-          const raw = prompt('Paste preset JSON:');
-          if (!raw) return;
-          try {
-            const incoming = JSON.parse(raw);
-            if (!Array.isArray(incoming)) throw new Error('not an array');
-            const merged = presets.concat(incoming.filter(p => p && p.label && p.state));
-            saveJSON(presetKey(), merged);
-            render(panel);
-          } catch (err) {
-            alert('That JSON was as valid as a screen-door submarine. Import failed.');
-          }
+        class: 'rgnf-chip', text: '📥 Import', title: 'Import presets from a .json file',
+        onclick: (e) => {
+          const b = e.currentTarget;
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'application/json,.json';
+          input.style.display = 'none';
+          input.onchange = async () => {
+            const file = input.files && input.files[0];
+            input.remove();
+            if (!file) return;
+            try {
+              const text = await file.text();
+              const parsed = JSON.parse(text);
+              // accept wrapped {schema,presets:[...]} and legacy bare array
+              const incoming = Array.isArray(parsed)
+                ? parsed
+                : (parsed && Array.isArray(parsed.presets) ? parsed.presets : null);
+              if (!incoming) throw new Error('no presets array');
+              const clean = incoming.filter(p => p && p.label && p.state);
+              if (!clean.length) throw new Error('no valid presets');
+              const merged = presets.concat(clean);
+              saveJSON(presetKey(), merged);
+              b.textContent = `Imported ${clean.length} ✓`;
+              setTimeout(() => { b.textContent = '📥 Import'; render(panel); }, 900);
+            } catch (err) {
+              alert('That JSON was as valid as a screen-door submarine. Import failed.');
+            }
+          };
+          document.body.appendChild(input);
+          input.click();
         },
       }),
     ]));
