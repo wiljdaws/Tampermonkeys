@@ -15,7 +15,10 @@ import { fileURLToPath } from "node:url";
 import { getGcloudAccessToken } from "./build-leaderboard-cache.mjs";
 import { decodeFirestoreDocument } from "./snapshot-production.mjs";
 
-export const WINDOW_DAYS = 30;
+// 60 days so the admin dashboard's default 7-day view (and any casual
+// scroll back through recent history) always serves from the CDN blob
+// instead of falling back to Firestore.
+export const WINDOW_DAYS = 60;
 export const ADMIN_COLLECTION = "admin_read_stats";
 export const HUD_COLLECTION = "hud_read_stats";
 export const OUTPUT_FILENAME = "read-stats.json";
