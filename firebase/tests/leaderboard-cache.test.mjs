@@ -238,13 +238,28 @@ test("buildJsonRow preserves flag/icons/glow and switches shape for wins", () =>
 
   // Legacy admin rows have no sourceUserId/uid; fall back to the Firestore
   // doc id so they still make it into the JSON instead of leaving a gap.
+  // _docId is emitted separately when it doesn't match the deterministic
+  // {uid}_{playlist} slot — this is what lets the site's edit/delete
+  // path target the real Firestore doc.
   const legacyRow = buildJsonRow({
-    _docId: "manual_top_dog",
+    _docId: "FMuVTASiZA0vdKBE3e0b",
     name: "Legacy Admin",
     mmr: 22000,
   }, 1, "1v1");
-  assert.equal(legacyRow.uid, "manual_top_dog");
+  assert.equal(legacyRow.uid, "FMuVTASiZA0vdKBE3e0b");
+  assert.equal(legacyRow._docId, "FMuVTASiZA0vdKBE3e0b");
   assert.equal(legacyRow.mmr, 22000);
+
+  // ATLAS-synced rows keep _docId out of the JSON to save bytes — the
+  // doc id there already matches ${uid}_${playlist}.
+  const syncedRow = buildJsonRow({
+    _docId: "atlas-user_1v1",
+    sourceUserId: "atlas-user",
+    name: "Synced",
+    mmr: 1500,
+  }, 1, "1v1");
+  assert.equal(syncedRow.uid, "atlas-user");
+  assert.equal(syncedRow._docId, undefined);
 
   const legacyCompact = compactLeaderboardRow({
     _docId: "manual_top_dog",

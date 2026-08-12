@@ -322,6 +322,14 @@ export function buildJsonRow(raw, rank, playlist) {
     uid,
     name: name.slice(0, 120),
   };
+  // Manual admin rows have random Firestore ids that don't match the
+  // deterministic {uid}_{playlist} slot. Emit the real doc id so the
+  // client's edit/delete targets the actual document. ATLAS-synced
+  // rows omit this field to keep the JSON compact.
+  const docId = String(raw?._docId || "").trim();
+  if (docId && docId !== `${uid}_${playlist}`) {
+    row._docId = docId;
+  }
   if (playlist === "wins") {
     const wins = Number(raw?.wins);
     const matches = Number(raw?.matches);
