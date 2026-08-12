@@ -212,6 +212,7 @@ test("buildJsonRow preserves flag/icons/glow and switches shape for wins", () =>
   assert.deepEqual(mmrRow, {
     rank: 1,
     uid: "a",
+    sourceUserId: "a",
     name: "Ace",
     mmr: 1501,
     flag: "US",
@@ -230,6 +231,7 @@ test("buildJsonRow preserves flag/icons/glow and switches shape for wins", () =>
   assert.deepEqual(winsRow, {
     rank: 4,
     uid: "b",
+    sourceUserId: "b",
     name: "Bravo",
     wins: 75,
     matches: 100,
@@ -251,7 +253,8 @@ test("buildJsonRow preserves flag/icons/glow and switches shape for wins", () =>
   assert.equal(legacyRow.mmr, 22000);
 
   // ATLAS-synced rows keep _docId out of the JSON to save bytes — the
-  // doc id there already matches ${uid}_${playlist}.
+  // doc id there already matches ${uid}_${playlist}. sourceUserId is
+  // still emitted so the client can flag it as ATLAS-synced.
   const syncedRow = buildJsonRow({
     _docId: "atlas-user_1v1",
     sourceUserId: "atlas-user",
@@ -259,7 +262,22 @@ test("buildJsonRow preserves flag/icons/glow and switches shape for wins", () =>
     mmr: 1500,
   }, 1, "1v1");
   assert.equal(syncedRow.uid, "atlas-user");
+  assert.equal(syncedRow.sourceUserId, "atlas-user");
   assert.equal(syncedRow._docId, undefined);
+
+  // Hybrid: manual row (random doc id) that an admin has since claimed
+  // by writing a sourceUserId onto it. Emits both _docId (so edits go
+  // to the real doc) AND sourceUserId (so the row still counts as
+  // ATLAS-linked).
+  const claimedRow = buildJsonRow({
+    _docId: "FMuVTASiZA0vdKBE3e0b",
+    sourceUserId: "claimed-uid",
+    name: "Claimed",
+    mmr: 1500,
+  }, 1, "1v1");
+  assert.equal(claimedRow.uid, "claimed-uid");
+  assert.equal(claimedRow.sourceUserId, "claimed-uid");
+  assert.equal(claimedRow._docId, "FMuVTASiZA0vdKBE3e0b");
 
   const legacyCompact = compactLeaderboardRow({
     _docId: "manual_top_dog",

@@ -330,6 +330,14 @@ export function buildJsonRow(raw, rank, playlist) {
   if (docId && docId !== `${uid}_${playlist}`) {
     row._docId = docId;
   }
+  // Explicit sourceUserId is emitted whenever it's actually on the doc,
+  // so the client can distinguish "uid is a real source id" from "uid
+  // fell back to the doc id". Enables ATLAS-badge + purge-all-playlists
+  // fan-out even for rows sitting at a random-id path.
+  const sourceUserId = String(raw?.sourceUserId || "").trim();
+  if (sourceUserId) {
+    row.sourceUserId = sourceUserId;
+  }
   if (playlist === "wins") {
     const wins = Number(raw?.wins);
     const matches = Number(raw?.matches);
