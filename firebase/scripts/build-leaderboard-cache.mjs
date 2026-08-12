@@ -287,9 +287,12 @@ export function buildCacheDocument(playlist, rows, {
   builtAt = new Date().toISOString(),
   builder = "build-leaderboard-cache",
 } = {}) {
+  // Rank must come after the filter — a soft-deleted row was leaving a
+  // gap (missing #67) and shifting every later rank up by one.
   const compact = rows
-    .map((row, index) => compactLeaderboardRow(row, index + 1))
-    .filter(Boolean);
+    .map(row => compactLeaderboardRow(row, 0))
+    .filter(Boolean)
+    .map((row, index) => ({ ...row, rank: index + 1 }));
   const sourceHash = sourceHashForRows(compact);
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -381,9 +384,11 @@ export function buildLeaderboardJson(playlist, rows, {
   builtAt = new Date().toISOString(),
   builder = "build-leaderboard-cache",
 } = {}) {
+  // Same gap fix as buildCacheDocument — rank after filter, not before.
   const enriched = rows
-    .map((row, index) => buildJsonRow(row, index + 1, playlist))
-    .filter(Boolean);
+    .map(row => buildJsonRow(row, 0, playlist))
+    .filter(Boolean)
+    .map((row, index) => ({ ...row, rank: index + 1 }));
   const compactForHash = enriched.map(row => {
     if (playlist === "wins") {
       return { uid: row.uid, name: row.name, wins: row.wins, matches: row.matches, rank: row.rank };
@@ -624,9 +629,13 @@ export function mergeSnapshot(previous, delta) {
   return Array.from(byId.values());
 }
 
-// Sort by the playlist's primary ranking field, desc.
+// Tie-breakers matter: without them ranks shuffle between publishes,
+// and on the wins playlist a 7/12 grinder outranked a 7/10 player. Order:
+// primary desc, matches asc (wins only), name, uid.
 export function sortSnapshotForPlaylist(rows, playlist) {
   const primary = playlist === "wins" ? "wins" : "mmr";
+  const nameOf = row => String(row?.name || "");
+  const uidOf = row => String(row?.sourceUserId || row?.uid || row?._docId || "");
   return [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {
     const aValue = Number(a?.[primary]);
     const bValue = Number(b?.[primary]);
@@ -635,7 +644,19 @@ export function sortSnapshotForPlaylist(rows, playlist) {
     if (!aFinite && !bFinite) return 0;
     if (!aFinite) return 1;
     if (!bFinite) return -1;
-    return bValue - aValue;
+    if (aValue !== bValue) return bValue - aValue;
+    if (playlist === "wins") {
+      const aMatches = Number(a?.matches);
+      const bMatches = Number(b?.matches);
+      const aMatchFinite = Number.isFinite(aMatches);
+      const bMatchFinite = Number.isFinite(bMatches);
+      if (aMatchFinite && bMatchFinite && aMatches !== bMatches) return aMatches - bMatches;
+      if (aMatchFinite && !bMatchFinite) return -1;
+      if (!aMatchFinite && bMatchFinite) return 1;
+    }
+    const nameCompare = nameOf(a).localeCompare(nameOf(b), undefined, { sensitivity: "base" });
+    if (nameCompare !== 0) return nameCompare;
+    return uidOf(a).localeCompare(uidOf(b));
   });
 }
 

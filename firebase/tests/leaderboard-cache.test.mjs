@@ -291,6 +291,34 @@ test("sortSnapshotForPlaylist sorts by mmr desc for ranked, wins desc for wins",
   assert.deepEqual(byWins.map(r => r._docId), ["c", "a", "b"]);
 });
 
+test("sortSnapshotForPlaylist wins ties break on fewer matches then name", () => {
+  // Reported bug: [OG]... 7/10 came out below HAMZAEG 7/12 because ties
+  // fell through to name. Fewer matches → better rank now.
+  const rows = [
+    { _docId: "hamzaeg", name: "HAMZAEG", wins: 7, matches: 12 },
+    { _docId: "og", name: "[OG] ....", wins: 7, matches: 10 },
+    { _docId: "future", name: "FutureDemon.5FP", wins: 0, matches: 1 },
+    { _docId: "jajaa", name: "Jajaa", wins: 0, matches: 1 },
+  ];
+  const sorted = sortSnapshotForPlaylist(rows, "wins");
+  assert.deepEqual(
+    sorted.map(r => r._docId),
+    ["og", "hamzaeg", "future", "jajaa"],
+  );
+});
+
+test("sortSnapshotForPlaylist is stable across shuffled inputs", () => {
+  const rows = [
+    { _docId: "a", name: "Alpha", mmr: 1000 },
+    { _docId: "b", name: "Alpha", mmr: 1000 },
+    { _docId: "c", name: "Bravo", mmr: 1000 },
+  ];
+  const first = sortSnapshotForPlaylist(rows, "1v1").map(r => r._docId);
+  const shuffled = [rows[2], rows[0], rows[1]];
+  const second = sortSnapshotForPlaylist(shuffled, "1v1").map(r => r._docId);
+  assert.deepEqual(second, first);
+});
+
 test("maxLastWriteAt handles decoded timestamp objects and strings", () => {
   const wrapped = [
     { lastWriteAt: { __firestoreType: "timestamp", value: "2026-08-08T20:00:00Z" } },
@@ -324,6 +352,111 @@ test("buildLeaderboardJson hashes over ranking fields only", () => {
   assert.notEqual(first.sourceHash, rankingChange.sourceHash);
   assert.equal(first.rows[0].rank, 1);
   assert.equal(first.rowCount, 2);
+});
+
+test("buildLeaderboardJson renumbers ranks after dropping soft-deleted rows", () => {
+  // Reported bug: rank #67 was missing because rank was assigned before
+  // buildJsonRow filtered a null row.
+  const rows = [
+    { sourceUserId: "a", name: "A", mmr: 1500 },
+    { sourceUserId: "b", name: "B", mmr: 1400, deleted: true },
+    { sourceUserId: "c", name: "C", mmr: 1300 },
+  ];
+  const result = buildLeaderboardJson("1v1", rows, { builtAt: "T" });
+  assert.equal(result.rowCount, 2);
+  assert.deepEqual(result.rows.map(r => r.rank), [1, 2]);
+  assert.deepEqual(result.rows.map(r => r.uid), ["a", "c"]);
+});
+
+test("buildCacheDocument renumbers ranks after dropping soft-deleted rows", () => {
+  const rows = [
+    { sourceUserId: "a", name: "A", mmr: 1500 },
+    { sourceUserId: "b", name: "B", mmr: 1400, deleted: true },
+    { sourceUserId: "c", name: "C", mmr: 1300 },
+  ];
+  const doc = buildCacheDocument("1v1", rows, { builtAt: "T" });
+  assert.equal(doc.rowCount, 2);
+  assert.deepEqual(doc.rows.map(r => r.rank), [1, 2]);
+});
+
+test("buildJsonRow drops wins-playlist rows missing wins or matches", () => {
+  assert.equal(buildJsonRow({ sourceUserId: "a", name: "A", wins: 3 }, 1, "wins"), null);
+  assert.equal(buildJsonRow({ sourceUserId: "a", name: "A", matches: 5 }, 1, "wins"), null);
+  assert.equal(buildJsonRow({ sourceUserId: "a", name: "A", wins: "x", matches: 5 }, 1, "wins"), null);
+});
+
+test("buildJsonRow drops mmr rows missing mmr or uid", () => {
+  assert.equal(buildJsonRow({ sourceUserId: "a", name: "A" }, 1, "1v1"), null);
+  assert.equal(buildJsonRow({ name: "A", mmr: 1500 }, 1, "1v1"), null);
+});
+
+test("buildJsonRow rounds fractional wins/matches/mmr", () => {
+  const win = buildJsonRow({ sourceUserId: "a", name: "A", wins: 3.6, matches: 7.4 }, 1, "wins");
+  assert.deepEqual({ wins: win.wins, matches: win.matches }, { wins: 4, matches: 7 });
+  const mmr = buildJsonRow({ sourceUserId: "b", name: "B", mmr: 1500.6 }, 1, "1v1");
+  assert.equal(mmr.mmr, 1501);
+});
+
+test("buildJsonRow name field is capped at 120 chars", () => {
+  const long = "x".repeat(500);
+  const row = buildJsonRow({ sourceUserId: "a", name: long, mmr: 1500 }, 1, "1v1");
+  assert.equal(row.name.length, 120);
+});
+
+test("buildJsonRow icons array is capped at 12 entries", () => {
+  const many = Array.from({ length: 40 }, (_, i) => `icon-${i}`);
+  const row = buildJsonRow({ sourceUserId: "a", name: "A", mmr: 1500, icons: many }, 1, "1v1");
+  assert.equal(row.icons.length, 12);
+});
+
+test("buildLeaderboardJson emits empty rows for an empty input", () => {
+  const out = buildLeaderboardJson("1v1", [], { builtAt: "T" });
+  assert.equal(out.rowCount, 0);
+  assert.deepEqual(out.rows, []);
+});
+
+test("buildLeaderboardJson skips rows without uid without breaking rank", () => {
+  const rows = [
+    { sourceUserId: "a", name: "A", mmr: 1500 },
+    { name: "no uid", mmr: 1400 },
+    { sourceUserId: "c", name: "C", mmr: 1300 },
+  ];
+  const out = buildLeaderboardJson("1v1", rows, { builtAt: "T" });
+  assert.deepEqual(out.rows.map(r => r.rank), [1, 2]);
+  assert.deepEqual(out.rows.map(r => r.uid), ["a", "c"]);
+});
+
+test("sortSnapshotForPlaylist keeps rows with non-finite scores at the bottom", () => {
+  const rows = [
+    { _docId: "nan", name: "Bad", mmr: "not-a-number" },
+    { _docId: "hi", name: "Hi", mmr: 2000 },
+    { _docId: "lo", name: "Lo", mmr: 100 },
+  ];
+  const sorted = sortSnapshotForPlaylist(rows, "1v1");
+  assert.deepEqual(sorted.map(r => r._docId), ["hi", "lo", "nan"]);
+});
+
+test("sortSnapshotForPlaylist handles ties with duplicated names via uid", () => {
+  const rows = [
+    { _docId: "u2", name: "Same", wins: 5, matches: 10 },
+    { _docId: "u1", name: "Same", wins: 5, matches: 10 },
+  ];
+  const sorted = sortSnapshotForPlaylist(rows, "wins");
+  assert.deepEqual(sorted.map(r => r._docId), ["u1", "u2"]);
+});
+
+test("buildLeaderboardJson round-trip: shuffled input → identical hash", () => {
+  const base = [
+    { sourceUserId: "a", name: "A", mmr: 1500 },
+    { sourceUserId: "b", name: "B", mmr: 1400 },
+    { sourceUserId: "c", name: "C", mmr: 1300 },
+  ];
+  const first = buildLeaderboardJson("1v1", base, { builtAt: "T" });
+  // Publisher sorts before building JSON, so a shuffled input should
+  // still hash the same when it's sorted upstream.
+  const shuffled = sortSnapshotForPlaylist([base[2], base[0], base[1]], "1v1");
+  const second = buildLeaderboardJson("1v1", shuffled, { builtAt: "T" });
+  assert.equal(first.sourceHash, second.sourceHash);
 });
 
 test("buildLeaderboardCaches --emit-json calls the uploader per playlist", async () => {

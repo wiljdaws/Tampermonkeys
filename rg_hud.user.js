@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      18.5
+// @version      18.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1506,9 +1506,40 @@
     const hudSessionWritesByLabel = new Map();
     // Per-label deny count, uploaded with the read-stats payload.
     const hudSessionDeniesByLabel = new Map();
-    function logDeny(label) {
+    // Recent deny records so the admin panel can show who/what/which rule,
+    // not just a bucket count.
+    const HUD_DENY_RECORD_MAX = 25;
+    const hudSessionDenies = [];
+    function truncateForDeny(value, max) {
+        return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+    }
+    function guessDenyRule(message) {
+        const m = String(message || "").toLowerCase();
+        if (!m) return "";
+        if (m.includes("blacklist")) return "blacklisted";
+        if (m.includes("version") || m.includes("minversion")) return "version-gate";
+        if (m.includes("device")) return "device-id";
+        if (m.includes("stamp") || m.includes("lastwriteat")) return "write-stamp";
+        if (m.includes("member") || m.includes("clan")) return "clan-membership";
+        if (m.includes("profan") || m.includes("emoji") || m.includes("name")) return "name-blocklist";
+        return "";
+    }
+    function logDeny(label, detail = null) {
         const bucket = bucketLabel(label);
         hudSessionDeniesByLabel.set(bucket, (hudSessionDeniesByLabel.get(bucket) || 0) + 1);
+        const err = detail?.err;
+        const record = {
+            at: new Date().toISOString(),
+            bucket,
+            path: truncateForDeny(detail?.path ?? label, 120),
+            op: truncateForDeny(detail?.op, 10),
+            code: truncateForDeny(err?.code, 40),
+            msg: truncateForDeny(err?.message, 160),
+            subject: truncateForDeny(detail?.subject, 120),
+            rule: truncateForDeny(detail?.rule || guessDenyRule(err?.message), 40),
+        };
+        hudSessionDenies.push(record);
+        if (hudSessionDenies.length > HUD_DENY_RECORD_MAX) hudSessionDenies.shift();
     }
     function bucketLabel(raw) {
         // Firestore doc paths carry slashes and ids that would explode the
@@ -1593,9 +1624,10 @@
         const perLabelReads = Object.fromEntries(hudSessionReadsByLabel);
         const perLabelWrites = Object.fromEntries(hudSessionWritesByLabel);
         const perLabelDenies = Object.fromEntries(hudSessionDeniesByLabel);
+        const deniesRecent = hudSessionDenies.slice(-HUD_DENY_RECORD_MAX);
         // Skip identical payloads (a quiet session doesn't spam writes).
         // A `final` flush always uploads so the last state is captured.
-        const key = `${totalReads}:${totalWrites}:${JSON.stringify(perLabelReads)}:${JSON.stringify(perLabelWrites)}:${JSON.stringify(perLabelDenies)}`;
+        const key = `${totalReads}:${totalWrites}:${JSON.stringify(perLabelReads)}:${JSON.stringify(perLabelWrites)}:${JSON.stringify(perLabelDenies)}:${deniesRecent.length}`;
         if (!final && key === hudStatsLastPayloadKey) return;
         hudStatsUploadInFlight = true;
         try {
@@ -1614,6 +1646,7 @@
                 perLabelReads,
                 perLabelWrites,
                 perLabelDenies,
+                deniesRecent,
                 lastWriteAt: fb.serverTimestamp(),
             };
             const ref = fb.doc(fb.db, "hud_read_stats", docId);
@@ -1676,13 +1709,20 @@
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
             const isDeny = err => err && String(err.code || "").includes("permission-denied");
+            const currentUidForDeny = () => {
+                try { return (typeof myUserId === "function" && myUserId()) || ""; }
+                catch { return ""; }
+            };
             const getDoc = async ref => {
                 try {
                     const snapshot = await rawGetDoc(ref);
                     logRead(ref?.path || "document");
                     return snapshot;
                 } catch (err) {
-                    if (isDeny(err)) logDeny(ref?.path || "document");
+                    if (isDeny(err)) logDeny(ref?.path || "document", {
+                        op: "read", path: ref?.path, err,
+                        subject: currentUidForDeny() ? `uid=${currentUidForDeny()}` : "",
+                    });
                     throw err;
                 }
             };
@@ -1692,7 +1732,10 @@
                     logRead("query", Math.max(1, snapshot.size || 0));
                     return snapshot;
                 } catch (err) {
-                    if (isDeny(err)) logDeny(target?.path || "query");
+                    if (isDeny(err)) logDeny(target?.path || "query", {
+                        op: "query", path: target?.path, err,
+                        subject: currentUidForDeny() ? `uid=${currentUidForDeny()}` : "",
+                    });
                     throw err;
                 }
             };
@@ -1702,7 +1745,10 @@
                     logRead("count query");
                     return snapshot;
                 } catch (err) {
-                    if (isDeny(err)) logDeny(target?.path || "count query");
+                    if (isDeny(err)) logDeny(target?.path || "count query", {
+                        op: "count", path: target?.path, err,
+                        subject: currentUidForDeny() ? `uid=${currentUidForDeny()}` : "",
+                    });
                     throw err;
                 }
             };
@@ -1711,7 +1757,10 @@
                     logRead(target?.path || "listener", snapshot?.size || 1);
                     onNext(snapshot);
                 }, err => {
-                    if (isDeny(err)) logDeny(target?.path || "listener");
+                    if (isDeny(err)) logDeny(target?.path || "listener", {
+                        op: "listener", path: target?.path, err,
+                        subject: currentUidForDeny() ? `uid=${currentUidForDeny()}` : "",
+                    });
                     if (typeof onError === "function") onError(err);
                 });
 
@@ -1872,6 +1921,21 @@
         };
     }
 
+    // Short "who/what" line for the deny record — e.g. Nickname="Xuuya"
+    // beats a bare "script_submissions" bucket. Bounded to stay safe.
+    function describeWriteSubject(label, data) {
+        if (!data || typeof data !== "object") return "";
+        const parts = [];
+        if (data.playlist) parts.push(`playlist=${String(data.playlist)}`);
+        if (data.Nickname) parts.push(`Nickname="${String(data.Nickname).slice(0, 40)}"`);
+        else if (data.name) parts.push(`name="${String(data.name).slice(0, 40)}"`);
+        if (data.tag) parts.push(`tag=${String(data.tag).slice(0, 16)}`);
+        if (data.role) parts.push(`role=${String(data.role).slice(0, 24)}`);
+        if (data.clanId) parts.push(`clanId=${String(data.clanId).slice(0, 32)}`);
+        if (!parts.length && label) parts.push(`label=${label}`);
+        return parts.join(" ").slice(0, 120);
+    }
+
     async function atlasSetDoc(fb, label, ref, data, options) {
         if (!(await atlasMutationAllowed(fb, label))) return false;
         logWrite(label);
@@ -1891,7 +1955,14 @@
             _pushWriteAttempt({ ...attempt, ok: true, latencyMs: Date.now() - startedAt });
             return true;
         } catch (e) {
-            if (e && String(e.code || "").includes("permission-denied")) logDeny(label);
+            if (e && String(e.code || "").includes("permission-denied")) {
+                logDeny(label, {
+                    op: "write",
+                    path: ref && ref.path,
+                    err: e,
+                    subject: describeWriteSubject(label, data),
+                });
+            }
             _pushWriteAttempt({
                 ...attempt,
                 ok: false,
