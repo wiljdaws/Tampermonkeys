@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      19.1
+// @version      19.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1378,8 +1378,161 @@
         }
     }
 
+    // ------------------------------------------------------------------
+    // Match snapshots — record before/after Glicko + roster per match end
+    // so we can reverse-engineer the game's display-rating formula.
+    // ------------------------------------------------------------------
+    const RECENT_MATCHES_CAP = 5;        // shipped in script_submissions
+    const MATCH_HISTORY_CAP = 50;        // localStorage personal history
+    const MATCH_HISTORY_STORAGE_PREFIX = "rgAtlas.matchHistory.v1.";
+    const MODES_FOR_SNAPSHOTS = [
+        "Competitive1v1", "Competitive2v2", "Competitive3v3", "Casual",
+    ];
+    // In-memory ring; hydrated from localStorage on first use.
+    let _recentMatchesRing = null;
+    // Guard against writing the same matchId twice (rehydration / re-fetch).
+    const _seenMatchIds = new Set();
+
+    function loadMatchHistory(uid) {
+        if (!uid) return [];
+        try {
+            const raw = localStorage.getItem(MATCH_HISTORY_STORAGE_PREFIX + uid);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch { return []; }
+    }
+    function saveMatchHistory(uid, ring) {
+        if (!uid) return;
+        try {
+            const trimmed = ring.slice(-MATCH_HISTORY_CAP);
+            localStorage.setItem(MATCH_HISTORY_STORAGE_PREFIX + uid, JSON.stringify(trimmed));
+        } catch { /* full storage or private mode — non-fatal */ }
+    }
+    function ensureRingHydrated(uid) {
+        if (_recentMatchesRing === null) _recentMatchesRing = loadMatchHistory(uid);
+    }
+
+    function glickoOf(data, mode) {
+        const g = data?.ModesGlicko?.[mode] || {};
+        return {
+            rating: typeof g.rating === "number" ? g.rating : null,
+            displayRating: typeof g.displayRating === "number" ? g.displayRating : null,
+            rd: typeof g.rd === "number" ? g.rd : null,
+            vol: typeof g.vol === "number" ? g.vol : null,
+        };
+    }
+    function statsOf(data, mode) {
+        const s = data?.ModesData?.[mode] || {};
+        return {
+            wins: typeof s.wins === "number" ? s.wins : 0,
+            loses: typeof s.loses === "number" ? s.loses : 0,
+            matches: typeof s.matchesPlayed === "number" ? s.matchesPlayed : 0,
+        };
+    }
+    function outcomeFromDelta(beforeStats, afterStats) {
+        if (afterStats.wins > beforeStats.wins) return "W";
+        if (afterStats.loses > beforeStats.loses) return "L";
+        if (afterStats.matches > beforeStats.matches) return "T";
+        return null;
+    }
+    function rosterSnapshot(selfUid) {
+        // Opponent display MMR is best-effort — only known when they're
+        // in the top ~100 leaderboard cache the HUD already keeps warm.
+        // Sync read from the in-memory memo, no Firestore call.
+        const seenTop = new Map();
+        try {
+            for (const memo of _lbCacheMemo.values()) {
+                const modes = memo?.modes || {};
+                for (const entries of Object.values(modes)) {
+                    if (!Array.isArray(entries)) continue;
+                    for (const e of entries) {
+                        if (e?.uid && typeof e.mmr === "number") seenTop.set(e.uid, e.mmr);
+                    }
+                }
+            }
+        } catch { /* cache may be off */ }
+        return _liveRoster.map(p => {
+            const entry = { uid: p.uid || "", name: (p.name || "").slice(0, 40), team: p.team || null };
+            const dr = seenTop.get(p.uid);
+            if (typeof dr === "number") entry.dr = dr;
+            return entry;
+        });
+    }
+
+    function captureMatchSnapshotsIfAny(before, after) {
+        if (!before || !after || !after.Id) return [];
+        const uid = after.Id;
+        const matchId = String(after.CurrentGameId || "").trim();
+        if (!matchId || _seenMatchIds.has(matchId)) return [];
+        const roster = rosterSnapshot(uid);
+        const myTeam = (roster.find(r => r.uid === uid) || {}).team || null;
+        const created = [];
+        for (const mode of MODES_FOR_SNAPSHOTS) {
+            const bs = statsOf(before, mode);
+            const as = statsOf(after, mode);
+            if (as.matches <= bs.matches) continue; // no new match this mode
+            const outcome = outcomeFromDelta(bs, as);
+            if (!outcome) continue;
+            created.push({
+                at: new Date().toISOString(),
+                mode,
+                outcome,
+                matchId,
+                team: myTeam,
+                before: glickoOf(before, mode),
+                after: glickoOf(after, mode),
+                roster,
+            });
+        }
+        if (created.length) _seenMatchIds.add(matchId);
+        return created;
+    }
+
+    async function writeMatchSnapshotDoc(uid, snap) {
+        const fb = firestoreReady;
+        if (!fb || !uid || !snap?.matchId) return;
+        try {
+            const docId = `${uid}_${snap.matchId}`;
+            const ref = fb.doc(fb.db, "match_snapshots", docId);
+            await atlasSetDoc(fb, "match_snapshots", ref, {
+                sourceUserId: uid,
+                matchId: snap.matchId,
+                mode: snap.mode,
+                outcome: snap.outcome,
+                team: snap.team,
+                at: snap.at,
+                before: snap.before,
+                after: snap.after,
+                roster: snap.roster,
+            }, { merge: true });
+        } catch (err) {
+            dbg("writeMatchSnapshotDoc failed (non-fatal): " + (err && err.message ? err.message : err));
+        }
+    }
+
+    function handleMatchSnapshots(before, after) {
+        try {
+            const uid = after?.Id;
+            if (!uid) return;
+            ensureRingHydrated(uid);
+            const snapshots = captureMatchSnapshotsIfAny(before, after);
+            if (!snapshots.length) return;
+            for (const snap of snapshots) {
+                _recentMatchesRing.push(snap);
+                writeMatchSnapshotDoc(uid, snap); // fire-and-forget
+            }
+            if (_recentMatchesRing.length > MATCH_HISTORY_CAP) {
+                _recentMatchesRing = _recentMatchesRing.slice(-MATCH_HISTORY_CAP);
+            }
+            saveMatchHistory(uid, _recentMatchesRing);
+        } catch (err) {
+            dbg("handleMatchSnapshots threw: " + (err && err.message ? err.message : err));
+        }
+    }
+
     function updateHUD(data) {
         createHUD();
+        handleMatchSnapshots(lastKnownPlayerData, data);
         lastKnownPlayerData = data;
         // Login/ratings can arrive after Photon roster lines. Resume popup
         // detection now that the local user's uid is finally available.
@@ -2333,6 +2486,9 @@
             deviceId: getDeviceId(),
             scriptVersion: SCRIPT_VERSION,
             versionNum: SCRIPT_VERSION_NUM,
+            // Last 5 match snapshots for cheap "recent form" reads. Full
+            // per-match history lives in match_snapshots/{uid}_{matchId}.
+            recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
             lastWriteAt: fb.serverTimestamp(),
         };
 
