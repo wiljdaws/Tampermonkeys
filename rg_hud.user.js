@@ -2289,11 +2289,10 @@
 
         cachedDisplayNames.set(data.Id, displayName);
 
-        // Full Glicko-2 snapshot per playlist: rating (internal), rd
-        // (uncertainty), vol (volatility). Doesn't fire extra writes —
-        // the snapshotKey below still hashes displayRating + stats, so
-        // syncs happen at the same cadence they always did. `ratings`
-        // stays for anything that depends on the flat displayRating map.
+        // Full Glicko snapshot per playlist: rating, displayRating, rd,
+        // vol. snapshotKey below only hashes displayRating + stats so
+        // this doesn't change how often we sync. `ratings` stays for
+        // anything that already reads the flat displayRating map.
         const glickoFor = (mode) => {
             const g = data.ModesGlicko?.[mode] || {};
             return {
@@ -3818,10 +3817,8 @@
                 ? sessionStart[mode]
                 : null;
             const sessionMmrDelta = sessionBase === null ? 0 : Math.trunc(mmr - sessionBase);
-            // Store the raw Glicko numbers alongside mmr (displayRating).
-            // The mmr-unchanged skip check above still gates the write, so
-            // this doesn't add any Firestore writes — just enriches the
-            // ones already firing.
+            // Raw Glicko numbers alongside mmr. Write cadence is unchanged
+            // — the mmr skip check above still gates when we sync.
             const glicko = data.ModesGlicko?.[mode] || {};
             await upsertIfChanged(fb, sourceUserId, playlist, payloadWithSession({
                 name: shownName,
