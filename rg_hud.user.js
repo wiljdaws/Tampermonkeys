@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      18.8
+// @version      18.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -4585,6 +4585,12 @@
                     syncPingTracker();
                     // new match is being queued — clear popup state
                     resetMatchPopupState();
+                    // Private matches fire their recovery signal (SetNickname
+                    // / OurOnConnectedToMaster) BEFORE LeaveRoom, so the HUD
+                    // restore up in that handler got suppressed as
+                    // mid-match. Now that _inMatch is finally false, put
+                    // the HUD back — no waiting for the ticker.
+                    setAutoVisible(true);
                 }
 
                 // ---- return-to-menu / recovery signals ----
