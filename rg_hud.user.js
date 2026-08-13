@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      19.3
+// @version      19.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1392,20 +1392,6 @@
     let _recentMatchesRing = null;
     // Guard against writing the same matchId twice (rehydration / re-fetch).
     const _seenMatchIds = new Set();
-    // Set when we see "Starting game with N players" so two clients in
-    // the same match derive the same matchId from a shared timestamp.
-    let _matchStartAt = 0;
-
-    // Deterministic matchId across reporters: sorted roster UIDs +
-    // match-start minute bucket. Any two HUDs that saw the same roster
-    // and started within the same minute produce the same id.
-    function computeSharedMatchId(rosterUids, startAtMs) {
-        const uids = [...new Set(rosterUids)].filter(Boolean).sort();
-        if (uids.length < 2) return null;
-        const bucket = Math.floor((startAtMs || Date.now()) / 60000);
-        const short = uids.map(u => String(u).slice(0, 6)).join(".");
-        return `${short}@${bucket}`;
-    }
 
     function loadMatchHistory(uid) {
         if (!uid) return [];
@@ -1476,9 +1462,9 @@
     function captureMatchSnapshotsIfAny(before, after) {
         if (!before || !after || !after.Id) return [];
         const uid = after.Id;
-        const roster = rosterSnapshot(uid);
-        const matchId = computeSharedMatchId(roster.map(r => r.uid), _matchStartAt);
+        const matchId = String(after.CurrentGameId || "").trim();
         if (!matchId || _seenMatchIds.has(matchId)) return [];
+        const roster = rosterSnapshot(uid);
         const myTeam = (roster.find(r => r.uid === uid) || {}).team || null;
         const created = [];
         for (const mode of MODES_FOR_SNAPSHOTS) {
@@ -1510,6 +1496,7 @@
             const ref = fb.doc(fb.db, "match_snapshots", docId);
             await atlasSetDoc(fb, "match_snapshots", ref, {
                 sourceUserId: uid,
+                deviceId: getDeviceId(),
                 matchId: snap.matchId,
                 mode: snap.mode,
                 outcome: snap.outcome,
@@ -4755,7 +4742,6 @@
                         resetMatchPopupState();
                         _matchPlayerCount = parseInt(m[1], 10);
                         _matchFormat = derivedFormatFromPlayerCount(_matchPlayerCount);
-                        _matchStartAt = Date.now();
                         dbg(`match player count = ${_matchPlayerCount}, format = ${_matchFormat || "unknown"}`);
                         // Pre-warm only the active playlist.
                         if (_matchFormat) getLeaderboardCache(_matchFormat);
