@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      18.7
+// @version      18.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -8104,6 +8104,18 @@
             setAutoVisible(true);
         }
     }, 60 * 1000);
+
+    // Private matches don't fire the recovery signals we key restore on,
+    // so the HUD stayed hidden after coming back to the menu. Cheap
+    // ticker: if we're not in a match and the HUD is hidden or detached,
+    // put it back. Idempotent — no-op when the HUD is already visible.
+    setInterval(() => {
+        if (_inMatch) return;
+        if (!hud) return;
+        if (!hud.isConnected || hud.style.display === "none") {
+            setAutoVisible(true);
+        }
+    }, 2000);
 
 
     // ==================================================================
