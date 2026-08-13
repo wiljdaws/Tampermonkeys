@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      19.0
+// @version      19.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2289,6 +2289,20 @@
 
         cachedDisplayNames.set(data.Id, displayName);
 
+        // Full Glicko-2 snapshot per playlist: rating (internal), rd
+        // (uncertainty), vol (volatility). Doesn't fire extra writes —
+        // the snapshotKey below still hashes displayRating + stats, so
+        // syncs happen at the same cadence they always did. `ratings`
+        // stays for anything that depends on the flat displayRating map.
+        const glickoFor = (mode) => {
+            const g = data.ModesGlicko?.[mode] || {};
+            return {
+                rating: typeof g.rating === "number" ? g.rating : null,
+                displayRating: typeof g.displayRating === "number" ? g.displayRating : null,
+                rd: typeof g.rd === "number" ? g.rd : null,
+                vol: typeof g.vol === "number" ? g.vol : null,
+            };
+        };
         const payload = {
             nickname: (data.Nickname ?? "").slice(0, 500),
             displayName,
@@ -2297,6 +2311,12 @@
                 Competitive2v2: data.ModesGlicko?.Competitive2v2?.displayRating ?? null,
                 Competitive1v1: data.ModesGlicko?.Competitive1v1?.displayRating ?? null,
                 Casual: data.ModesGlicko?.Casual?.displayRating ?? null,
+            },
+            glicko: {
+                Competitive3v3: glickoFor("Competitive3v3"),
+                Competitive2v2: glickoFor("Competitive2v2"),
+                Competitive1v1: glickoFor("Competitive1v1"),
+                Casual: glickoFor("Casual"),
             },
             stats: {
                 Competitive3v3: data.ModesData?.Competitive3v3 ?? null,
@@ -3798,9 +3818,17 @@
                 ? sessionStart[mode]
                 : null;
             const sessionMmrDelta = sessionBase === null ? 0 : Math.trunc(mmr - sessionBase);
+            // Store the raw Glicko numbers alongside mmr (displayRating).
+            // The mmr-unchanged skip check above still gates the write, so
+            // this doesn't add any Firestore writes — just enriches the
+            // ones already firing.
+            const glicko = data.ModesGlicko?.[mode] || {};
             await upsertIfChanged(fb, sourceUserId, playlist, payloadWithSession({
                 name: shownName,
                 mmr,
+                rating: typeof glicko.rating === "number" ? glicko.rating : null,
+                rd: typeof glicko.rd === "number" ? glicko.rd : null,
+                vol: typeof glicko.vol === "number" ? glicko.vol : null,
                 sessionMmrDelta,
                 currentStreak: publishedStreak,
             }));
