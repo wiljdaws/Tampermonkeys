@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      18.9
+// @version      18.11
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.11";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -4607,6 +4607,19 @@
                     _lastRecoverySignalAt = performance.now();
                     if (!_inMatch) setAutoVisible(true);
                     else dbg(`recovery signal suppressed (mid-match): ${arg.slice(0, 60)}`);
+                }
+
+                // Private matches don't emit LeaveRoom, so _inMatch was
+                // never getting cleared and none of the recovery signals
+                // above could restore the HUD. "Showing PlayGama banners"
+                // is the ad banner the game logs when the main menu is
+                // back on screen — treat that as authoritative end-of-match.
+                if (arg.includes("Showing PlayGama banners") && _inMatch) {
+                    dbg("PlayGama banners visible — treating as match-end");
+                    _inMatch = false;
+                    syncPingTracker();
+                    resetMatchPopupState();
+                    setAutoVisible(true);
                 }
             }
         } catch (e) {
