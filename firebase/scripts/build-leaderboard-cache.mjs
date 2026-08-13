@@ -377,6 +377,11 @@ export function buildJsonRow(raw, rank, playlist) {
   if (Number.isFinite(Number(raw?.currentStreak))) {
     row.currentStreak = Math.trunc(Number(raw.currentStreak));
   }
+  // Raw Glicko-2 numbers. Optional — only emitted when the HUD wrote
+  // them (18.x builds don't have these fields).
+  if (Number.isFinite(Number(raw?.rating))) row.rating = Number(raw.rating);
+  if (Number.isFinite(Number(raw?.rd))) row.rd = Number(raw.rd);
+  if (Number.isFinite(Number(raw?.vol))) row.vol = Number(raw.vol);
   // Session fields drive "Last played N ago" and the +delta pill on the site.
   // Without them every row hovers to "Last played: unknown".
   if (Number.isFinite(Number(raw?.sessionStartedAt))) {

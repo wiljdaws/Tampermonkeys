@@ -279,6 +279,24 @@ test("buildJsonRow preserves flag/icons/glow and switches shape for wins", () =>
   assert.equal(claimedRow.sourceUserId, "claimed-uid");
   assert.equal(claimedRow._docId, "FMuVTASiZA0vdKBE3e0b");
 
+  // Glicko fields flow through when the HUD wrote them. Old rows
+  // without these fields just skip them silently.
+  const glickoRow = buildJsonRow({
+    sourceUserId: "g",
+    name: "Glicko",
+    mmr: 2100,
+    rating: 1846.62,
+    rd: 67.58,
+    vol: 0.0599,
+  }, 1, "1v1");
+  assert.equal(glickoRow.rating, 1846.62);
+  assert.equal(glickoRow.rd, 67.58);
+  assert.equal(glickoRow.vol, 0.0599);
+  const bareRow = buildJsonRow({ sourceUserId: "b", name: "Bare", mmr: 1500 }, 2, "1v1");
+  assert.equal(bareRow.rating, undefined);
+  assert.equal(bareRow.rd, undefined);
+  assert.equal(bareRow.vol, undefined);
+
   const legacyCompact = compactLeaderboardRow({
     _docId: "manual_top_dog",
     name: "Legacy Admin",
