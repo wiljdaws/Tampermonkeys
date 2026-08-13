@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      18.6
+// @version      18.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "18.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -985,6 +985,11 @@
 
     function setAutoVisible(visible) {
         if (!hud) return;
+        // Private-match → main-menu tears down our parent. Re-attach if
+        // we got orphaned, otherwise setting display on it is a no-op.
+        if (!hud.isConnected) {
+            try { document.body.appendChild(hud); } catch { /* ignore */ }
+        }
         hud.style.display = visible ? "block" : "none";
         if (!visible) {
             // tooltip lives on body, kill it or it strands over the game
@@ -7513,15 +7518,23 @@
                 }
                 const liveClan = clanSnap.data();
                 const liveMembers = clanMembers(liveClan);
+                const liveMemberIds = Array.isArray(liveClan.memberIds) ? liveClan.memberIds : [];
                 const member = liveMembers.find(candidate => candidate.userId === uid);
-                if (!member) {
+                // members can drift out of sync with memberIds. Treat the
+                // uid still being on memberIds as "yes, still in the clan"
+                // so leave doesn't silently no-op.
+                const stuckInMemberIds = !member && liveMemberIds.includes(uid);
+                if (!member && !stuckInMemberIds) {
                     outcome = "handled";
                     return;
                 }
                 const isLeader = liveClan.leaderId === uid;
                 const isSoloLeader = isLeader && liveMembers.length === 1;
                 const deviceIds = clanMemberDeviceIds(liveClan, uid);
-                if (!isLeader && !eventPerm("allowLeave")) {
+                // Just scrubbing a stale uid — don't block on event locks.
+                if (stuckInMemberIds && !isLeader && !eventPerm("allowLeave")) {
+                    dbg(`leaveClan tx: repairing memberIds desync for ${uid}`);
+                } else if (!isLeader && !eventPerm("allowLeave")) {
                     dbg(`leaveClan tx blocked: phase=${eventPhase()} allowLeave=${eventConfig?.perms?.allowLeave} endTime=${eventConfig?.endTime} now=${Date.now()}`);
                     outcome = "leave-locked";
                     return;
@@ -7561,10 +7574,17 @@
                 } else {
                     const members = liveMembers.filter(candidate => candidate.userId !== uid);
                     const membersField = clanMembersField(liveClan, members);
+                    // Filter the live memberIds/deviceIds instead of rebuilding
+                    // from the members list — if members was desynced, the
+                    // old code wiped everyone else's uid too.
+                    const uidDeviceIds = clanMemberDeviceIds(liveClan, uid);
+                    const nextMemberIds = liveMemberIds.filter(id => id !== uid);
+                    const liveDeviceIds = Array.isArray(liveClan.deviceIds) ? liveClan.deviceIds : [];
+                    const nextDeviceIds = liveDeviceIds.filter(d => !uidDeviceIds.includes(d));
                     const reservationFields = useReservations
                         ? {
-                            memberIds: members.map(member => member.userId),
-                            deviceIds: clanDeviceIds({ ...liveClan, members }),
+                            memberIds: nextMemberIds,
+                            deviceIds: nextDeviceIds,
                         }
                         : {};
                     const nextClan = {
@@ -8629,7 +8649,9 @@
     if (s.bold) styles.push('font-weight:700');
     if (s.italic) styles.push('font-style:italic');
     // per-letter decoration mirrors in-game TMP. applied per-span below via decoCSS.
-    if (s.sizePct !== 100) styles.push(`font-size:${Math.max(8, 18 * s.sizePct / 100)}px`);
+    // Cap preview font size — big <size=...> values push the editor
+    // off-screen otherwise. In-game render uses the raw value.
+    if (s.sizePct !== 100) styles.push(`font-size:${Math.max(8, 18 * Math.min(s.sizePct, 300) / 100)}px`);
     if (s.markOn) styles.push(`background:${s.markColor}${alphaHex(s.markAlpha)}`);
     nameLine.style.cssText = styles.join(';');
 
@@ -9378,8 +9400,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if ((m = rest.match(/^<sup>/i)))   { st.sup = true; st.sub = false; i += m[0].length; continue; }
       if ((m = rest.match(/^<\/sup>/i))) { st.sup = false; i += m[0].length; continue; }
       if ((m = rest.match(/^<size=(\d+)%?>/i))) {
+        // Cap preview at 300% so a stray <size=9999> doesn't push
+        // the editor off-screen. In-game render is untouched.
         const parsedSize = Number(m[1]);
-        st.sizePct = Number.isFinite(parsedSize) ? parsedSize : 100;
+        st.sizePct = Math.min(Number.isFinite(parsedSize) ? parsedSize : 100, 300);
         i += m[0].length;
         continue;
       }
