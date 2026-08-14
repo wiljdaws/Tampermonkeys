@@ -624,3 +624,147 @@ test("buildLeaderboardCaches --apply commits only changed docs", async () => {
   assert.equal(cacheWrites.length, 1);
   assert.match(cacheWrites[0].update.name, /leaderboard_cache\/1v1$/);
 });
+
+test("buildLeaderboardCaches skips readCacheDocument + writes when CDC delta is empty", async () => {
+  // CDC optimization: when nothing changed since the last cursor, we
+  // should not GET leaderboard_cache/<playlist>. Saves ~1 read per
+  // playlist per minute across three playlists.
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    const stringUrl = String(url);
+    calls.push({ url: stringUrl, method: options.method || "GET" });
+    if (stringUrl.includes(":runQuery")) {
+      // Empty delta — nothing changed since priorSince.
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify([]);
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  const priorSnapshot = [
+    { _docId: "a_1v1", sourceUserId: "a", name: "Ace", mmr: 1500, playlist: "1v1" },
+  ];
+  const priorSince = "2026-08-04T11:59:00.000Z";
+  const savedStates = [];
+
+  const result = await buildLeaderboardCaches({
+    project: "rgleaderboard",
+    apply: true,
+    playlists: ["1v1"],
+    fetchImpl,
+    getToken: async () => "token",
+    includeIconKey: false,
+    now: () => "2026-08-04T12:00:00.000Z",
+    loadStateFor: async () => ({ since: priorSince, snapshot: priorSnapshot }),
+    saveStateFor: async (playlist, state) => {
+      savedStates.push({ playlist, state });
+    },
+  });
+
+  // No cache-doc GET, no commit, no write plan for the playlist.
+  assert.ok(
+    !calls.some(call => /\/leaderboard_cache\/1v1(\?|$)/.test(call.url)),
+    "readCacheDocument should not fire when delta is empty",
+  );
+  const cacheWritePlans = result.plans.filter(plan => /leaderboard_cache\/1v1$/.test(plan.path));
+  assert.equal(cacheWritePlans.length, 0, "no plan should be pushed for empty-delta playlist");
+  assert.equal(result.written, 0);
+
+  // State is still persisted with the same cursor and snapshot so the
+  // next run continues from the same spot.
+  assert.equal(savedStates.length, 1);
+  assert.equal(savedStates[0].playlist, "1v1");
+  assert.equal(savedStates[0].state.since, priorSince);
+  assert.deepEqual(savedStates[0].state.snapshot, priorSnapshot);
+
+  // stateSummary records the skip so it's visible in workflow logs.
+  const summary = result.stateSummary.find(entry => entry.playlist === "1v1");
+  assert.equal(summary.skipped, true);
+  assert.equal(summary.deltaRows, 0);
+  assert.equal(summary.nextSince, priorSince);
+});
+
+test("buildLeaderboardCaches full-scan fallback still runs on FAILED_PRECONDITION", async () => {
+  // Guardrail for the index-not-ready path: even with the empty-delta
+  // skip added, the fallback should still fetch rows via the full-scan
+  // query and produce a plan.
+  let deltaCalls = 0;
+  const fetchImpl = async (url, options = {}) => {
+    const stringUrl = String(url);
+    if (stringUrl.includes(":runQuery")) {
+      const body = options.body ? JSON.parse(options.body) : {};
+      const isDelta = JSON.stringify(body).includes("lastWriteAt");
+      if (isDelta) {
+        deltaCalls += 1;
+        return {
+          ok: false,
+          status: 400,
+          async text() {
+            return JSON.stringify({
+              error: {
+                code: 400,
+                message: "FAILED_PRECONDITION: The query requires an index.",
+                status: "FAILED_PRECONDITION",
+              },
+            });
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify([
+            {
+              document: {
+                name: "projects/rgleaderboard/databases/(default)/documents/leaderboard/a_1v1",
+                fields: {
+                  sourceUserId: { stringValue: "a" },
+                  name: { stringValue: "Ace" },
+                  mmr: { integerValue: "1500" },
+                  playlist: { stringValue: "1v1" },
+                },
+              },
+            },
+          ]);
+        },
+      };
+    }
+    if (stringUrl.includes(`/${CACHE_COLLECTION}/1v1`)) {
+      return {
+        ok: true,
+        status: 404,
+        async text() {
+          return "";
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  const result = await buildLeaderboardCaches({
+    project: "rgleaderboard",
+    apply: false,
+    playlists: ["1v1"],
+    fetchImpl,
+    getToken: async () => "token",
+    includeIconKey: false,
+    now: () => "2026-08-04T12:00:00.000Z",
+    loadStateFor: async () => ({
+      since: "2026-08-04T11:59:00.000Z",
+      snapshot: [{ _docId: "old", sourceUserId: "old", name: "Old", mmr: 1000, playlist: "1v1" }],
+    }),
+    saveStateFor: async () => {},
+  });
+
+  assert.equal(deltaCalls, 1);
+  const summary = result.stateSummary.find(entry => entry.playlist === "1v1");
+  assert.equal(summary.mode, "full-fallback");
+  assert.equal(summary.fallbackReason, "index_not_ready");
+  assert.equal(result.plans.length, 1);
+});

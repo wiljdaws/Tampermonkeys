@@ -823,6 +823,26 @@ export async function buildLeaderboardCaches({
           playlist,
           priorSince,
         );
+        // Nothing changed since the last run — skip the readCacheDocument
+        // GET, the write plan, and the JSON emit for this playlist. Keep
+        // the cursor where it is by rewriting the same state back. Saves
+        // ~1 Firestore GET per playlist per minute (~1.5k reads/day).
+        if (deltaRows.length === 0) {
+          console.log(`[cdc:${playlist}] no changes, skipped`);
+          stateSummary.push({
+            playlist,
+            mode: "delta",
+            snapshotRows: priorSnapshot.length,
+            deltaRows: 0,
+            nextSince: priorSince,
+            fallbackReason: null,
+            skipped: true,
+          });
+          if (typeof saveStateFor === "function") {
+            await saveStateFor(playlist, { since: priorSince, snapshot: priorSnapshot });
+          }
+          continue;
+        }
         rows = mergeSnapshot(priorSnapshot, deltaRows);
         mode = "delta";
       } catch (error) {
