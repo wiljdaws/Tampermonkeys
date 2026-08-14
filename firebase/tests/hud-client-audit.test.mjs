@@ -86,8 +86,20 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "19.4");
+  assert.equal(version, "19.5");
   assert.match(hudSource, /const RG_DEBUG = true;/);
+});
+
+test("deny logger attaches client-side reasons (19.5+)", () => {
+  // describeDenyReasons must be defined and called from atlasSetDoc's
+  // catch — otherwise deny records ship without the reason list and
+  // the admin panel can't say "mode must be one of [...], got X".
+  assert.match(hudSource, /function describeDenyReasons\(bucket, data, opts/);
+  assert.match(hudSource, /reasons: describeDenyReasons\(label, data, \{ docId \}\)/);
+  // Per-bucket helpers must be defined for the three write paths.
+  assert.match(hudSource, /function describeLeaderboardReasons\(/);
+  assert.match(hudSource, /function describeScriptSubmissionReasons\(/);
+  assert.match(hudSource, /function describeMatchSnapshotReasons\(/);
 });
 
 test("every client mutation path uses the central version gate", () => {
