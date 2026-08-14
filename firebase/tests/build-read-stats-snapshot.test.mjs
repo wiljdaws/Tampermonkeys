@@ -75,6 +75,34 @@ test("buildSnapshot: shape + metadata", () => {
   assert.equal(snap.site[0].adminEmail, undefined, "adminEmail must be redacted");
   assert.equal(snap.site[0].sessionId, "s1");
   assert.equal(snap.hud.length, 1);
+  // Missing totalDocs / visitorDocs default to empty arrays — old callers
+  // still work.
+  assert.deepEqual(snap.total, []);
+  assert.deepEqual(snap.visitors, []);
+});
+
+test("buildSnapshot: includes total + visitor collections when supplied", () => {
+  const now = new Date("2026-08-09T12:34:56Z");
+  const snap = buildSnapshot({
+    siteDocs: [{ id: "s1", date: "2026-08-09", sessionId: "s1", total: 1 }],
+    hudDocs: [{ id: "h1", date: "2026-08-09", sourceUserId: "u1", readTotal: 2 }],
+    totalDocs: [
+      { id: "2026-08-09", date: "2026-08-09", reads: 100, writes: 20, deletes: 1 },
+    ],
+    visitorDocs: [
+      // Visitor docs shouldn't carry adminEmail, but defensively redact.
+      { id: "v1", date: "2026-08-09", sessionId: "v1", adminEmail: "leak@x.com", total: 5 },
+    ],
+    windowDays: 60,
+    windowStart: "2026-06-11",
+    windowEnd: "2026-08-09",
+    now,
+  });
+  assert.equal(snap.total.length, 1);
+  assert.equal(snap.total[0].reads, 100);
+  assert.equal(snap.visitors.length, 1);
+  assert.equal(snap.visitors[0].sessionId, "v1");
+  assert.equal(snap.visitors[0].adminEmail, undefined, "visitor adminEmail must be redacted too");
 });
 
 test("run: dry-run does not call writer, fetches token + both collections", async () => {
@@ -114,7 +142,10 @@ test("run: dry-run does not call writer, fetches token + both collections", asyn
   });
   assert.equal(calls.write, 0, "dry-run must not write");
   assert.equal(calls.mkdir, 0, "dry-run must not mkdir");
-  assert.equal(calls.fetch.length, 2, "one query per collection");
+  assert.equal(calls.fetch.length, 4, "one query per collection (admin, hud, total, visitor)");
   assert.ok(snap.site.length > 0);
   assert.equal(snap.site[0].adminEmail, undefined, "email redacted before write");
+  // Structural check: run() now populates total + visitors alongside site + hud.
+  assert.ok(Array.isArray(snap.total), "snapshot has total collection");
+  assert.ok(Array.isArray(snap.visitors), "snapshot has visitors collection");
 });

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Publishes a 30-day snapshot of admin_read_stats + hud_read_stats to
-// state/read-stats.json. The Reads admin dashboard reads from here
-// instead of hitting Firestore. adminEmail is stripped on the way out.
+// Publishes a 60-day snapshot of the four read-stats collections
+// (admin_read_stats + hud_read_stats + read_stats_total + visitor_read_stats)
+// to state/read-stats.json. The Reads admin dashboard reads from here
+// instead of hitting Firestore for any of the four. adminEmail is stripped
+// on the way out.
 //
 // Usage:
 //   node scripts/build-read-stats-snapshot.mjs --state-dir path/to/site-repo/state
@@ -21,6 +23,8 @@ import { decodeFirestoreDocument } from "./snapshot-production.mjs";
 export const WINDOW_DAYS = 60;
 export const ADMIN_COLLECTION = "admin_read_stats";
 export const HUD_COLLECTION = "hud_read_stats";
+export const TOTAL_COLLECTION = "read_stats_total";
+export const VISITOR_COLLECTION = "visitor_read_stats";
 export const OUTPUT_FILENAME = "read-stats.json";
 
 export function parseArgs(argv) {
@@ -123,6 +127,8 @@ export function redactAdminDoc(doc) {
 export function buildSnapshot({
   siteDocs,
   hudDocs,
+  totalDocs = [],
+  visitorDocs = [],
   windowDays,
   windowStart,
   windowEnd,
@@ -135,6 +141,13 @@ export function buildSnapshot({
     windowEnd,
     site: siteDocs.map(redactAdminDoc),
     hud: hudDocs,
+    // Firestore-project-wide daily totals from the Cloud Monitoring cron
+    // (one doc per UTC day). Small — a full 60-day window is ≤ 60 docs.
+    total: totalDocs,
+    // Anonymous clan-site visitor sessions. One doc per visitor per day.
+    // adminEmail isn't set on these but redact defensively in case a
+    // future writer starts populating a similarly-named field.
+    visitors: visitorDocs.map(redactAdminDoc),
   };
 }
 
@@ -158,14 +171,18 @@ export async function run({
   );
 
   const token = await getToken();
-  const [siteDocs, hudDocs] = await Promise.all([
+  const [siteDocs, hudDocs, totalDocs, visitorDocs] = await Promise.all([
     queryReadStatsCollection(fetchImpl, token, args.project, ADMIN_COLLECTION, windowStart),
     queryReadStatsCollection(fetchImpl, token, args.project, HUD_COLLECTION, windowStart),
+    queryReadStatsCollection(fetchImpl, token, args.project, TOTAL_COLLECTION, windowStart),
+    queryReadStatsCollection(fetchImpl, token, args.project, VISITOR_COLLECTION, windowStart),
   ]);
 
   const snapshot = buildSnapshot({
     siteDocs,
     hudDocs,
+    totalDocs,
+    visitorDocs,
     windowDays: args.windowDays,
     windowStart,
     windowEnd,
@@ -173,7 +190,7 @@ export async function run({
   });
 
   logger.info?.(
-    `[read-stats-snapshot] site=${siteDocs.length} hud=${hudDocs.length} bytes≈${JSON.stringify(snapshot).length}`,
+    `[read-stats-snapshot] site=${siteDocs.length} hud=${hudDocs.length} total=${totalDocs.length} visitors=${visitorDocs.length} bytes≈${JSON.stringify(snapshot).length}`,
   );
 
   if (args.dryRun) {
