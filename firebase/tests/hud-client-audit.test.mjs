@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "19.5");
+  assert.equal(version, "19.6");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 

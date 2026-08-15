@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      19.5
+// @version      19.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1491,11 +1491,20 @@
     async function writeMatchSnapshotDoc(uid, snap) {
         const fb = firestoreReady;
         if (!fb || !uid || !snap?.matchId) return;
+        // 19.6: sourceUserId now identifies the Firebase auth uid so
+        // rules can bind writes to request.auth.uid. Keep the game's
+        // Rocket Goal player id as rgPlayerId so admins can still
+        // join match_snapshots to the roster.
+        if (!firebaseAuthUid) {
+            dbg("writeMatchSnapshotDoc skipped: firebaseAuthUid not ready");
+            return;
+        }
         try {
-            const docId = `${uid}_${snap.matchId}`;
+            const docId = `${firebaseAuthUid}_${snap.matchId}`;
             const ref = fb.doc(fb.db, "match_snapshots", docId);
             await atlasSetDoc(fb, "match_snapshots", ref, {
-                sourceUserId: uid,
+                sourceUserId: firebaseAuthUid,
+                rgPlayerId: uid,
                 deviceId: getDeviceId(),
                 matchId: snap.matchId,
                 mode: snap.mode,
@@ -1644,6 +1653,11 @@
     const LEADERBOARD_COLLECTION = "script_submissions";
 
     let firestoreReady = null;
+    // 19.6 — every write stamps sourceUserId = auth.currentUser.uid so
+    // rules can bind sourceUserId to request.auth.uid. Set once by
+    // initFirebase() after signInAnonymously() resolves; cleared on
+    // failure so callers can no-op instead of writing garbage.
+    let firebaseAuthUid = null;
     let firestoreReadCount = 0;
     let firestoreWriteCount = 0;
     const FIRESTORE_READ_BUDGET = 120;
@@ -1916,7 +1930,11 @@
 
     async function uploadHudReadStats({ final = false } = {}) {
         if (hudStatsUploadInFlight) return;
-        const uid = (typeof myUserId === "function") ? myUserId() : null;
+        // 19.6: telemetry doc id must be keyed by the Firebase auth uid
+        // so rules can bind writes to request.auth.uid. Game's Rocket
+        // Goal player id rides along as rgPlayerId for cross-reference.
+        const uid = firebaseAuthUid;
+        const rgPlayerId = (typeof myUserId === "function") ? myUserId() : null;
         if (!uid) return; // no identity yet — can't authenticate the write
         const fb = firestoreReady;
         if (!fb) return;
@@ -1950,6 +1968,11 @@
                 deniesRecent,
                 lastWriteAt: fb.serverTimestamp(),
             };
+            // 19.6: rgPlayerId is the game's Rocket Goal player id so
+            // admins can join telemetry rows back to the leaderboard
+            // when the auth uid alone isn't recognizable. Only stamp
+            // when we actually have one.
+            if (rgPlayerId) payload.rgPlayerId = rgPlayerId;
             const ref = fb.doc(fb.db, "hud_read_stats", docId);
             // atlasSetDoc goes through the blacklist gate + logWrite, so the
             // telemetry write itself is counted. Small overhead (1 write per
@@ -2006,9 +2029,33 @@
                 runTransaction,
             } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+            // 19.6 — anonymous Firebase Auth so every write can carry
+            // sourceUserId = auth.currentUser.uid. Rules bind that uid
+            // to request.auth.uid, closing the sourceUserId-forgery
+            // vector from the 2026-08-14 incident.
+            const { getAuth, signInAnonymously } =
+                await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
 
             const app = initializeApp(FIREBASE_CONFIG);
             const db = getFirestore(app);
+            // Sign in anonymously BEFORE anyone can await initFirebase()
+            // and start writing. Any write that beats this loses its
+            // auth.uid stamp, so we must resolve auth before we hand
+            // firestoreReady out. If auth fails, leave firebaseAuthUid
+            // null — writes call-site check will no-op instead of
+            // shipping a doc that will just be denied.
+            try {
+                const auth = getAuth(app);
+                if (!auth.currentUser) await signInAnonymously(auth);
+                firebaseAuthUid = auth.currentUser ? auth.currentUser.uid : null;
+                if (!firebaseAuthUid) {
+                    dbg("initFirebase: signInAnonymously resolved without a uid");
+                }
+            } catch (authErr) {
+                firebaseAuthUid = null;
+                dbg("initFirebase: signInAnonymously failed: "
+                    + (authErr && authErr.message ? authErr.message : authErr));
+            }
             const isDeny = err => err && String(err.code || "").includes("permission-denied");
             const currentUidForDeny = () => {
                 try { return (typeof myUserId === "function" && myUserId()) || ""; }
@@ -2556,8 +2603,17 @@
         const fb = await initFirebase();
         if (!fb) return;
         if (!(await atlasMutationAllowed(fb, "leaderboard submission"))) return;
+        // 19.6: doc id is now the Firebase anonymous auth uid so rules
+        // can bind sourceUserId == request.auth.uid. Game's Rocket Goal
+        // player id (data.Id) rides along as rgPlayerId for roster
+        // joins. If auth didn't land, skip — the write would just be
+        // denied by the new rules.
+        if (!firebaseAuthUid) {
+            dbg("submitToLeaderboardInner skipped: firebaseAuthUid not ready");
+            return;
+        }
 
-        const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, data.Id);
+        const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, firebaseAuthUid);
 
         // ask for display name once per player unless Rename forces it
         let existingDisplayName = cachedDisplayNames.get(data.Id) ?? null;
@@ -2627,12 +2683,17 @@
             xp: data.AccountXp ?? 0,
             equippedSkinId: data.EquippedSkinId ?? null,
             lastUpdated: new Date().toISOString(),
-            sourceUserId: data.Id,
+            // 19.6 — sourceUserId is now the Firebase auth uid, bound
+            // by rules to request.auth.uid. rgPlayerId keeps the game's
+            // Rocket Goal player id for cross-referencing / roster
+            // joins so we don't lose the display-name-by-account link.
+            sourceUserId: firebaseAuthUid,
+            rgPlayerId: data.Id,
             deviceId: getDeviceId(),
             scriptVersion: SCRIPT_VERSION,
             versionNum: SCRIPT_VERSION_NUM,
             // Last 5 match snapshots for cheap "recent form" reads. Full
-            // per-match history lives in match_snapshots/{uid}_{matchId}.
+            // per-match history lives in match_snapshots/{authUid}_{matchId}.
             recentMatches: (_recentMatchesRing || []).slice(-RECENT_MATCHES_CAP),
             lastWriteAt: fb.serverTimestamp(),
         };
@@ -4048,7 +4109,15 @@
 
     async function syncToRealLeaderboard(fb, data, displayName) {
       try {
-        const sourceUserId = data.Id;
+        // 19.6: sourceUserId is now the Firebase auth uid (bound to
+        // request.auth.uid by rules). Keep data.Id (game's Rocket Goal
+        // player id) as rgPlayerId for cross-referencing on the site.
+        if (!firebaseAuthUid) {
+            dbg("syncToRealLeaderboard skipped: firebaseAuthUid not ready");
+            return;
+        }
+        const sourceUserId = firebaseAuthUid;
+        const rgPlayerId = data.Id;
 
         // piggy-back: refresh this member's MMR in the clan doc, get tag back
         const clanInfo = await queueClanMMRSync(fb, data);
@@ -4129,6 +4198,7 @@
                 vol: typeof glicko.vol === "number" ? glicko.vol : null,
                 sessionMmrDelta,
                 currentStreak: publishedStreak,
+                rgPlayerId,
             }));
         }
 
@@ -4141,6 +4211,7 @@
             wins: totalWins,
             matches: totalMatches,
             currentStreak: publishedStreak,
+            rgPlayerId,
         }));
       } catch (e) {
         dbg("syncToRealLeaderboard threw: " + (e && e.message ? e.message : e));
@@ -6994,7 +7065,15 @@
     }
 
     async function writeClanNotice(fb, userId, notice) {
-        const sourceUserId = myUserId();
+        // 19.6: sourceUserId is the Firebase auth uid so rules can
+        // bind writes to request.auth.uid. Game's Rocket Goal player
+        // id rides along as rgPlayerId. If auth didn't land, skip.
+        if (!firebaseAuthUid) {
+            dbg("writeClanNotice skipped: firebaseAuthUid not ready");
+            return false;
+        }
+        const sourceUserId = firebaseAuthUid;
+        const rgPlayerId = myUserId();
         return atlasSetDoc(
             fb,
             "clan notice",
@@ -7002,6 +7081,7 @@
             {
                 ...notice,
                 sourceUserId,
+                rgPlayerId,
                 deviceId: getDeviceId(),
                 scriptVersion: SCRIPT_VERSION,
                 versionNum: SCRIPT_VERSION_NUM,
