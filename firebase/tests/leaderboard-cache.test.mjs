@@ -15,6 +15,7 @@ import {
   parseCacheArguments,
   planCacheWrite,
   holdSuspiciousRankedRows,
+  publicImageUrl,
   blacklistPausesWrites,
   sortSnapshotForPlaylist,
   sourceHashForRows,
@@ -455,6 +456,27 @@ test("buildJsonRow name field is capped at 120 chars", () => {
   const long = "x".repeat(500);
   const row = buildJsonRow({ sourceUserId: "a", name: long, mmr: 1500 }, 1, "1v1");
   assert.equal(row.name.length, 120);
+});
+
+test("buildJsonRow drops Discord and GitHub flag URLs", () => {
+  const row = buildJsonRow({
+    sourceUserId: "a",
+    name: "A",
+    mmr: 1500,
+    flag: "https://cdn.discordapp.com/attachments/1/2/flag.png",
+    icons: [
+      "https://raw.githubusercontent.com/foo/bar/icon.png",
+      "https://i.imgur.com/saBa4s8.png",
+    ],
+  }, 1, "1v1");
+  assert.equal(row.flag, undefined);
+  assert.deepEqual(row.icons, ["https://i.imgur.com/saBa4s8.png"]);
+});
+
+test("publicImageUrl keeps country-flag hosts", () => {
+  assert.equal(publicImageUrl("https://i.imgur.com/saBa4s8.png"), "https://i.imgur.com/saBa4s8.png");
+  assert.equal(publicImageUrl("US"), "US");
+  assert.equal(publicImageUrl("https://cdn.discordapp.com/attachments/1/2/x.png"), "");
 });
 
 test("buildJsonRow icons array is capped at 12 entries", () => {
