@@ -19,6 +19,12 @@ export const CACHE_TOP_N = 100;
 // write — veterans installing the HUD for the first time still sync.
 export const PUBLISH_MMR_ABS_HOLD = 15000;
 export const PUBLISH_MMR_JUMP_CUSHION = 2500;
+// Known high accounts that are allowed on the public JSON even when
+// they look "first-seen" after a restore or a HUD reinstall.
+export const PUBLISH_KEEP_NAMES = Object.freeze([
+  "king von",
+  "[king] virtualzzs",
+]);
 export const MAX_CACHE_DOC_BYTES = 900_000;
 export const SCHEMA_VERSION = 1;
 export const JSON_SCHEMA_VERSION = 1;
@@ -700,6 +706,63 @@ export function mergeSnapshot(previous, delta) {
   return Array.from(byId.values());
 }
 
+export function normalizePublishName(name) {
+  return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function rowUid(row) {
+  return String(row?.sourceUserId || row?.uid || row?._docId || "").trim();
+}
+
+function rowVersion(row) {
+  const value = Number(row?.versionNum);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function rowWriteAt(row) {
+  const raw = row?.lastWriteAt || row?._updateTime || "";
+  const parsed = Date.parse(typeof raw === "string" ? raw : String(raw));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function rowScore(row, playlist) {
+  const value = Number(playlist === "wins" ? row?.wins : row?.mmr);
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+}
+
+function identityKey(row) {
+  const rgPlayerId = String(row?.rgPlayerId || "").trim();
+  if (rgPlayerId) return `id:${rgPlayerId}`;
+  const name = normalizePublishName(row?.name);
+  if (name) return `name:${name}`;
+  return `uid:${rowUid(row)}`;
+}
+
+function preferIdentityRow(current, candidate, playlist) {
+  if (rowVersion(candidate) !== rowVersion(current)) {
+    return rowVersion(candidate) > rowVersion(current);
+  }
+  if (rowWriteAt(candidate) !== rowWriteAt(current)) {
+    return rowWriteAt(candidate) > rowWriteAt(current);
+  }
+  return rowScore(candidate, playlist) > rowScore(current, playlist);
+}
+
+// HUD reinstalls mint a new anonymous Firebase uid, so the same player
+// can land twice under the same name (or the same in-game id). The
+// public JSON only keeps one row per person.
+export function dedupeRowsByIdentity(rows, playlist) {
+  const kept = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = identityKey(row);
+    const existing = kept.get(key);
+    if (!existing || preferIdentityRow(existing, row, playlist)) {
+      kept.set(key, row);
+    }
+  }
+  return Array.from(kept.values());
+}
+
 // New uid showing up already above the current top (plus a cushion)
 // stays out of the public JSON. Already-published players are left alone.
 export function holdSuspiciousRankedRows(rows, previousRows = []) {
@@ -707,6 +770,10 @@ export function holdSuspiciousRankedRows(rows, previousRows = []) {
   const seenUids = new Set(
     prev.map(row => String(row?.sourceUserId || row?.uid || "").trim()).filter(Boolean),
   );
+  const seenNames = new Set(
+    prev.map(row => normalizePublishName(row?.name)).filter(Boolean),
+  );
+  const keepNames = new Set(PUBLISH_KEEP_NAMES);
   let previousMax = 0;
   for (const row of prev) {
     const mmr = Number(row?.mmr);
@@ -718,8 +785,10 @@ export function holdSuspiciousRankedRows(rows, previousRows = []) {
   for (const row of Array.isArray(rows) ? rows : []) {
     const uid = String(row?.sourceUserId || row?.uid || "").trim();
     const mmr = Number(row?.mmr);
-    const firstSeen = Boolean(uid) && !seenUids.has(uid);
-    if (firstSeen && Number.isFinite(mmr) && mmr > threshold) {
+    const nameKey = normalizePublishName(row?.name);
+    const firstSeen = Boolean(uid) && !seenUids.has(uid) && !seenNames.has(nameKey);
+    const known = keepNames.has(nameKey);
+    if (firstSeen && !known && Number.isFinite(mmr) && mmr > threshold) {
       held.push({
         uid,
         name: String(row?.name || ""),
@@ -982,7 +1051,10 @@ export async function buildLeaderboardCaches({
     }
 
     // Full snapshot goes back to saveStateFor; top-N slice is what we publish.
-    const sortedForPlaylist = sortSnapshotForPlaylist(rows, playlist);
+    const sortedForPlaylist = sortSnapshotForPlaylist(
+      dedupeRowsByIdentity(rows, playlist),
+      playlist,
+    );
     const hold = playlist === "wins"
       ? { kept: sortedForPlaylist, held: [], threshold: null }
       : holdSuspiciousRankedRows(sortedForPlaylist, priorSnapshot || []);

@@ -15,6 +15,7 @@ import {
   parseCacheArguments,
   planCacheWrite,
   holdSuspiciousRankedRows,
+  dedupeRowsByIdentity,
   publicImageUrl,
   blacklistPausesWrites,
   sortSnapshotForPlaylist,
@@ -825,6 +826,34 @@ test("holdSuspiciousRankedRows does not hold an already-published uid", () => {
   );
   assert.equal(held.length, 0);
   assert.equal(kept.length, 1);
+});
+
+test("holdSuspiciousRankedRows keeps a restored Virtualzzs row", () => {
+  const { kept, held } = holdSuspiciousRankedRows(
+    [{ sourceUserId: "virt", name: "[KING] Virtualzzs", mmr: 20549 }],
+    [{ sourceUserId: "old", name: "Top", mmr: 11000 }],
+  );
+  assert.equal(held.length, 0);
+  assert.equal(kept.length, 1);
+});
+
+test("dedupeRowsByIdentity keeps the newer HUD version of the same name", () => {
+  const rows = dedupeRowsByIdentity([
+    { sourceUserId: "old", name: "[KING] JesusDied4U", mmr: 8508, versionNum: 19.5, lastWriteAt: "2026-08-15T07:32:00Z" },
+    { sourceUserId: "new", name: "[KING] JesusDied4U", mmr: 8508, versionNum: 19.6, lastWriteAt: "2026-08-15T04:16:00Z" },
+  ], "3v3");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceUserId, "new");
+});
+
+test("dedupeRowsByIdentity collapses two uids that share rgPlayerId", () => {
+  const rows = dedupeRowsByIdentity([
+    { sourceUserId: "old", name: "Croxy", mmr: 8000, rgPlayerId: "abc", versionNum: 19.5 },
+    { sourceUserId: "new", name: "Croxyyys", mmr: 9256, rgPlayerId: "abc", versionNum: 19.8 },
+  ], "3v3");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceUserId, "new");
+  assert.equal(rows[0].name, "Croxyyys");
 });
 
 test("blacklistPausesWrites is only on for boolean true", () => {
