@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "19.8");
+  assert.equal(version, "19.9");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -100,6 +100,24 @@ test("deny logger attaches client-side reasons (19.5+)", () => {
   assert.match(hudSource, /function describeLeaderboardReasons\(/);
   assert.match(hudSource, /function describeScriptSubmissionReasons\(/);
   assert.match(hudSource, /function describeMatchSnapshotReasons\(/);
+});
+
+test("HUD tells unlisted players to ask Pal or Jesus on Discord", () => {
+  assert.match(hudSource, /https:\/\/discord\.gg\/MDz7hsrh9m/);
+  assert.match(hudSource, /function showNotAllowlistedUI/);
+  assert.match(hudSource, /isAllowlistGatedLabel/);
+  assert.match(hudSource, /allowedUserIds/);
+});
+
+test("clan MMR sync skips Firestore when no event is active", () => {
+  const source = hudFunctionSource("updateMyClanMMR");
+  assert.match(source, /eventPhase\(\) !== "active"/);
+  assert.match(source, /Clan MMR write skipped: no active event/);
+  assert.match(source, /await loadEventConfig\(fb\)/);
+  assert.doesNotMatch(
+    source.slice(0, source.indexOf("Clan MMR write skipped")),
+    /loadClanData\(true\)/,
+  );
 });
 
 test("every client mutation path uses the central version gate", () => {
@@ -180,7 +198,11 @@ test("outdated clients see one update UI while reads stay available", async () =
   const atlasMutationAllowed = extractHudFunction("atlasMutationAllowed", {
     isUpdateRequired: async () => true,
     writesPaused: false,
+    updateRequired: true,
+    notAllowlisted: false,
+    isAllowlistGatedLabel: () => false,
     showUpdateRequiredUI,
+    showNotAllowlistedUI: () => {},
     dbg: () => {},
   });
   assert.equal(await atlasMutationAllowed({}, "test write"), false);

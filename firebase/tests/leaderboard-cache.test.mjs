@@ -15,6 +15,8 @@ import {
   parseCacheArguments,
   planCacheWrite,
   holdSuspiciousRankedRows,
+  keepAllowlistedRows,
+  uidsToAutoBlacklist,
   dedupeRowsByIdentity,
   publicImageUrl,
   blacklistPausesWrites,
@@ -856,6 +858,31 @@ test("holdSuspiciousRankedRows keeps a restored Virtualzzs row", () => {
   );
   assert.equal(held.length, 0);
   assert.equal(kept.length, 1);
+});
+
+test("keepAllowlistedRows drops HUD rows that are not on the allow list", () => {
+  const rows = keepAllowlistedRows([
+    { sourceUserId: "ok", name: "Pal", mmr: 2000 },
+    { sourceUserId: "nope", name: "Stranger", mmr: 1800 },
+    { name: "Manual upload", mmr: 1500 },
+  ], ["ok"]);
+  assert.deepEqual(rows.map(row => row.name), ["Pal", "Manual upload"]);
+});
+
+test("keepAllowlistedRows keeps everyone when the allow list field is missing", () => {
+  const rows = [{ sourceUserId: "a", name: "A", mmr: 1 }];
+  assert.equal(keepAllowlistedRows(rows, null).length, 1);
+});
+
+test("uidsToAutoBlacklist only bans first-seen rows over 20k", () => {
+  assert.deepEqual(
+    uidsToAutoBlacklist([
+      { uid: "atk", mmr: 27284 },
+      { uid: "mid", mmr: 16000 },
+      { uid: "atk", mmr: 27284 },
+    ], ["already"]),
+    ["atk"],
+  );
 });
 
 test("dedupeRowsByIdentity keeps the newer HUD version of the same name", () => {

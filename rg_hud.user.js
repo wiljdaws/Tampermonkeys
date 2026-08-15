@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      19.8
+// @version      19.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -572,6 +572,11 @@
                         <div class="rgSettingRow"><span>Color 1</span><input type="color" id="rgSetColor1"></div>
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
                         <div class="rgSettingRow"><span title="Show the animation after you end a tracked opponent streak">Streak snipe</span><input type="checkbox" id="rgSetStreakSnipe"></div>
+                        <div class="rgSettingRow" style="flex-wrap:wrap;gap:6px;">
+                            <span title="Send this to Pal or JesusDied4U if you need to be added to the board">Firebase id</span>
+                            <code id="rgSetAuthUid" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:#8E9BC2;">signing in…</code>
+                            <button type="button" id="rgSetCopyUid" class="rgBtn" style="padding:2px 8px;">Copy</button>
+                        </div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
                     </div>
@@ -770,6 +775,26 @@
         setOpacity.oninput = () => { settings.glowOpacity = parseFloat(setOpacity.value); saveSettings(); applyGlowSettings(); };
         setColor1.oninput = () => { settings.glowColor1 = setColor1.value; saveSettings(); applyGlowSettings(); };
         setColor2.oninput = () => { settings.glowColor2 = setColor2.value; saveSettings(); applyGlowSettings(); };
+        const uidLabel = document.getElementById("rgSetAuthUid");
+        const copyUid = document.getElementById("rgSetCopyUid");
+        const paintAuthUid = () => {
+            if (uidLabel) uidLabel.textContent = firebaseAuthUid || "signing in…";
+        };
+        paintAuthUid();
+        if (copyUid) {
+            copyUid.onclick = async () => {
+                if (!firebaseAuthUid) return;
+                try {
+                    await navigator.clipboard.writeText(firebaseAuthUid);
+                    copyUid.textContent = "Copied";
+                    setTimeout(() => { copyUid.textContent = "Copy"; }, 1600);
+                } catch (e) {
+                    copyUid.textContent = "Fail";
+                    setTimeout(() => { copyUid.textContent = "Copy"; }, 1600);
+                }
+            };
+        }
+
         document.getElementById("rgSetReset").onclick = () => {
             dbg("Settings reset to defaults");
             settings = { ...DEFAULT_SETTINGS };
@@ -2032,6 +2057,8 @@
                 if (!firebaseAuthUid) {
                     dbg("initFirebase: signInAnonymously resolved without a uid");
                 }
+                const uidLabel = document.getElementById("rgSetAuthUid");
+                if (uidLabel) uidLabel.textContent = firebaseAuthUid || "signing in…";
             } catch (authErr) {
                 firebaseAuthUid = null;
                 dbg("initFirebase: signInAnonymously failed: "
@@ -2110,6 +2137,10 @@
                 onSnapshot,
                 runTransaction,
             };
+            isUpdateRequired(firestoreReady).then(() => {
+                if (notAllowlisted) showNotAllowlistedUI();
+                if (writesPaused) showWritesPausedUI();
+            }).catch(() => {});
             return firestoreReady;
         } catch (e) {
             dbg("initFirebase failed: " + (e && e.message ? e.message : e));
@@ -2127,8 +2158,11 @@
     let updateRequiredChecked = false;
     let updateRequired = false;
     let writesPaused = false;
+    let notAllowlisted = false;
     let updateRequiredUiShown = false;
     let writesPausedUiShown = false;
+    let notAllowlistedUiShown = false;
+    const DISCORD_INVITE = "https://discord.gg/MDz7hsrh9m";
 
     function showUpdateRequiredUI() {
         if (updateRequiredUiShown) return;
@@ -2142,6 +2176,42 @@
         showBanner("Writes are paused. Standings are frozen until Pal turns them back on.", "#ffcf5b");
     }
 
+    function showNotAllowlistedUI() {
+        if (notAllowlistedUiShown) return;
+        notAllowlistedUiShown = true;
+        createHUD();
+        if (!hud || document.getElementById("rgAllowlistNudge")) return;
+        const bar = document.createElement("div");
+        bar.id = "rgAllowlistNudge";
+        bar.style.cssText = `
+            position:absolute;
+            top:-38px;
+            left:0;
+            right:0;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:8px;
+            padding:6px 10px;
+            border:1px solid #ffcf5b;
+            border-radius:8px;
+            background:rgba(10,14,18,0.95);
+            color:#ffcf5b;
+            font:600 12px system-ui, sans-serif;
+            z-index:5;
+        `;
+        const link = document.createElement("a");
+        link.href = DISCORD_INVITE;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Leaderboard is invite-only — ask Pal or JesusDied4U on Discord to add you";
+        link.style.cssText = "color:#ffcf5b;text-decoration:none;flex:1;cursor:pointer";
+        const uid = firebaseAuthUid || "";
+        if (uid) link.title = `Your Firebase id: ${uid}`;
+        bar.appendChild(link);
+        hud.appendChild(bar);
+    }
+
     async function isUpdateRequired(fb) {
         if (updateRequiredChecked) return updateRequired || writesPaused;
         try {
@@ -2153,6 +2223,11 @@
                 const minV = data.minVersion;
                 if (typeof minV === "number" && SCRIPT_VERSION_NUM < minV) {
                     updateRequired = true;
+                }
+                const allowed = data.allowedUserIds;
+                const uid = firebaseAuthUid;
+                if (!Array.isArray(allowed) || !uid || !allowed.map(String).includes(uid)) {
+                    notAllowlisted = true;
                 }
             }
         } catch (e) {
@@ -2238,16 +2313,31 @@
         hud.appendChild(bar);
     }
 
+    function isAllowlistGatedLabel(label) {
+        const s = String(label || "");
+        if (/clan/i.test(s)) return false;
+        return /leaderboard|script_submissions|hud_read|submission|upsertPlaylist/i.test(s);
+    }
+
     async function atlasMutationAllowed(fb, label) {
-        if (!(await isUpdateRequired(fb))) return true;
+        await isUpdateRequired(fb);
         if (writesPaused) {
             showWritesPausedUI();
             dbg(`blocked paused-writes mutation: ${label}`);
             return false;
         }
-        showUpdateRequiredUI();
-        dbg(`blocked outdated client mutation: ${label}`);
-        return false;
+        if (updateRequired) {
+            showUpdateRequiredUI();
+            dbg(`blocked outdated client mutation: ${label}`);
+            return false;
+        }
+        if (notAllowlisted && isAllowlistGatedLabel(label)) {
+            showNotAllowlistedUI();
+            dbg(`blocked allow-list mutation: ${label}`);
+            return false;
+        }
+        if (notAllowlisted) showNotAllowlistedUI();
+        return true;
     }
 
     function atlasStampedMutationData(ref, data) {
@@ -2689,9 +2779,11 @@
             lastWriteAt: fb.serverTimestamp(),
         };
 
-        // load clan before the snapshot key or a first-of-session sync misses the tag
+        // Tag for the snapshot key. Off-event we do not touch clan docs —
+        // use whatever is already in memory from the clan panel.
         if (!clanLoaded || clanLoadedForAccount !== data.Id) {
-            await loadClanData(true);
+            await loadEventConfig(fb);
+            if (eventPhase() === "active") await loadClanData(true);
         }
 
         // clan tag lives in the snapshot key so a tag change alone forces
@@ -4378,6 +4470,15 @@
     ) {
         const uid = data.Id;
         try {
+            await loadEventConfig(fb);
+            // Normal matches do not read or write clan docs. Cup score
+            // only moves during an active event; join/leave/kick use
+            // their own write paths.
+            if (eventPhase() !== "active") {
+                const tag = myClan?.tag ?? "";
+                dbg("Clan MMR write skipped: no active event");
+                return myClan ? { tag, clanId: myClan.id, synced: false, mmr: null } : null;
+            }
             // A cached null can outlive a stale/missed directory read. Match-end
             // must retry discovery instead of silently abandoning contribution.
             if (!clanLoaded || clanLoadedForAccount !== uid || !myClan) await loadClanData(true);
@@ -4392,7 +4493,6 @@
             const myMMR = rankedModes.reduce((s, m) =>
                 s + (typeof g?.[m]?.displayRating === "number" ? g[m].displayRating : 0), 0);
 
-            await loadEventConfig(fb);
             await loadClanRolePerms(fb);
 
             const prevMine = effectiveClanMemberStat(myClan, uid).mmr;

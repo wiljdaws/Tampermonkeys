@@ -876,15 +876,84 @@ export function blacklistPausesWrites(data) {
   return fields?.pauseWrites === true;
 }
 
-export async function readWritesPaused(fetchImpl, token, project) {
+export function allowedUserIdsFromControl(data) {
+  const fields = data?.fields && typeof data.fields === "object" ? data.fields : data;
+  return Array.isArray(fields?.allowedUserIds) ? fields.allowedUserIds.map(String) : null;
+}
+
+// HUD-synced rows need an allowlisted uid. Manual admin rows have no
+// sourceUserId and still publish. If the control field is missing, keep
+// the old "publish everyone" behavior so a bad deploy cannot blank the board.
+export function keepAllowlistedRows(rows, allowedUserIds) {
+  if (!Array.isArray(allowedUserIds)) return Array.isArray(rows) ? rows : [];
+  const allow = new Set(allowedUserIds.map(id => String(id || "").trim()).filter(Boolean));
+  return (Array.isArray(rows) ? rows : []).filter(row => {
+    const uid = String(row?.sourceUserId || "").trim();
+    if (!uid) return true;
+    return allow.has(uid);
+  });
+}
+
+// First-seen poison rows already held off the public JSON. Ban the uid
+// when MMR is cartoonishly high so the next HUD write dies in rules.
+export const AUTO_BLACKLIST_MMR = 20000;
+export function uidsToAutoBlacklist(heldRows, alreadyBanned = []) {
+  const banned = new Set((alreadyBanned || []).map(id => String(id || "").trim()));
+  const add = [];
+  for (const row of Array.isArray(heldRows) ? heldRows : []) {
+    const uid = String(row?.uid || "").trim();
+    const mmr = Number(row?.mmr);
+    if (!uid || banned.has(uid) || !Number.isFinite(mmr) || mmr < AUTO_BLACKLIST_MMR) continue;
+    banned.add(uid);
+    add.push(uid);
+  }
+  return add;
+}
+
+export async function readAccessControl(fetchImpl, token, project) {
   const body = await apiJson(
     fetchImpl,
     token,
     `${documentsBase(project)}/admin/blacklist`,
     { method: "GET", quotaProject: project },
   );
-  if (!body?.name) return false;
-  return blacklistPausesWrites(decodeFirestoreDocument(body));
+  if (!body?.name) return { paused: false, allowedUserIds: null, userIds: [] };
+  const decoded = decodeFirestoreDocument(body);
+  return {
+    paused: blacklistPausesWrites(decoded),
+    allowedUserIds: allowedUserIdsFromControl(decoded),
+    userIds: Array.isArray(decoded?.userIds) ? decoded.userIds.map(String) : [],
+  };
+}
+
+export async function readWritesPaused(fetchImpl, token, project) {
+  const control = await readAccessControl(fetchImpl, token, project);
+  return control.paused;
+}
+
+export async function appendBlacklistUserIds(fetchImpl, token, project, extraIds) {
+  const ids = [...new Set((extraIds || []).map(id => String(id || "").trim()).filter(Boolean))];
+  if (!ids.length) return { written: false, userIds: [] };
+  const control = await readAccessControl(fetchImpl, token, project);
+  const merged = [...new Set([...(control.userIds || []), ...ids])];
+  await apiJson(
+    fetchImpl,
+    token,
+    `${documentsBase(project)}/admin/blacklist?updateMask.fieldPaths=userIds`,
+    {
+      method: "PATCH",
+      quotaProject: project,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: {
+          userIds: {
+            arrayValue: { values: merged.map(id => ({ stringValue: id })) },
+          },
+        },
+      }),
+    },
+  );
+  return { written: true, userIds: merged };
 }
 
 export async function readCacheDocument(
@@ -990,7 +1059,10 @@ export async function buildLeaderboardCaches({
     throw new Error("fetch is required");
   }
   const token = await getToken();
-  if (checkHalt && await readWritesPaused(fetchImpl, token, project)) {
+  const access = checkHalt
+    ? await readAccessControl(fetchImpl, token, project)
+    : { paused: false, allowedUserIds: null, userIds: [] };
+  if (checkHalt && access.paused) {
     console.warn("[halt] pauseWrites is on. Skipping publish.");
     return {
       project,
@@ -1091,7 +1163,8 @@ export async function buildLeaderboardCaches({
         heldRows.push({ playlist, ...row });
       }
     }
-    const topSlice = hold.kept.slice(0, top);
+    const allowlisted = keepAllowlistedRows(hold.kept, access.allowedUserIds);
+    const topSlice = allowlisted.slice(0, top);
 
     // Advance the cursor; keep the prior one if no rows came back this run.
     const nextSince = maxLastWriteAt(mode === "delta" ? deltaRows : rows)
@@ -1225,6 +1298,15 @@ export async function buildLeaderboardCaches({
       label: "build-leaderboard-cache",
       reads: readsThisRun,
     });
+    const autoBan = uidsToAutoBlacklist(heldRows, access.userIds);
+    if (autoBan.length) {
+      try {
+        await appendBlacklistUserIds(fetchImpl, token, project, autoBan);
+        console.warn(`[autoban] added ${autoBan.length} uid(s) over ${AUTO_BLACKLIST_MMR} MMR`);
+      } catch (error) {
+        console.warn(`[autoban] skipped: ${error?.message || error}`);
+      }
+    }
   }
 
   return {
