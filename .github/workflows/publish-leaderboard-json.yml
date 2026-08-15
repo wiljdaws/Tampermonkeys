@@ -32,6 +32,11 @@ on:
         type: boolean
         required: false
         default: false
+      build_read_stats:
+        description: Also rebuild the 7-day read-stats snapshot (daily schedule already does this)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -152,22 +157,10 @@ jobs:
       #       --project "$PROJECT" \
       #       --output-dir "$GITHUB_WORKSPACE/out"
 
-      - name: Decide read-stats cadence
-        id: read_stats_gate
-        run: |
-          # Only run read-stats on the quarter hour. Every minute is overkill.
-          minute=$(date -u +%M)
-          minute="${minute#0}"   # strip leading zero so bash doesn't parse "08" as octal
-          if [ $(( ${minute:-0} % 15 )) -eq 0 ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "minute=$minute — running"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "minute=$minute — skip until next :15"
-          fi
-
+      # Once a day with the 10:13 UTC full publish. The 15-min CDC
+      # dispatches must not scan telemetry — that path was 22k reads/day.
       - name: Build read-stats snapshot
-        if: steps.read_stats_gate.outputs.run == 'true'
+        if: github.event_name == 'schedule' || github.event.inputs.build_read_stats == 'true'
         working-directory: firebase
         run: |
           npm run build:read-stats-snapshot -- \

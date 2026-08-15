@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Publishes a 60-day snapshot of the four read-stats collections
+// Publishes a 7-day snapshot of the four read-stats collections
 // (admin_read_stats + hud_read_stats + read_stats_total + visitor_read_stats)
 // to state/read-stats.json. The Reads admin dashboard reads from here
 // instead of hitting Firestore for any of the four. adminEmail is stripped
-// on the way out.
+// on the way out. Run once a day from the publisher schedule — a 15-min
+// 60-day scan is what blew Spark reads on 2026-08-15.
 //
 // Usage:
 //   node scripts/build-read-stats-snapshot.mjs --state-dir path/to/site-repo/state
@@ -17,10 +18,9 @@ import { fileURLToPath } from "node:url";
 import { getGcloudAccessToken } from "./build-leaderboard-cache.mjs";
 import { decodeFirestoreDocument } from "./snapshot-production.mjs";
 
-// 60 days so the admin dashboard's default 7-day view (and any casual
-// scroll back through recent history) always serves from the CDN blob
-// instead of falling back to Firestore.
-export const WINDOW_DAYS = 60;
+// Matches the Reads tab default (today + 6 days back). Wider windows
+// made the daily scan itself the top Firestore reader.
+export const WINDOW_DAYS = 7;
 export const ADMIN_COLLECTION = "admin_read_stats";
 export const HUD_COLLECTION = "hud_read_stats";
 export const TOTAL_COLLECTION = "read_stats_total";
@@ -142,7 +142,7 @@ export function buildSnapshot({
     site: siteDocs.map(redactAdminDoc),
     hud: hudDocs,
     // Firestore-project-wide daily totals from the Cloud Monitoring cron
-    // (one doc per UTC day). Small — a full 60-day window is ≤ 60 docs.
+    // (one doc per UTC day). Small — a 7-day window is ≤ 7 docs.
     total: totalDocs,
     // Anonymous clan-site visitor sessions. One doc per visitor per day.
     // adminEmail isn't set on these but redact defensively in case a

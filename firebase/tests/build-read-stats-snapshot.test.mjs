@@ -13,7 +13,7 @@ test("parseArgs: required + defaults", () => {
   const a = parseArgs(["--state-dir", "/tmp/x"]);
   assert.equal(a.stateDir, "/tmp/x");
   assert.equal(a.project, "rgleaderboard");
-  assert.equal(a.windowDays, 60);
+  assert.equal(a.windowDays, 7);
   assert.equal(a.dryRun, false);
 });
 
