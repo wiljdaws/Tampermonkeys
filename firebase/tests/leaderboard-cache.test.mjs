@@ -856,6 +856,15 @@ test("dedupeRowsByIdentity collapses two uids that share rgPlayerId", () => {
   assert.equal(rows[0].name, "Croxyyys");
 });
 
+test("dedupeRowsByIdentity collapses same name when only one row has rgPlayerId", () => {
+  const rows = dedupeRowsByIdentity([
+    { sourceUserId: "old", name: "[KING] JesusDied4U", mmr: 8508, versionNum: 19.5 },
+    { sourceUserId: "new", name: "[KING] JesusDied4U", mmr: 8626, rgPlayerId: "old", versionNum: 19.8 },
+  ], "3v3");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceUserId, "new");
+});
+
 test("blacklistPausesWrites is only on for boolean true", () => {
   assert.equal(blacklistPausesWrites({ pauseWrites: true }), true);
   assert.equal(blacklistPausesWrites({ fields: { pauseWrites: true } }), true);

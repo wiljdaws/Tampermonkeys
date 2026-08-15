@@ -730,14 +730,6 @@ function rowScore(row, playlist) {
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 }
 
-function identityKey(row) {
-  const rgPlayerId = String(row?.rgPlayerId || "").trim();
-  if (rgPlayerId) return `id:${rgPlayerId}`;
-  const name = normalizePublishName(row?.name);
-  if (name) return `name:${name}`;
-  return `uid:${rowUid(row)}`;
-}
-
 function preferIdentityRow(current, candidate, playlist) {
   if (rowVersion(candidate) !== rowVersion(current)) {
     return rowVersion(candidate) > rowVersion(current);
@@ -748,19 +740,37 @@ function preferIdentityRow(current, candidate, playlist) {
   return rowScore(candidate, playlist) > rowScore(current, playlist);
 }
 
-// HUD reinstalls mint a new anonymous Firebase uid, so the same player
-// can land twice under the same name (or the same in-game id). The
-// public JSON only keeps one row per person.
-export function dedupeRowsByIdentity(rows, playlist) {
+function collapseByKey(rows, playlist, keyFn) {
   const kept = new Map();
+  const leftovers = [];
   for (const row of Array.isArray(rows) ? rows : []) {
-    const key = identityKey(row);
+    const key = keyFn(row);
+    if (!key) {
+      leftovers.push(row);
+      continue;
+    }
     const existing = kept.get(key);
     if (!existing || preferIdentityRow(existing, row, playlist)) {
       kept.set(key, row);
     }
   }
-  return Array.from(kept.values());
+  return [...kept.values(), ...leftovers];
+}
+
+// HUD reinstalls mint a new anonymous Firebase uid, so the same player
+// can land twice under the same name (or the same in-game id). Collapse
+// in-game id first, then display name, so either kind of twin drops.
+export function dedupeRowsByIdentity(rows, playlist) {
+  const byGameId = collapseByKey(
+    rows,
+    playlist,
+    row => String(row?.rgPlayerId || "").trim() || "",
+  );
+  return collapseByKey(
+    byGameId,
+    playlist,
+    row => normalizePublishName(row?.name),
+  );
 }
 
 // New uid showing up already above the current top (plus a cushion)
