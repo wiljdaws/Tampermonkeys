@@ -19,14 +19,22 @@ const HUD_UPDATE_URL =
   "https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js";
 
 function parseArgs(argv) {
-  const args = { project: "rgleaderboard", hud: null, dryRun: false };
+  const args = {
+    project: "rgleaderboard",
+    hud: null,
+    dryRun: false,
+    bumpMinVersion: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--project") args.project = argv[++i];
     else if (a === "--hud") args.hud = argv[++i];
     else if (a === "--dry-run" || a === "--plan") args.dryRun = true;
+    else if (a === "--bump-min-version") args.bumpMinVersion = true;
     else if (a === "--help" || a === "-h") {
-      console.log("publish-latest-version.mjs [--project=rgleaderboard] [--hud=path] [--dry-run]");
+      console.log(
+        "publish-latest-version.mjs [--project=rgleaderboard] [--hud=path] [--dry-run] [--bump-min-version]",
+      );
       process.exit(0);
     }
   }
@@ -109,6 +117,28 @@ async function main() {
     token,
   });
   console.log("[publish-latest-version] wrote admin/latest_version");
+
+  // 2026-08-14 incident hardening: after the leaderboard rules and the
+  // HUD both cut over to the auth-bound identity model, also bump
+  // admin/blacklist.minVersion so every pre-cutover HUD is forced to
+  // update. Rules read admin/blacklist.minVersion at write time.
+  if (args.bumpMinVersion) {
+    console.log(
+      `[publish-latest-version] bumping admin/blacklist.minVersion → ${versionNum}`,
+    );
+    await firestoreRequest({
+      project: args.project,
+      path: "admin/blacklist?updateMask.fieldPaths=minVersion",
+      method: "PATCH",
+      body: {
+        fields: {
+          minVersion: { doubleValue: versionNum },
+        },
+      },
+      token,
+    });
+    console.log("[publish-latest-version] wrote admin/blacklist.minVersion");
+  }
 }
 
 main().catch((err) => {

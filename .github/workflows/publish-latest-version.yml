@@ -20,6 +20,13 @@ on:
         description: Plan without writing (true/false)
         required: false
         default: "false"
+      bump_min_version:
+        description: >-
+          Also bump admin/blacklist.minVersion to the HUD @version so
+          pre-cutover clients are force-updated. Only use during
+          incident response — normal publishes should leave it "false".
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -35,6 +42,7 @@ jobs:
     env:
       FIREBASE_PROJECT: ${{ github.event.inputs.project || 'rgleaderboard' }}
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
+      BUMP_MIN_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bump_min_version || 'false' }}
 
     steps:
       - name: Check out repository
@@ -67,5 +75,8 @@ jobs:
           args=(--project "$FIREBASE_PROJECT")
           if [[ "$DRY_RUN" == "true" ]]; then
             args+=(--dry-run)
+          fi
+          if [[ "$BUMP_MIN_VERSION" == "true" ]]; then
+            args+=(--bump-min-version)
           fi
           npm run publish:latest-version -- "${args[@]}"
