@@ -66,10 +66,14 @@
     function getErrMsg(e) {
         return e && e.message ? e.message : String(e);
     }
+    function formatStackTrace(err) {
+        if (!err?.stack) return null;
+        return String(err.stack).split("\n").slice(0, 6).join(" | ");
+    }
     function pushError(err, origin) {
         try {
             const message = getErrMsg(err);
-            const stack = (err && err.stack) ? String(err.stack).split("\n").slice(0, 6).join(" | ") : "";
+            const stack = formatStackTrace(err) || "";
             _rgErrorBuf.push({ origin, msg: message, stack, at: Date.now() });
             if (_rgErrorBuf.length > 20) _rgErrorBuf.shift();
             dbg(`[ERROR:${origin}] ${message}${stack ? " :: " + stack : ""}`);
@@ -2413,7 +2417,7 @@
                 errName: e && e.name,
                 errMsg: e && e.message,
                 serverResponse: e && e.customData && e.customData.serverResponse,
-                stack: e && e.stack ? String(e.stack).split("\n").slice(0, 6).join(" | ") : null,
+                stack: formatStackTrace(e),
             });
             throw e;
         }
