@@ -70,6 +70,11 @@
         if (!err?.stack) return null;
         return String(err.stack).split("\n").slice(0, 6).join(" | ");
     }
+    function showTempFeedback(el, tempText, ms = 1500, originalText) {
+        const prev = originalText != null ? originalText : el.textContent;
+        el.textContent = tempText;
+        setTimeout(() => { el.textContent = prev; }, ms);
+    }
     function pushError(err, origin) {
         try {
             const message = getErrMsg(err);
@@ -793,11 +798,9 @@
                 if (!firebaseAuthUid) return;
                 try {
                     await navigator.clipboard.writeText(firebaseAuthUid);
-                    copyUid.textContent = "Copied";
-                    setTimeout(() => { copyUid.textContent = "Copy"; }, 1600);
+                    showTempFeedback(copyUid, "Copied", 1600, "Copy");
                 } catch (e) {
-                    copyUid.textContent = "Fail";
-                    setTimeout(() => { copyUid.textContent = "Copy"; }, 1600);
+                    showTempFeedback(copyUid, "Fail", 1600, "Copy");
                 }
             };
         }
@@ -10817,11 +10820,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
       onclick: async () => {
         try {
           await navigator.clipboard.writeText(_prefix() + effectiveForgeCode(state));
-          copyBtn.textContent = 'Copied ✓';
-          setTimeout(() => { copyBtn.textContent = 'Copy code'; }, 1200);
+          showTempFeedback(copyBtn, 'Copied ✓', 1200, 'Copy code');
         } catch (e) {
-          copyBtn.textContent = 'Copy failed';
-          setTimeout(() => { copyBtn.textContent = 'Copy code'; }, 1200);
+          showTempFeedback(copyBtn, 'Copy failed', 1200, 'Copy code');
         }
       },
     });
