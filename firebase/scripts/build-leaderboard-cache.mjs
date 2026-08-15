@@ -60,12 +60,28 @@ function isBlockedImageHost(hostname) {
   return false;
 }
 
+// Leftover inline country PNGs from the old board. Swap them for the
+// short Wikimedia URL so the public JSON does not ship a 3–30 KB data
+// URI that then gets sliced to 2048 chars and rendered as a broken image.
+const KNOWN_DATA_FLAG_HTTPS = [
+  ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFwAAAAxCAMAAABgWz7uAAAAnFBMVEX///+xIzOwHS6w", "https://upload.wikimedia.org/wikipedia/commons/a/a4/Flag_of_the_United_States.svg"],
+  ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFwAAAA9CAMAAAAXmf6VAAAAGFBMVEX///8hRoyuHCeu", "https://upload.wikimedia.org/wikipedia/commons/2/20/Flag_of_the_Netherlands.svg"],
+  ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAT4AAACfCAMAAABX0UX9AAAAkFBMVEXVKx7////TGADr", "https://upload.wikimedia.org/wikipedia/commons/d/d9/Flag_of_Canada_%28Pantone%29.svg"],
+  ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFwAAAAuCAMAAACS246gAAAAb1BMVEX////PFCsAJH3O", "https://upload.wikimedia.org/wikipedia/commons/8/83/Flag_of_the_United_Kingdom_%283-5%29.svg"],
+  ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAP0AAACfCAMAAAAF1y+fAAAAb1BMVEUAteJQni/vM0D/", "https://upload.wikimedia.org/wikipedia/commons/d/dd/Flag_of_Azerbaijan.svg"],
+];
+
 // Country flags stay. Discord / GitHub / jsDelivr file links do not.
 export function publicImageUrl(value) {
   const text = String(value ?? "").trim();
   if (!text) return "";
   if (!/^(https?:|data:)/i.test(text)) return text;
-  if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(text)) return text;
+  if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(text)) {
+    for (const [prefix, httpsUrl] of KNOWN_DATA_FLAG_HTTPS) {
+      if (text.startsWith(prefix)) return httpsUrl;
+    }
+    return text;
+  }
   if (text.startsWith("data:")) return "";
   try {
     const parsed = new URL(text);
@@ -403,7 +419,7 @@ export function buildJsonRow(raw, rank, playlist) {
   }
   if (raw?.flag && typeof raw.flag === "string") {
     const flag = publicImageUrl(raw.flag);
-    if (flag) row.flag = flag.slice(0, 2048);
+    if (flag) row.flag = flag.startsWith("data:") ? flag : flag.slice(0, 2048);
   }
   if (raw?.icons !== undefined && raw.icons !== null) {
     if (typeof raw.icons === "string") {

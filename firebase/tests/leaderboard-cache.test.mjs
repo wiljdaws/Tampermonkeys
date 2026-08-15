@@ -480,6 +480,27 @@ test("publicImageUrl keeps country-flag hosts", () => {
   assert.equal(publicImageUrl("https://cdn.discordapp.com/attachments/1/2/x.png"), "");
 });
 
+test("publicImageUrl rewrites the leftover US data URI to Wikimedia", () => {
+  const us = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFwAAAAxCAMAAABgWz7uAAAAnFBMVEX///+xIzOwHS6w<truncated payload>";
+  assert.equal(
+    publicImageUrl(us),
+    "https://upload.wikimedia.org/wikipedia/commons/a/a4/Flag_of_the_United_States.svg",
+  );
+});
+
+test("buildJsonRow emits the Wikimedia US flag instead of a truncated data URI", () => {
+  const row = buildJsonRow({
+    sourceUserId: "a",
+    name: "A",
+    mmr: 1500,
+    flag: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFwAAAAxCAMAAABgWz7uAAAAnFBMVEX///+xIzOwHS6w<truncated payload>",
+  }, 1, "1v1");
+  assert.equal(
+    row.flag,
+    "https://upload.wikimedia.org/wikipedia/commons/a/a4/Flag_of_the_United_States.svg",
+  );
+});
+
 test("buildJsonRow icons array is capped at 12 entries", () => {
   const many = Array.from({ length: 40 }, (_, i) => `icon-${i}`);
   const row = buildJsonRow({ sourceUserId: "a", name: "A", mmr: 1500, icons: many }, 1, "1v1");
