@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      19.6
+// @version      19.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -381,7 +381,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1495,12 +1495,15 @@
             dbg("writeMatchSnapshotDoc skipped: firebaseAuthUid not ready");
             return;
         }
+        if (snap.team !== "Blue" && snap.team !== "Orange") {
+            dbg("writeMatchSnapshotDoc skipped: team unknown");
+            return;
+        }
         try {
             const docId = `${firebaseAuthUid}_${snap.matchId}`;
             const ref = fb.doc(fb.db, "match_snapshots", docId);
             await atlasSetDoc(fb, "match_snapshots", ref, {
                 sourceUserId: firebaseAuthUid,
-                rgPlayerId: uid,
                 deviceId: getDeviceId(),
                 matchId: snap.matchId,
                 mode: snap.mode,
@@ -2123,7 +2126,9 @@
 
     let updateRequiredChecked = false;
     let updateRequired = false;
+    let writesPaused = false;
     let updateRequiredUiShown = false;
+    let writesPausedUiShown = false;
 
     function showUpdateRequiredUI() {
         if (updateRequiredUiShown) return;
@@ -2131,13 +2136,21 @@
         showBanner("ATLAS update required — Tampermonkey → Check for updates", "#ffcf5b");
     }
 
+    function showWritesPausedUI() {
+        if (writesPausedUiShown) return;
+        writesPausedUiShown = true;
+        showBanner("Writes are paused. Standings are frozen until Pal turns them back on.", "#ffcf5b");
+    }
+
     async function isUpdateRequired(fb) {
-        if (updateRequiredChecked) return updateRequired;
+        if (updateRequiredChecked) return updateRequired || writesPaused;
         try {
-            // one read covers version + blacklist
+            // one read covers version + blacklist + the halt switch
             const snap = await fb.getDoc(fb.doc(fb.db, "admin", "blacklist"));
             if (snap.exists()) {
-                const minV = snap.data().minVersion;
+                const data = snap.data() || {};
+                if (data.pauseWrites === true) writesPaused = true;
+                const minV = data.minVersion;
                 if (typeof minV === "number" && SCRIPT_VERSION_NUM < minV) {
                     updateRequired = true;
                 }
@@ -2147,7 +2160,7 @@
             dbg("isUpdateRequired read failed (non-fatal): " + (e && e.message ? e.message : e));
         }
         updateRequiredChecked = true;
-        return updateRequired;
+        return updateRequired || writesPaused;
     }
 
     // ---------- Soft update nudge ----------
@@ -2227,6 +2240,11 @@
 
     async function atlasMutationAllowed(fb, label) {
         if (!(await isUpdateRequired(fb))) return true;
+        if (writesPaused) {
+            showWritesPausedUI();
+            dbg(`blocked paused-writes mutation: ${label}`);
+            return false;
+        }
         showUpdateRequiredUI();
         dbg(`blocked outdated client mutation: ${label}`);
         return false;
@@ -2263,6 +2281,10 @@
     }
 
     async function atlasSetDoc(fb, label, ref, data, options) {
+        if (!firebaseAuthUid) {
+            dbg("atlasSetDoc skipped: firebaseAuthUid not ready");
+            return false;
+        }
         if (!(await atlasMutationAllowed(fb, label))) return false;
         logWrite(label);
         const stamped = atlasStampedMutationData(ref, data);
@@ -7524,8 +7546,8 @@
         const size = startingLineupSize();
         const selected = new Set(startingLineupUids(myClan));
         const rowsHtml = members.map(m => `
-            <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:${selected.has(m.userId) ? "#0a2038" : "transparent"};" data-uid="${m.userId}">
-                <input type="checkbox" class="rgLineupCheck" data-uid="${m.userId}" ${selected.has(m.userId) ? "checked" : ""}>
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;background:${selected.has(m.userId) ? "#0a2038" : "transparent"};" data-uid="${escapeHtml(m.userId)}">
+                <input type="checkbox" class="rgLineupCheck" data-uid="${escapeHtml(m.userId)}" ${selected.has(m.userId) ? "checked" : ""}>
                 <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(m.name)}</span>
                 <span style="opacity:.6;font-size:10px;text-transform:uppercase;">${m.role}</span>
             </label>`).join("");
@@ -8088,7 +8110,7 @@
                     </span>
                     <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
                         <span style="color:#00ff66;font-size:11px;">${c.totalMMR}</span>
-                        <button class="rgBtn rgJoinBtn" data-clan="${c.id}" style="padding:2px 6px;font-size:10px;" ${c.memberCount >= clanMaxMembers() ? "disabled" : ""}>Join</button>
+                        <button class="rgBtn rgJoinBtn" data-clan="${escapeHtml(c.id)}" style="padding:2px 6px;font-size:10px;" ${c.memberCount >= clanMaxMembers() ? "disabled" : ""}>Join</button>
                     </span>
                 </div>`).join("");
 
@@ -8233,7 +8255,7 @@
                     <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
                         ${contribHtml}
                         <span style="opacity:.7;font-size:10px;text-transform:uppercase;">${m.role}</span>
-                        ${actable ? `<button class="rgBtn rgManage" data-uid="${m.userId}" data-name="${escapeHtml(m.name)}" data-role="${m.role}" style="padding:1px 6px;font-size:10px;">⋯</button>` : ""}
+                        ${actable ? `<button class="rgBtn rgManage" data-uid="${escapeHtml(m.userId)}" data-name="${escapeHtml(m.name)}" data-role="${escapeHtml(m.role)}" style="padding:1px 6px;font-size:10px;">⋯</button>` : ""}
                     </span>
                 </div>`;
             }).join("");
@@ -8244,8 +8266,8 @@
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0;gap:6px;">
                     <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.name)}</span>
                     <span style="display:flex;gap:4px;flex-shrink:0;">
-                        <button class="rgBtn rgApprove" data-uid="${r.userId}" style="padding:1px 6px;font-size:10px;">✓</button>
-                        <button class="rgBtn rgReject" data-uid="${r.userId}" style="padding:1px 6px;font-size:10px;">✗</button>
+                        <button class="rgBtn rgApprove" data-uid="${escapeHtml(r.userId)}" style="padding:1px 6px;font-size:10px;">✓</button>
+                        <button class="rgBtn rgReject" data-uid="${escapeHtml(r.userId)}" style="padding:1px 6px;font-size:10px;">✗</button>
                     </span>
                 </div>`).join("");
             requestsSection = `

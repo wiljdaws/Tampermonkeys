@@ -14,6 +14,11 @@ export const PLAYLISTS = Object.freeze(["1v1", "2v2", "3v3"]);
 // publishes the wins-descending playlist for the static leaderboard site.
 export const PLAYLISTS_WITH_WINS = Object.freeze(["1v1", "2v2", "3v3", "wins"]);
 export const CACHE_TOP_N = 100;
+// First-seen UIDs above this, or above previous #1 + cushion, are held
+// out of the published JSON / HUD cache. Does not reject the Firestore
+// write — veterans installing the HUD for the first time still sync.
+export const PUBLISH_MMR_ABS_HOLD = 15000;
+export const PUBLISH_MMR_JUMP_CUSHION = 2500;
 export const MAX_CACHE_DOC_BYTES = 900_000;
 export const SCHEMA_VERSION = 1;
 export const JSON_SCHEMA_VERSION = 1;
@@ -650,6 +655,40 @@ export function mergeSnapshot(previous, delta) {
   return Array.from(byId.values());
 }
 
+// New uid showing up already above the current top (plus a cushion)
+// stays out of the public JSON. Already-published players are left alone.
+export function holdSuspiciousRankedRows(rows, previousRows = []) {
+  const prev = Array.isArray(previousRows) ? previousRows : [];
+  const seenUids = new Set(
+    prev.map(row => String(row?.sourceUserId || row?.uid || "").trim()).filter(Boolean),
+  );
+  let previousMax = 0;
+  for (const row of prev) {
+    const mmr = Number(row?.mmr);
+    if (Number.isFinite(mmr) && mmr > previousMax) previousMax = mmr;
+  }
+  const threshold = Math.max(PUBLISH_MMR_ABS_HOLD, previousMax + PUBLISH_MMR_JUMP_CUSHION);
+  const kept = [];
+  const held = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const uid = String(row?.sourceUserId || row?.uid || "").trim();
+    const mmr = Number(row?.mmr);
+    const firstSeen = Boolean(uid) && !seenUids.has(uid);
+    if (firstSeen && Number.isFinite(mmr) && mmr > threshold) {
+      held.push({
+        uid,
+        name: String(row?.name || ""),
+        mmr,
+        threshold,
+        reason: `first-seen mmr ${mmr} > ${threshold}`,
+      });
+      continue;
+    }
+    kept.push(row);
+  }
+  return { kept, held, threshold };
+}
+
 // Tie-breakers matter: without them ranks shuffle between publishes,
 // and on the wins playlist a 7/12 grinder outranked a 7/10 player. Order:
 // primary desc, matches asc (wins only), name, uid.
@@ -690,6 +729,22 @@ export function maxLastWriteAt(rows) {
     if (typeof ts === "string" && (!max || ts > max)) max = ts;
   }
   return max;
+}
+
+export function blacklistPausesWrites(data) {
+  const fields = data?.fields && typeof data.fields === "object" ? data.fields : data;
+  return fields?.pauseWrites === true;
+}
+
+export async function readWritesPaused(fetchImpl, token, project) {
+  const body = await apiJson(
+    fetchImpl,
+    token,
+    `${documentsBase(project)}/admin/blacklist`,
+    { method: "GET", quotaProject: project },
+  );
+  if (!body?.name) return false;
+  return blacklistPausesWrites(decodeFirestoreDocument(body));
 }
 
 export async function readCacheDocument(
@@ -789,17 +844,38 @@ export async function buildLeaderboardCaches({
   loadStateFor = null,
   saveStateFor = null,
   forceFull = false,
+  checkHalt = true,
 }) {
   if (typeof fetchImpl !== "function") {
     throw new Error("fetch is required");
   }
   const token = await getToken();
+  if (checkHalt && await readWritesPaused(fetchImpl, token, project)) {
+    console.warn("[halt] pauseWrites is on. Skipping publish.");
+    return {
+      project,
+      apply,
+      emitJson,
+      skipFirestore,
+      written: 0,
+      skipped: 0,
+      plannedWrites: 0,
+      plans: [],
+      commitResult: null,
+      jsonBlobs: [],
+      uploads: [],
+      stateSummary: [],
+      heldRows: [],
+      paused: true,
+    };
+  }
   const builtAt = now();
   const plans = [];
   const writes = [];
   const jsonBlobs = [];
   const uploads = [];
   const stateSummary = [];
+  const heldRows = [];
 
   for (const playlist of playlists) {
     // If prior state exists, pull only what changed since then. Otherwise
@@ -862,7 +938,17 @@ export async function buildLeaderboardCaches({
 
     // Full snapshot goes back to saveStateFor; top-N slice is what we publish.
     const sortedForPlaylist = sortSnapshotForPlaylist(rows, playlist);
-    const topSlice = sortedForPlaylist.slice(0, top);
+    const hold = playlist === "wins"
+      ? { kept: sortedForPlaylist, held: [], threshold: null }
+      : holdSuspiciousRankedRows(sortedForPlaylist, priorSnapshot || []);
+    if (hold.held.length) {
+      console.warn(`[hold:${playlist}] withheld ${hold.held.length} first-seen row(s) above ${hold.threshold}`);
+      for (const row of hold.held) {
+        console.warn(`  ${row.uid} ${row.name} mmr=${row.mmr} (${row.reason})`);
+        heldRows.push({ playlist, ...row });
+      }
+    }
+    const topSlice = hold.kept.slice(0, top);
 
     // Advance the cursor; keep the prior one if no rows came back this run.
     const nextSince = maxLastWriteAt(mode === "delta" ? deltaRows : rows)
@@ -1011,6 +1097,7 @@ export async function buildLeaderboardCaches({
     jsonBlobs,
     uploads,
     stateSummary,
+    heldRows,
   };
 }
 
@@ -1097,6 +1184,12 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       const body = JSON.stringify(blob.blob);
       await writeFile(filePath, body, "utf8");
       console.log(`WROTE ${filePath} rows=${blob.blob.rowCount} bytes=${body.length}`);
+    }
+    const heldPath = path.join(parsed.outputDir, "held.json");
+    const heldBody = JSON.stringify(result.heldRows || [], null, 2);
+    await writeFile(heldPath, heldBody, "utf8");
+    if (result.heldRows?.length) {
+      console.warn(`HELD ${heldPath} rows=${result.heldRows.length}`);
     }
   }
 
