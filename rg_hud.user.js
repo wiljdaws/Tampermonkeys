@@ -2079,6 +2079,10 @@
                 try { return (typeof myUserId === "function" && myUserId()) || ""; }
                 catch { return ""; }
             };
+            const denySubject = () => {
+                const uid = currentUidForDeny();
+                return uid ? `uid=${uid}` : "";
+            };
             const getDoc = async ref => {
                 try {
                     const snapshot = await rawGetDoc(ref);
@@ -2087,7 +2091,7 @@
                 } catch (err) {
                     if (isDeny(err)) logDeny(ref?.path || "document", {
                         op: "read", path: ref?.path, err,
-                        subject: currentUidForDeny() ? `uid=${currentUidForDeny()}` : "",
+                        subject: denySubject(),
                     });
                     throw err;
                 }
@@ -2100,7 +2104,7 @@
                 } catch (err) {
                     if (isDeny(err)) logDeny(target?.path || "query", {
                         op: "query", path: target?.path, err,
-                        subject: currentUidForDeny() ? `uid=${currentUidForDeny()}` : "",
+                        subject: denySubject(),
                     });
                     throw err;
                 }
@@ -2113,7 +2117,7 @@
                 } catch (err) {
                     if (isDeny(err)) logDeny(target?.path || "count query", {
                         op: "count", path: target?.path, err,
-                        subject: currentUidForDeny() ? `uid=${currentUidForDeny()}` : "",
+                        subject: denySubject(),
                     });
                     throw err;
                 }
@@ -2125,7 +2129,7 @@
                 }, err => {
                     if (isDeny(err)) logDeny(target?.path || "listener", {
                         op: "listener", path: target?.path, err,
-                        subject: currentUidForDeny() ? `uid=${currentUidForDeny()}` : "",
+                        subject: denySubject(),
                     });
                     if (typeof onError === "function") onError(err);
                 });
