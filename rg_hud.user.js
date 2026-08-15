@@ -63,9 +63,12 @@
             dot.title = _rgWarnBuf.map(w => new Date(w.at).toLocaleTimeString() + " — " + w.msg).join("\n");
         }
     }
+    function getErrMsg(e) {
+        return e && e.message ? e.message : String(e);
+    }
     function pushError(err, origin) {
         try {
-            const message = (err && err.message) ? err.message : String(err);
+            const message = getErrMsg(err);
             const stack = (err && err.stack) ? String(err.stack).split("\n").slice(0, 6).join(" | ") : "";
             _rgErrorBuf.push({ origin, msg: message, stack, at: Date.now() });
             if (_rgErrorBuf.length > 20) _rgErrorBuf.shift();
@@ -1398,7 +1401,7 @@
             `;
         } catch (e) {
             // decorative, never break render for this
-            dbg("clashMiniBarHtml threw: " + (e && e.message ? e.message : e));
+            dbg("clashMiniBarHtml threw: " + getErrMsg(e));
             return "";
         }
     }
@@ -1540,7 +1543,7 @@
                 roster: snap.roster,
             }, { merge: true });
         } catch (err) {
-            dbg("writeMatchSnapshotDoc failed (non-fatal): " + (err && err.message ? err.message : err));
+            dbg("writeMatchSnapshotDoc failed (non-fatal): " + getErrMsg(err));
         }
     }
 
@@ -1560,7 +1563,7 @@
             }
             saveMatchHistory(uid, _recentMatchesRing);
         } catch (err) {
-            dbg("handleMatchSnapshots threw: " + (err && err.message ? err.message : err));
+            dbg("handleMatchSnapshots threw: " + getErrMsg(err));
         }
     }
 
@@ -1655,7 +1658,7 @@
             submitToLeaderboard(data);
         } catch (e) {
             // 13.5 swallowed this silently
-            dbg("tryParseAndUpdate threw: " + (e && e.message ? e.message : e));
+            dbg("tryParseAndUpdate threw: " + getErrMsg(e));
         }
     }
 
@@ -1994,7 +1997,7 @@
             const wrote = await atlasSetDoc(fb, "hud_read_stats", ref, payload, { merge: true });
             if (wrote) hudStatsLastPayloadKey = key;
         } catch (err) {
-            dbg("uploadHudReadStats failed (non-fatal): " + (err && err.message ? err.message : err));
+            dbg("uploadHudReadStats failed (non-fatal): " + getErrMsg(err));
         } finally {
             hudStatsUploadInFlight = false;
         }
@@ -2061,8 +2064,7 @@
                 if (uidLabel) uidLabel.textContent = firebaseAuthUid || "signing in…";
             } catch (authErr) {
                 firebaseAuthUid = null;
-                dbg("initFirebase: signInAnonymously failed: "
-                    + (authErr && authErr.message ? authErr.message : authErr));
+                dbg("initFirebase: signInAnonymously failed: " + getErrMsg(authErr));
             }
             const isDeny = err => err && String(err.code || "").includes("permission-denied");
             const currentUidForDeny = () => {
@@ -2143,7 +2145,7 @@
             }).catch(() => {});
             return firestoreReady;
         } catch (e) {
-            dbg("initFirebase failed: " + (e && e.message ? e.message : e));
+            dbg("initFirebase failed: " + getErrMsg(e));
             console.error("[RG HUD] Firebase init failed:", e);
             showError("Firebase failed to load");
             return null;
@@ -2232,7 +2234,7 @@
             }
         } catch (e) {
             // don't lock out on transient read error
-            dbg("isUpdateRequired read failed (non-fatal): " + (e && e.message ? e.message : e));
+            dbg("isUpdateRequired read failed (non-fatal): " + getErrMsg(e));
         }
         updateRequiredChecked = true;
         return updateRequired || writesPaused;
@@ -2267,7 +2269,7 @@
                 : DEFAULT_UPDATE_URL;
             showUpdateNudge(String(latest), updateUrl, dismissedKey);
         } catch (e) {
-            dbg("maybeShowUpdateNudge failed (non-fatal): " + (e && e.message ? e.message : e));
+            dbg("maybeShowUpdateNudge failed (non-fatal): " + getErrMsg(e));
         }
     }
 
@@ -2587,7 +2589,7 @@
             return snap.docs.some(d => d.data().sourceUserId !== ownSourceUserId);
         } catch (e) {
             // don't block on check failure, let it through
-            dbg("isNameTaken check failed (letting through): " + (e && e.message ? e.message : e));
+            dbg("isNameTaken check failed (letting through): " + getErrMsg(e));
             console.warn("[RG HUD] Name availability check failed:", e);
             return false;
         }
@@ -2641,7 +2643,7 @@
                     hideNameModal();
                     resolve(entered);
                 } catch (e) {
-                    dbg("askDisplayName save handler threw: " + (e && e.message ? e.message : e));
+                    dbg("askDisplayName save handler threw: " + getErrMsg(e));
                     saveBtn.disabled = false;
                     errEl.style.color = "#ff6b6b";
                     errEl.textContent = "Something went wrong. Try again.";
@@ -2677,12 +2679,12 @@
             const previous = submitLocks.get(lockKey) || Promise.resolve();
             // swallow inner rejects so the lock chain keeps working
             const current = previous.then(() => submitToLeaderboardInner(data)).catch(e => {
-                dbg("submitToLeaderboardInner threw: " + (e && e.message ? e.message : e));
+                dbg("submitToLeaderboardInner threw: " + getErrMsg(e));
             });
             submitLocks.set(lockKey, current);
             await current;
         } catch (e) {
-            dbg("submitToLeaderboard threw: " + (e && e.message ? e.message : e));
+            dbg("submitToLeaderboard threw: " + getErrMsg(e));
         }
     }
 
@@ -2832,7 +2834,7 @@
         refreshClanViewIfOpen();
         applyTitle(); // clan-lead may have flipped since updateMomentum
       } catch (e) {
-        dbg("submitToLeaderboardInner threw: " + (e && e.message ? e.message : e));
+        dbg("submitToLeaderboardInner threw: " + getErrMsg(e));
       }
     }
 
@@ -3081,7 +3083,7 @@
                 _streakReadMemo.set(uid, { at: Date.now(), value: next });
                 return next;
             } catch (e) {
-                dbg("opponent streak read failed: " + (e && e.message ? e.message : e));
+                dbg("opponent streak read failed: " + getErrMsg(e));
                 return { streak: 0, confident: false };
             } finally {
                 _streakInFlight.delete(uid);
@@ -3178,7 +3180,7 @@
             const raw = snap.data() || {};
             return { ...RG_LB_DEFAULT_CONFIG, ...raw, fetchedAt: Date.now() };
         } catch (e) {
-            dbg("remote config fetch failed: " + (e && e.message ? e.message : e));
+            dbg("remote config fetch failed: " + getErrMsg(e));
             return null;
         }
     }
@@ -3290,7 +3292,7 @@
             }
             return await fetchLeaderboardCacheDirect(fb, mode, playlist);
         } catch (e) {
-            dbg("leaderboard cache fetch failed: " + (e && e.message ? e.message : e));
+            dbg("leaderboard cache fetch failed: " + getErrMsg(e));
             return null;
         }
     }
@@ -3546,7 +3548,7 @@
                 setTimeout(() => el.remove(), prefersReducedPopupMotion() ? 0 : 320);
             }, dur);
         } catch (e) {
-            dbg("showLbOpponentPopup threw: " + (e && e.message ? e.message : e));
+            dbg("showLbOpponentPopup threw: " + getErrMsg(e));
         }
     }
 
@@ -4054,7 +4056,7 @@
             }
             scheduleRankedRosterPopups();
         } catch (e) {
-            dbg("onRosterEntry threw: " + (e && e.message ? e.message : e));
+            dbg("onRosterEntry threw: " + getErrMsg(e));
         }
     }
 
@@ -4129,7 +4131,7 @@
                 });
             }
         } catch (e) {
-            dbg("fireAllRankedPopups threw: " + (e && e.message ? e.message : e));
+            dbg("fireAllRankedPopups threw: " + getErrMsg(e));
         } finally {
             if (generation === _matchPopupGeneration) _rosterFiring = false;
         }
@@ -4186,7 +4188,7 @@
                 });
             }
         } catch (e) {
-            dbg("firePostmortemPopupsIfDeferred threw: " + (e && e.message ? e.message : e));
+            dbg("firePostmortemPopupsIfDeferred threw: " + getErrMsg(e));
         }
     }
 
@@ -4294,7 +4296,7 @@
             rgPlayerId,
         }));
       } catch (e) {
-        dbg("syncToRealLeaderboard threw: " + (e && e.message ? e.message : e));
+        dbg("syncToRealLeaderboard threw: " + getErrMsg(e));
       }
     }
 
@@ -4340,7 +4342,7 @@
                 dbg("match-end clan sync skipped: player is not in a clan");
             }
         } catch (e) {
-            dbg("match-end clan sync failed: " + (e && e.message ? e.message : e));
+            dbg("match-end clan sync failed: " + getErrMsg(e));
         }
     }
 
@@ -4684,7 +4686,7 @@
                 saveEntryState();
             }
         } catch (e) {
-            dbg("upsertIfChanged threw: " + (e && e.message ? e.message : e));
+            dbg("upsertIfChanged threw: " + getErrMsg(e));
         }
     }
 
@@ -4814,7 +4816,7 @@
             if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
         } catch (e) {
             // rank display is nice-to-have, don't crash on failure
-            dbg("refreshRanks failed: " + (e && e.message ? e.message : e));
+            dbg("refreshRanks failed: " + getErrMsg(e));
             console.warn("[RG HUD] Rank lookup failed:", e);
         }
     }
@@ -4947,7 +4949,7 @@
                         RGNF.verifyStolenName(rawNick);
                     }
                 } catch (e) {
-                    dbg("login pending-steal check failed: " + (e && e.message ? e.message : e));
+                    dbg("login pending-steal check failed: " + getErrMsg(e));
                 }
             } else if (url.includes("/v0304_player/equipSkin")) {
                 // response is a bare quoted skin id, e.g. "body.2"
@@ -4957,12 +4959,12 @@
                         lastKnownPlayerData.EquippedSkinId = skinId;
                     }
                 } catch (e) {
-                    dbg("equipSkin parse failed: " + (e && e.message ? e.message : e));
+                    dbg("equipSkin parse failed: " + getErrMsg(e));
                 }
             }
         } catch (e) {
             // 13.5 swallowed clone.text() throws silently. log them.
-            dbg("fetch wrapper threw: " + (e && e.message ? e.message : e));
+            dbg("fetch wrapper threw: " + getErrMsg(e));
         }
         return response;
     };
@@ -5108,7 +5110,7 @@
                 }
             }
         } catch (e) {
-            dbg("console.log hook threw: " + (e && e.message ? e.message : e));
+            dbg("console.log hook threw: " + getErrMsg(e));
         }
     };
 
@@ -5164,7 +5166,7 @@
             }
             eventConfigLoaded = true;
         } catch (e) {
-            dbg("loadEventConfig failed: " + (e && e.message ? e.message : e));
+            dbg("loadEventConfig failed: " + getErrMsg(e));
             console.warn("[RG HUD] Event config load failed:", e);
         }
         return eventConfig;
@@ -5196,7 +5198,7 @@
             clanRolePerms = snap.exists() ? snap.data() : null;
             clanRolePermsLoaded = true;
         } catch (e) {
-            dbg("loadClanRolePerms failed (falling back to defaults): " + (e && e.message ? e.message : e));
+            dbg("loadClanRolePerms failed (falling back to defaults): " + getErrMsg(e));
             console.warn("[RG HUD] Clan role perms load failed:", e);
         }
     }
@@ -5887,7 +5889,7 @@
                     // 14.5: also retry - background tabs get throttled and the
                     //       listener dies quiet. without this, syncs sit stale
                     //       for 50+ min until someone refreshes.
-                    dbg("clan listener error, scheduling reconnect: " + (err && err.message ? err.message : err));
+                    dbg("clan listener error, scheduling reconnect: " + getErrMsg(err));
                     console.warn("[RG HUD] Clan listener error, will retry in 30s:", err);
                     detachClanListener();
                     setTimeout(() => {
@@ -5899,7 +5901,7 @@
                 }
             );
         } catch (e) {
-            dbg("attachClanListener failed: " + (e && e.message ? e.message : e));
+            dbg("attachClanListener failed: " + getErrMsg(e));
             console.warn("[RG HUD] Clan listener attach failed:", e);
             _clanListenerId = null;
         } finally {
@@ -6042,7 +6044,7 @@
             clanLoadFailedAt = 0;
         } catch (e) {
             clanLoadFailedAt = Date.now();
-            dbg("loadClanData failed: " + (e && e.message ? e.message : e));
+            dbg("loadClanData failed: " + getErrMsg(e));
             console.warn("[RG HUD] Clan load failed:", e);
         }
     }
@@ -6225,7 +6227,7 @@
             lastDirRefreshAt = now;
             await refreshDirectory(fb);
         } catch (e) {
-            dbg("refreshDirectoryThrottled threw: " + (e && e.message ? e.message : e));
+            dbg("refreshDirectoryThrottled threw: " + getErrMsg(e));
         }
     }
 
@@ -6551,7 +6553,7 @@
                     }
                     showToast("Saved! Open 🎨 Forge and hit Apply to refresh YOUR name -- members do the same on theirs.");
                 } catch (e) {
-                    dbg("save tag style threw: " + (e && e.message ? e.message : e));
+                    dbg("save tag style threw: " + getErrMsg(e));
                     console.error("[RG HUD] Save tag style failed:", e);
                     showToast("Save failed.");
                 }
@@ -6601,7 +6603,7 @@
                 );
             }
         } catch (e) {
-            dbg("refreshDirectory failed: " + (e && e.message ? e.message : e));
+            dbg("refreshDirectory failed: " + getErrMsg(e));
             console.warn("[RG HUD] Directory refresh failed:", e);
         }
         // repaint title in case standings flipped clan-lead status
@@ -7332,7 +7334,7 @@
             }
         } catch (e) {
             // notices are best-effort, don't spam the user
-            dbg("checkClanNotices failed (non-fatal): " + (e && e.message ? e.message : e));
+            dbg("checkClanNotices failed (non-fatal): " + getErrMsg(e));
         }
     }
 
@@ -7719,7 +7721,7 @@
             myClan = { ...myClan, startingLineup: uids };
             showToast("Starting lineup saved");
         } catch (e) {
-            dbg("saveStartingLineup failed: " + (e && e.message ? e.message : e));
+            dbg("saveStartingLineup failed: " + getErrMsg(e));
             showToast("Couldn't save lineup — try again");
         }
     }
@@ -8176,7 +8178,7 @@
             renderClanViewFromMemory();
             if (myClan) attachClanListener();
         } catch (e) {
-            dbg("renderClanView threw: " + (e && e.message ? e.message : e));
+            dbg("renderClanView threw: " + getErrMsg(e));
         }
     }
 
@@ -8576,7 +8578,7 @@
         });
         document.getElementById("rgMgBack").onclick = renderClanView;
       } catch (e) {
-        dbg("showManageMemberMenu threw: " + (e && e.message ? e.message : e));
+        dbg("showManageMemberMenu threw: " + getErrMsg(e));
       }
     }
 
@@ -9436,7 +9438,7 @@
         const retry = await applyNickname(code);
         dbg(`nickname settle retry -> ${retry.ok ? "OK" : "FAILED (" + retry.status + ")"}`);
       } catch (err) {
-        dbg("nickname settle retry error: " + (err && err.message ? err.message : err));
+        dbg("nickname settle retry error: " + getErrMsg(err));
       }
     }, NICKNAME_SETTLE_RETRY_MS);
 
@@ -9486,7 +9488,7 @@
         fdbg(`pending name re-apply -> ${r.ok ? 'OK — refresh once more to see it in-game' : 'FAILED (' + r.status + ')'}`);
         if (r.ok) saveJSON(pendingStealKey(), null);
       } catch (err) {
-        fdbg('pending name re-apply error: ' + (err && err.message ? err.message : err));
+        fdbg('pending name re-apply error: ' + getErrMsg(err));
       }
     }, 4000);
   }
