@@ -174,10 +174,24 @@ jobs:
             --project "$PROJECT" \
             --state-dir "$GITHUB_WORKSPACE/site-repo/state"
 
+      - name: Warn if we held new high-MMR rows
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/out/held.json" ]; then
+            count=$(node -e "const h=require('$GITHUB_WORKSPACE/out/held.json'); process.stdout.write(String(Array.isArray(h)?h.length:0))")
+            if [ "$count" != "0" ]; then
+              echo "::warning::Held $count new row(s) with huge MMR. See out/held.json"
+              cat "$GITHUB_WORKSPACE/out/held.json"
+            fi
+          fi
+
       - name: Copy JSON blobs into site repo
         run: |
           mkdir -p "$GITHUB_WORKSPACE/site-repo/leaderboard"
-          cp "$GITHUB_WORKSPACE/out/"*.json "$GITHUB_WORKSPACE/site-repo/leaderboard/"
+          for f in 1v1 2v2 3v3 wins; do
+            if [ -f "$GITHUB_WORKSPACE/out/$f.json" ]; then
+              cp "$GITHUB_WORKSPACE/out/$f.json" "$GITHUB_WORKSPACE/site-repo/leaderboard/"
+            fi
+          done
           ls -la "$GITHUB_WORKSPACE/site-repo/leaderboard/"
 
       - name: Commit and push

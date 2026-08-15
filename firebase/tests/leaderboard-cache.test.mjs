@@ -14,6 +14,8 @@ import {
   mergeSnapshot,
   parseCacheArguments,
   planCacheWrite,
+  holdSuspiciousRankedRows,
+  blacklistPausesWrites,
   sortSnapshotForPlaylist,
   sourceHashForRows,
 } from "../scripts/build-leaderboard-cache.mjs";
@@ -187,6 +189,7 @@ test("buildLeaderboardCaches dry-run plans writes without commit", async () => {
     fetchImpl,
     getToken: async () => "token",
     includeIconKey: true,
+    checkHalt: false,
     now: () => "2026-08-04T12:00:00.000Z",
   });
 
@@ -544,6 +547,7 @@ test("buildLeaderboardCaches --emit-json calls the uploader per playlist", async
     fetchImpl,
     getToken: async () => "token",
     includeIconKey: false,
+    checkHalt: false,
     now: () => "2026-08-04T12:00:00.000Z",
     emitJson: true,
     skipFirestore: true,
@@ -613,6 +617,7 @@ test("buildLeaderboardCaches --apply commits only changed docs", async () => {
     fetchImpl,
     getToken: async () => "token",
     includeIconKey: false,
+    checkHalt: false,
     now: () => "2026-08-04T12:00:00.000Z",
   });
 
@@ -659,6 +664,7 @@ test("buildLeaderboardCaches skips readCacheDocument + writes when CDC delta is 
     fetchImpl,
     getToken: async () => "token",
     includeIconKey: false,
+    checkHalt: false,
     now: () => "2026-08-04T12:00:00.000Z",
     loadStateFor: async () => ({ since: priorSince, snapshot: priorSnapshot }),
     saveStateFor: async (playlist, state) => {
@@ -754,6 +760,7 @@ test("buildLeaderboardCaches full-scan fallback still runs on FAILED_PRECONDITIO
     fetchImpl,
     getToken: async () => "token",
     includeIconKey: false,
+    checkHalt: false,
     now: () => "2026-08-04T12:00:00.000Z",
     loadStateFor: async () => ({
       since: "2026-08-04T11:59:00.000Z",
@@ -767,4 +774,70 @@ test("buildLeaderboardCaches full-scan fallback still runs on FAILED_PRECONDITIO
   assert.equal(summary.mode, "full-fallback");
   assert.equal(summary.fallbackReason, "index_not_ready");
   assert.equal(result.plans.length, 1);
+});
+
+test("holdSuspiciousRankedRows keeps a first-seen 13k player", () => {
+  const { kept, held } = holdSuspiciousRankedRows(
+    [{ sourceUserId: "new", name: "Vet", mmr: 13000 }],
+    [{ sourceUserId: "old", name: "Top", mmr: 11000 }],
+  );
+  assert.equal(held.length, 0);
+  assert.equal(kept.length, 1);
+});
+
+test("holdSuspiciousRankedRows withholds a first-seen 27284 row", () => {
+  const { kept, held, threshold } = holdSuspiciousRankedRows(
+    [{ sourceUserId: "atk", name: "LeoGaming", mmr: 27284 }],
+    [{ sourceUserId: "old", name: "Top", mmr: 11000 }],
+  );
+  assert.equal(kept.length, 0);
+  assert.equal(held.length, 1);
+  assert.equal(held[0].uid, "atk");
+  assert.ok(threshold >= 15000);
+});
+
+test("holdSuspiciousRankedRows does not hold an already-published uid", () => {
+  const { kept, held } = holdSuspiciousRankedRows(
+    [{ sourceUserId: "old", name: "Top", mmr: 16000 }],
+    [{ sourceUserId: "old", name: "Top", mmr: 11000 }],
+  );
+  assert.equal(held.length, 0);
+  assert.equal(kept.length, 1);
+});
+
+test("blacklistPausesWrites is only on for boolean true", () => {
+  assert.equal(blacklistPausesWrites({ pauseWrites: true }), true);
+  assert.equal(blacklistPausesWrites({ fields: { pauseWrites: true } }), true);
+  assert.equal(blacklistPausesWrites({ pauseWrites: false }), false);
+  assert.equal(blacklistPausesWrites({}), false);
+});
+
+test("buildLeaderboardCaches stops when pauseWrites is on", async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).includes("/admin/blacklist")) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            name: "projects/rgleaderboard/databases/(default)/documents/admin/blacklist",
+            fields: { pauseWrites: { booleanValue: true } },
+          });
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+  const result = await buildLeaderboardCaches({
+    project: "rgleaderboard",
+    apply: true,
+    emitJson: true,
+    playlists: ["1v1"],
+    fetchImpl,
+    getToken: async () => "token",
+    includeIconKey: false,
+  });
+  assert.equal(result.paused, true);
+  assert.equal(result.plannedWrites, 0);
+  assert.equal(result.jsonBlobs.length, 0);
 });
