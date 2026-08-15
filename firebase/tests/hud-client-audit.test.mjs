@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "19.9");
+  assert.equal(version, "19.10");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -100,6 +100,14 @@ test("deny logger attaches client-side reasons (19.5+)", () => {
   assert.match(hudSource, /function describeLeaderboardReasons\(/);
   assert.match(hudSource, /function describeScriptSubmissionReasons\(/);
   assert.match(hudSource, /function describeMatchSnapshotReasons\(/);
+});
+
+test("Firebase id row retries auth instead of staying on signing in", () => {
+  assert.match(hudSource, /function paintAuthUid\(/);
+  assert.match(hudSource, /initializeApp\(FIREBASE_CONFIG, "atlas"\)/);
+  assert.match(hudSource, /sign-in timed out/);
+  assert.match(hudSource, /firestoreInitPromise/);
+  assert.match(hudSource, /tap Settings to retry/);
 });
 
 test("HUD tells unlisted players to ask Pal or Jesus on Discord", () => {

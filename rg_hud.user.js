@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      19.9
+// @version      19.10
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -400,7 +400,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "19.10";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -751,7 +751,11 @@
             const opening = !isVisible(panel);
             dbg(`Settings panel ${opening ? "opened" : "closed"}`);
             showStatsOnly();
-            if (opening) panel.style.display = "block";
+            if (opening) {
+                panel.style.display = "block";
+                paintAuthUid();
+                initFirebase().then(paintAuthUid).catch(() => paintAuthUid());
+            }
         };
 
         const setGlow = document.getElementById("rgSetGlow");
@@ -797,11 +801,7 @@
         bindGlow(setOpacity, "glowOpacity", el => parseFloat(el.value));
         bindGlow(setColor1, "glowColor1", el => el.value);
         bindGlow(setColor2, "glowColor2", el => el.value);
-        const uidLabel = document.getElementById("rgSetAuthUid");
         const copyUid = document.getElementById("rgSetCopyUid");
-        const paintAuthUid = () => {
-            if (uidLabel) uidLabel.textContent = firebaseAuthUid || "signing in…";
-        };
         paintAuthUid();
         if (copyUid) {
             copyUid.onclick = async () => {
@@ -1695,8 +1695,18 @@
     const LEADERBOARD_COLLECTION = "script_submissions";
 
     let firestoreReady = null;
+    let firestoreInitPromise = null;
     // Set by initFirebase() after anon sign-in. Rules bind writes to this.
     let firebaseAuthUid = null;
+    let firebaseAuthError = null;
+
+    function paintAuthUid() {
+        const uidLabel = document.getElementById("rgSetAuthUid");
+        if (!uidLabel) return;
+        if (firebaseAuthUid) uidLabel.textContent = firebaseAuthUid;
+        else if (firebaseAuthError) uidLabel.textContent = "sign-in failed — tap Settings to retry";
+        else uidLabel.textContent = "signing in…";
+    }
     let firestoreReadCount = 0;
     let firestoreWriteCount = 0;
     const FIRESTORE_READ_BUDGET = 120;
@@ -2040,9 +2050,18 @@
     async function initFirebase() {
         if (!FIREBASE_CONFIG) return null;
         if (firestoreReady) return firestoreReady;
-
+        if (firestoreInitPromise) return firestoreInitPromise;
+        firestoreInitPromise = initFirebaseInner();
         try {
-            const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
+            return await firestoreInitPromise;
+        } finally {
+            if (!firestoreReady) firestoreInitPromise = null;
+        }
+    }
+
+    async function initFirebaseInner() {
+        try {
+            const { initializeApp, getApp, getApps } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
             const {
                 getFirestore,
                 doc,
@@ -2064,23 +2083,34 @@
             const { getAuth, signInAnonymously } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
 
-            const app = initializeApp(FIREBASE_CONFIG);
+            // Named app so the game's own Firebase [DEFAULT] (Rocket Goal
+            // login) cannot collide with ours and leave Settings stuck on
+            // "signing in…".
+            const app = getApps().some(a => a.name === "atlas")
+                ? getApp("atlas")
+                : initializeApp(FIREBASE_CONFIG, "atlas");
             const db = getFirestore(app);
             // Sign in before handing firestoreReady out; writes without
             // an auth.uid stamp get denied.
             try {
                 const auth = getAuth(app);
-                if (!auth.currentUser) await signInAnonymously(auth);
+                if (!auth.currentUser) {
+                    await Promise.race([
+                        signInAnonymously(auth),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error("sign-in timed out")), 12_000)),
+                    ]);
+                }
                 firebaseAuthUid = auth.currentUser ? auth.currentUser.uid : null;
+                firebaseAuthError = firebaseAuthUid ? null : "no-uid";
                 if (!firebaseAuthUid) {
                     dbg("initFirebase: signInAnonymously resolved without a uid");
                 }
-                const uidLabel = document.getElementById("rgSetAuthUid");
-                if (uidLabel) uidLabel.textContent = firebaseAuthUid || "signing in…";
             } catch (authErr) {
                 firebaseAuthUid = null;
-                dbg("initFirebase: signInAnonymously failed: " + getErrMsg(authErr));
+                firebaseAuthError = getErrMsg(authErr);
+                dbg("initFirebase: signInAnonymously failed: " + firebaseAuthError);
             }
+            paintAuthUid();
             const denySubject = () => {
                 const uid = currentUidForDeny();
                 return uid ? `uid=${uid}` : "";
@@ -2159,7 +2189,9 @@
             }).catch(() => {});
             return firestoreReady;
         } catch (e) {
-            dbg("initFirebase failed: " + getErrMsg(e));
+            firebaseAuthError = getErrMsg(e);
+            paintAuthUid();
+            dbg("initFirebase failed: " + firebaseAuthError);
             console.error("[RG HUD] Firebase init failed:", e);
             showError("Firebase failed to load");
             return null;
