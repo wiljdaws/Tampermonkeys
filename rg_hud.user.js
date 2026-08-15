@@ -77,6 +77,11 @@
     }
     function isVisible(el) { return !!(el && el.style.display !== "none"); }
     function isFlexVisible(el) { return !!(el && el.style.display === "flex"); }
+    function isDeny(err) { return err && String(err.code || "").includes("permission-denied"); }
+    function currentUidForDeny() {
+        try { return (typeof myUserId === "function" && myUserId()) || ""; }
+        catch { return ""; }
+    }
     function pushError(err, origin) {
         try {
             const message = getErrMsg(err);
@@ -784,11 +789,14 @@
             settings.streakSnipeEnabled = setStreakSnipe.checked;
             saveSettings();
         };
-        setGlow.onchange = () => { settings.glowEnabled = setGlow.checked; saveSettings(); applyGlowSettings(); };
-        setSpeed.oninput = () => { settings.glowSpeed = parseFloat(setSpeed.value); saveSettings(); applyGlowSettings(); };
-        setOpacity.oninput = () => { settings.glowOpacity = parseFloat(setOpacity.value); saveSettings(); applyGlowSettings(); };
-        setColor1.oninput = () => { settings.glowColor1 = setColor1.value; saveSettings(); applyGlowSettings(); };
-        setColor2.oninput = () => { settings.glowColor2 = setColor2.value; saveSettings(); applyGlowSettings(); };
+        const bindGlow = (el, key, readValue, evt = "oninput") => {
+            el[evt] = () => { settings[key] = readValue(el); saveSettings(); applyGlowSettings(); };
+        };
+        bindGlow(setGlow, "glowEnabled", el => el.checked, "onchange");
+        bindGlow(setSpeed, "glowSpeed", el => parseFloat(el.value));
+        bindGlow(setOpacity, "glowOpacity", el => parseFloat(el.value));
+        bindGlow(setColor1, "glowColor1", el => el.value);
+        bindGlow(setColor2, "glowColor2", el => el.value);
         const uidLabel = document.getElementById("rgSetAuthUid");
         const copyUid = document.getElementById("rgSetCopyUid");
         const paintAuthUid = () => {
@@ -2073,11 +2081,6 @@
                 firebaseAuthUid = null;
                 dbg("initFirebase: signInAnonymously failed: " + getErrMsg(authErr));
             }
-            const isDeny = err => err && String(err.code || "").includes("permission-denied");
-            const currentUidForDeny = () => {
-                try { return (typeof myUserId === "function" && myUserId()) || ""; }
-                catch { return ""; }
-            };
             const denySubject = () => {
                 const uid = currentUidForDeny();
                 return uid ? `uid=${uid}` : "";
