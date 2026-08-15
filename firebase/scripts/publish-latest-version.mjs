@@ -82,20 +82,13 @@ async function main() {
   console.log(`[publish-latest-version] HUD @version: ${versionStr} (${versionNum})`);
 
   const token = await getGcloudAccessToken();
-  const existing = await firestoreRequest({
-    project: args.project,
-    path: "admin/latest_version",
-    method: "GET",
-    token,
-  });
-  const currentNum = readFirestoreNumber(existing?.fields?.versionNum);
-  if (currentNum === versionNum) {
-    console.log(`[publish-latest-version] already at ${versionNum} — no-op`);
-    return;
-  }
-
+  // Skip the idempotency read — during the 2026-08-14 incident the
+  // Firestore READ quota was exhausted and this GET returned 429. The
+  // PATCH below is idempotent enough on its own: writing the same
+  // versionNum + updateUrl twice is a no-op. If the read quota is
+  // healthy the extra write costs one op per push, which is fine.
   console.log(
-    `[publish-latest-version] bumping admin/latest_version.versionNum: ${currentNum ?? "unset"} → ${versionNum}`,
+    `[publish-latest-version] setting admin/latest_version.versionNum → ${versionNum}`,
   );
   if (args.dryRun) {
     console.log("[publish-latest-version] --dry-run: skipping write");
