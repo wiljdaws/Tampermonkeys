@@ -222,30 +222,30 @@
         tracker = document.createElement("div");
         tracker.id = "rgPingTracker";
         tracker.setAttribute("aria-live", "off");
-        tracker.style.cssText = [
-            "display:none",
-            "position:fixed",
-            "top:12px",
-            "left:12px",
-            "z-index:999999997",
-            "pointer-events:none",
-            "user-select:none",
-            "align-items:center",
-            "gap:5px",
-            "padding:0",
-            "border:0",
-            "background:transparent",
-            "color:#cbd5e1",
-            "font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",
-            "font-variant-numeric:tabular-nums",
-            "letter-spacing:.04em",
-            "opacity:.78",
-            "text-shadow:0 1px 2px #000,0 0 5px rgba(0,0,0,.85)",
-        ].join(";");
-        tracker.innerHTML = [
-            '<span data-rg-rtt-dot style="width:5px;height:5px;border-radius:50%;background:#94a3b8;box-shadow:0 0 4px currentColor;"></span>',
-            '<span data-rg-rtt-value>NET —</span>',
-        ].join("");
+        tracker.style.cssText = `
+            display:none;
+            position:fixed;
+            top:12px;
+            left:12px;
+            z-index:999999997;
+            pointer-events:none;
+            user-select:none;
+            align-items:center;
+            gap:5px;
+            padding:0;
+            border:0;
+            background:transparent;
+            color:#cbd5e1;
+            font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+            font-variant-numeric:tabular-nums;
+            letter-spacing:.04em;
+            opacity:.78;
+            text-shadow:0 1px 2px #000,0 0 5px rgba(0,0,0,.85);
+        `;
+        tracker.innerHTML = `
+            <span data-rg-rtt-dot style="width:5px;height:5px;border-radius:50%;background:#94a3b8;box-shadow:0 0 4px currentColor;"></span>
+            <span data-rg-rtt-value>NET —</span>
+        `;
         document.body.appendChild(tracker);
         return tracker;
     }
