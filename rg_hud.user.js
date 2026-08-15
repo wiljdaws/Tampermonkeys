@@ -662,8 +662,8 @@
             tooltipEl.style.opacity = "0";
         });
 
-        // v13.6: blur buttons on mouse click so spacebar in queue hits the game
-        // not the last tab. keyboard clicks (detail === 0) keep focus for tab flow.
+        // blur on mouse click so spacebar in queue reaches the game, not the
+        // last tabbed button. keyboard clicks (detail === 0) keep focus.
         hud.addEventListener("click", (e) => {
             const btn = e.target.closest("button");
             if (btn && e.detail !== 0) btn.blur();
@@ -1665,7 +1665,6 @@
             updateHUD(data);
             submitToLeaderboard(data);
         } catch (e) {
-            // 13.5 swallowed this silently
             dbg("tryParseAndUpdate threw: " + getErrMsg(e));
         }
     }
@@ -4665,8 +4664,7 @@
                 } catch (writeErr) {
                     // best-effort, never strip the tag on failure
                     console.warn("[RG HUD] Clan MMR write failed (tag still applies):", writeErr);
-                    // v13.6: surface persistent failures. 13.5 was silent and
-                    // broke the whole event score loop for the session.
+                    // surface this — silent failure breaks event scoring for the session
                     showError("Clan sync failing — event score may be stale");
                 }
             }
@@ -4853,12 +4851,11 @@
     // UserId (warm-up self-inits log empty UserId), cleared on matchEnd /
     // LeaveRoom / new queue. all HUD-restore signals gate on this so a
     // reconnect storm can't resurrect the HUD mid-match.
-    // v13.4 bug: includes("OnDisconnected") substring-matched
-    // "PhotonConnector:OurOnDisconnected" and restored the HUD on every
-    // reconnect attempt.
+    // don't substring-match "OnDisconnected" — it also matches
+    // "OurOnDisconnected" and restores the HUD on every reconnect.
     let _inMatch = false;
 
-    // v13.6 watchdog timestamps.
+    // watchdog timestamps:
     //   _lastInitLineAt      : last real init line, proves console hook is alive
     //   _lastRecoverySignalAt: last menu/reconnect signal
     //   _lastValidRatingsAt  : last successful ModesGlicko parse, proves matchEnd
@@ -4900,9 +4897,8 @@
             const text = await clone.text();
 
             if (url.includes("/v0304_player/matchEnd")) {
-                // v13.6: watchdog. if no valid ratings parse within 30s the
-                // game probably changed the response shape, surface it
-                // instead of letting the HUD freeze on stale numbers.
+                // if no valid ratings parse within 30s the game probably changed
+                // the response shape — surface it instead of freezing on stale numbers.
                 _matchEndArmedAt = performance.now();
                 if (_matchEndWatchdogTimer) clearTimeout(_matchEndWatchdogTimer);
                 _matchEndWatchdogTimer = setTimeout(() => {
@@ -4975,7 +4971,6 @@
                 }
             }
         } catch (e) {
-            // 13.5 swallowed clone.text() throws silently. log them.
             dbg("fetch wrapper threw: " + getErrMsg(e));
         }
         return response;
@@ -4985,8 +4980,8 @@
         oldLog.apply(console, args);
         // feed the raw buffer for atlasCap()
         _rawPush("log", args);
-        // 13.5: a throw in any branch below unwound the for-loop and every
-        // state transition after it was silently missed. wrap it.
+        // wrap: a throw in any branch below unwinds the loop and every
+        // state transition after it is silently missed.
         try {
             for (const arg of args) {
                 if (typeof arg !== "string") continue;
@@ -5000,10 +4995,9 @@
 
                 // ---- init line: queue warm-up OR real match forming ----
                 // shape: ...for player: <markup>Name<size=0> (UserId: abc123, Team: Orange)
-                // UserId is the discriminator. warm-up logs the local player
-                // with an EMPTY UserId (verified 5x in 7/27 log dump); real
-                // match inits always populate it.
-                // v13.4 bug: warm-up inits restarted the roster mid-queue.
+                // UserId is the discriminator: warm-up logs an EMPTY UserId,
+                // real match inits always populate it. without this check,
+                // warm-up inits restart the roster mid-queue.
                 if (arg.includes("[PlayerDataManager] Initialized stats for player")) {
                     // Parse the parenthesized fields independently so empty
                     // warm-up UserIds and future extra fields remain valid.
@@ -5093,14 +5087,13 @@
                 }
 
                 // ---- return-to-menu / recovery signals ----
-                // v13.4 used "OnJoinedRoom"/"OnLeftRoom" (never appear) and
-                // "OnDisconnected" (only matched as substring of
-                // "OurOnDisconnected"). these are the actual strings.
+                // "OnJoinedRoom"/"OnLeftRoom" never appear and "OnDisconnected"
+                // only shows up as a substring of "OurOnDisconnected". these
+                // are the actual strings. word-boundaries on Our* to avoid
+                // the same substring-match trap.
                 // gate restore on !_inMatch or a reconnect storm respawns the HUD.
                 // "Starting SetNickname" covers practice/private, which emit
                 // no room strings on exit.
-                // v13.6: word-boundaries on Our* to guard against the same
-                // substring-match class of bug.
                 if (/\bOurOnDisconnected\b/.test(arg) || arg.includes("Starting SetNickname") ||
                     /\bOurOnConnectedToMaster\b/.test(arg)) {
                     _lastRecoverySignalAt = performance.now();
@@ -5306,7 +5299,7 @@
             myClan.eventId = evId;
         } catch (e) {
             console.warn("[RG HUD] Event baseline capture failed:", e);
-            // v13.6: without this alert, the member's contribution silently stays at 0
+            // without this alert, the member's contribution silently stays at 0
             showError("Event baseline capture failed — your contribution won't count until this recovers");
         }
     }
@@ -5828,11 +5821,11 @@
     // callback renders straight from the snapshot — refetching triples reads.
     let _clanUnsub = null;
     let _clanListenerId = null;
-    let _clanAttaching = false; // v13.6: guard against re-entry during init await
+    let _clanAttaching = false; // guard against re-entry during init await
 
-    // v13.6: sanitize user-editable style fields at the trust boundary.
-    // a modified client could push HTML-shaped strings into tagStyle.color
-    // and land stored XSS in every member's browser via the snapshot listener.
+    // sanitize user-editable style fields at the trust boundary. a modified
+    // client could push HTML-shaped strings into tagStyle.color and land
+    // stored XSS in every member's browser via the snapshot listener.
     function sanitizeClanDoc(clan) {
         if (!clan) return clan;
         const hexOk = v => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
@@ -5860,8 +5853,8 @@
     async function attachClanListener() {
         if (!myClan) return;
         if (_clanUnsub && _clanListenerId === myClan.id) return;
-        // v13.6: without this reentry guard two rapid calls both await init
-        // then both call onSnapshot, leaking the first listener.
+        // without this reentry guard two rapid calls both await init then
+        // both call onSnapshot, leaking the first listener.
         if (_clanAttaching) return;
         _clanAttaching = true;
         try {
@@ -5893,14 +5886,13 @@
                     // protected per-member map without another Firestore read.
                     patchMyClanInDirectory();
                     refreshClanViewIfOpen();
-                    // v13.6: repaint main stats too so Clash mini-bar updates live
+                    // repaint main stats too so Clash mini-bar updates live
                     if (lastKnownPlayerData) updateHUD(lastKnownPlayerData);
                 },
                 (err) => {
-                    // v13.6: without onError, revoked perms froze the UI silently
-                    // 14.5: also retry - background tabs get throttled and the
-                    //       listener dies quiet. without this, syncs sit stale
-                    //       for 50+ min until someone refreshes.
+                    // without onError + retry, revoked perms freeze the UI
+                    // silently, and background tabs get throttled so the
+                    // listener dies quiet — syncs sit stale for 50+ min.
                     dbg("clan listener error, scheduling reconnect: " + getErrMsg(err));
                     console.warn("[RG HUD] Clan listener error, will retry in 30s:", err);
                     detachClanListener();
@@ -8158,7 +8150,7 @@
         } catch (e) {
             pushError(e, "leaveClan");
             console.error("[RG HUD] Leave clan failed:", e);
-            // v13.6: local state is already partially wiped above, surface it
+            // local state is already partially wiped above, surface it
             showToast("Couldn't leave clan — refresh the page to retry.");
         }
     }
@@ -8513,7 +8505,7 @@
             msgEl.style.whiteSpace = "pre-wrap";
             okBtn.textContent = okLabel;
             cancelBtn.textContent = cancelLabel;
-            // v13.6: empty label -> no phantom cancel button on info dialogs
+            // empty label -> no phantom cancel button on info dialogs
             cancelBtn.style.display = cancelLabel ? "" : "none";
             input.style.display = withInput ? "block" : "none";
             input.value = "";
@@ -8611,9 +8603,9 @@
         }
     }, 100);
 
-    // v13.6: watchdog for _inMatch. if the game silently reconnects without
-    // emitting matchEnd/LeaveRoom, the HUD stays hidden forever. 10min
-    // exceeds any real match so we won't clobber legit state.
+    // watchdog for _inMatch: if the game silently reconnects without emitting
+    // matchEnd/LeaveRoom, the HUD stays hidden forever. 10min exceeds any
+    // real match so we won't clobber legit state.
     const INMATCH_STALE_MS = 10 * 60 * 1000;
     setInterval(() => {
         if (!_inMatch) return;
@@ -9472,7 +9464,7 @@
       return;
     }
     const nick = String(rawNickname || '');
-    // v13.6: caller has stripped clan-tag prefix from nick, pending.* wasn't
+    // caller has stripped clan-tag prefix from nick, pending.* wasn't
     // stripped. compare both forms or same-clan steals ping-pong forever.
     let stripFn;
     try { stripFn = stripLeadingClanTagMarkup; } catch (e) { stripFn = s => s; }
@@ -10947,9 +10939,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
       return {
         setPrefixProvider(fn) { _prefixProvider = fn; },
         setRosterProvider(fn) { _rosterProvider = fn; },
-        // v13.6: HUD calls this from /login response too, not just Forge open.
-        // fixes the "steal, refresh, receipt expires before Forge opens" case
-        // that v13.5's self-heal was supposed to catch.
+        // HUD calls this from /login response too, not just Forge open.
+        // fixes the "steal, refresh, receipt expires before Forge opens" case.
         verifyStolenName(rawNickname) { verifyPendingSteal(rawNickname); },
         refresh() { if (_rgnfPanel) render(_rgnfPanel); },
         // called on Forge open and on account switch. per-account state wins;
