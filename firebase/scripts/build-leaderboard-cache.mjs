@@ -37,6 +37,41 @@ export const JSON_ROW_FIELDS = Object.freeze([
   "currentStreak",
 ]);
 
+const PUBLIC_IMAGE_HOSTS = new Set([
+  "i.imgur.com",
+  "imgur.com",
+  "upload.wikimedia.org",
+]);
+
+function isBlockedImageHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  if (!host) return true;
+  if (host.endsWith(".discordapp.com") || host.endsWith(".discordapp.net")) return true;
+  if (host.endsWith(".githubusercontent.com") || host === "github.com" || host === "www.github.com") {
+    return true;
+  }
+  if (host.endsWith(".jsdelivr.net")) return true;
+  return false;
+}
+
+// Country flags stay. Discord / GitHub / jsDelivr file links do not.
+export function publicImageUrl(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  if (!/^(https?:|data:)/i.test(text)) return text;
+  if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(text)) return text;
+  if (text.startsWith("data:")) return "";
+  try {
+    const parsed = new URL(text);
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    if (isBlockedImageHost(parsed.hostname)) return "";
+    if (!PUBLIC_IMAGE_HOSTS.has(parsed.hostname.toLowerCase())) return "";
+    return parsed.href;
+  } catch {
+    return "";
+  }
+}
+
 const BLOCKED_ARGUMENTS = new Set([
   "--commit",
   "--create",
@@ -361,13 +396,23 @@ export function buildJsonRow(raw, rank, playlist) {
     }
   }
   if (raw?.flag && typeof raw.flag === "string") {
-    row.flag = raw.flag.slice(0, 2048);
+    const flag = publicImageUrl(raw.flag);
+    if (flag) row.flag = flag.slice(0, 2048);
   }
   if (raw?.icons !== undefined && raw.icons !== null) {
     if (typeof raw.icons === "string") {
-      row.icons = raw.icons.slice(0, 10000);
+      const icons = raw.icons
+        .split(",")
+        .map(icon => publicImageUrl(icon.trim()))
+        .filter(Boolean)
+        .join(",");
+      if (icons) row.icons = icons.slice(0, 10000);
     } else if (Array.isArray(raw.icons)) {
-      row.icons = raw.icons.slice(0, 12).map(icon => String(icon));
+      const icons = raw.icons
+        .slice(0, 12)
+        .map(icon => publicImageUrl(icon))
+        .filter(Boolean);
+      if (icons.length) row.icons = icons;
     }
   }
   if (Number.isFinite(Number(raw?.iconSize))) {
