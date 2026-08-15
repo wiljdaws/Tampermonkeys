@@ -75,6 +75,8 @@
         el.textContent = tempText;
         setTimeout(() => { el.textContent = prev; }, ms);
     }
+    function isVisible(el) { return !!(el && el.style.display !== "none"); }
+    function isFlexVisible(el) { return !!(el && el.style.display === "flex"); }
     function pushError(err, origin) {
         try {
             const message = getErrMsg(err);
@@ -672,7 +674,7 @@
             window.open("https://www.youtube.com/@RootedEngineering", "_blank", "noopener");
         };
         document.getElementById("rgLeaderboard").onclick = () => {
-            const onClanTab = document.getElementById("rgClanView")?.style.display !== "none";
+            const onClanTab = isVisible(document.getElementById("rgClanView"));
             const url = onClanTab
                 ? "https://wiljdaws.github.io/RG_Clan_Leaderboard/"
                 : "https://wiljdaws.github.io/rg_player_leaderboard/";
@@ -706,7 +708,7 @@
             detachClanListener();
         }
         document.getElementById("rgClanBtn").onclick = () => {
-            const showingClan = clanView.style.display !== "none";
+            const showingClan = isVisible(clanView);
             dbg(`Clan panel ${showingClan ? "closed" : "opened"}`);
             if (showingClan) { showStatsOnly(); return; }
             showStatsOnly();
@@ -716,7 +718,7 @@
         };
 
         document.getElementById("rgForgeBtn").onclick = () => {
-            const showingForge = forgeView.style.display !== "none";
+            const showingForge = isVisible(forgeView);
             dbg(`Forge panel ${showingForge ? "closed" : "opened"}`);
             if (showingForge) { showStatsOnly(); return; }
             showStatsOnly();
@@ -741,7 +743,7 @@
 
         // route through showStatsOnly so opening from Forge doesn't stack views
         document.getElementById("rgSettingsBtn").onclick = () => {
-            const opening = panel.style.display === "none";
+            const opening = !isVisible(panel);
             dbg(`Settings panel ${opening ? "opened" : "closed"}`);
             showStatsOnly();
             if (opening) panel.style.display = "block";
@@ -829,14 +831,13 @@
                 // bugs show whether the dialog was even visible.
                 const ui = (() => {
                     const q = id => document.getElementById(id);
-                    const visible = el => !!(el && el.style.display !== "none");
                     const dlg = q("rgDialog");
                     return {
                         hudExists: !!q("rgHUD"),
-                        clanViewOpen: visible(q("rgClanView")),
-                        forgeViewOpen: visible(q("rgForgeView")),
-                        settingsOpen: visible(q("rgSettingsPanel")),
-                        dialogOpen: dlg && dlg.style.display === "flex",
+                        clanViewOpen: isVisible(q("rgClanView")),
+                        forgeViewOpen: isVisible(q("rgForgeView")),
+                        settingsOpen: isVisible(q("rgSettingsPanel")),
+                        dialogOpen: isFlexVisible(dlg),
                     };
                 })();
                 // Enough layout detail to reproduce UI bugs without a device fingerprint.
@@ -939,7 +940,7 @@
         if (!hud) return;
         // hidden HUD returns zeros from getBoundingClientRect and we'd
         // persist top-left as the "corrected" pos. re-clamps on show.
-        if (hud.style.display === "none" || hud.offsetWidth === 0) return;
+        if (!isVisible(hud) || hud.offsetWidth === 0) return;
         const rect = hud.getBoundingClientRect();
         const vw = window.innerWidth;
         const vh = window.innerHeight;
@@ -1012,7 +1013,7 @@
 
     function manualToggle() {
         const body = document.getElementById("rgBody");
-        const visible = body.style.display !== "none";
+        const visible = isVisible(body);
         body.style.display = visible ? "none" : "block";
         document.getElementById("rgMinimize").textContent = visible ? "+" : "–";
         document.getElementById("rgMinimize").title = visible ? "Restore" : "Minimize";
@@ -1164,7 +1165,7 @@
         myClan = null;
         scheduleClanNoticeCheck();
         const clanView = document.getElementById("rgClanView");
-        if (clanView && clanView.style.display !== "none") {
+        if (isVisible(clanView)) {
             renderClanView();
         }
     }
@@ -2552,13 +2553,13 @@
         window.addEventListener(type, e => {
             const active = document.activeElement;
             const dialog = document.getElementById("rgDialog");
-            const dialogOpen = dialog && dialog.style.display === "flex";
+            const dialogOpen = isFlexVisible(dialog);
             if (dialogOpen) {
                 e.stopImmediatePropagation();
                 if (type === "keydown" && e.key === "Escape") {
                     e.preventDefault();
                     const btn = document.getElementById("rgDialogCancel");
-                    if (btn && btn.style.display !== "none") btn.click();
+                    if (isVisible(btn)) btn.click();
                 } else if (type === "keydown" && e.key === "Enter"
                     && (active?.id === "rgDialogInput" || active?.id === "rgDialogOk")) {
                     e.preventDefault();
@@ -4873,7 +4874,7 @@
             // repaint Forge if it's open. no focus-steal risk mid-match,
             // the user can't be typing in Forge while playing.
             const fv = document.getElementById("rgForgeView");
-            if (fv && fv.style.display !== "none" && typeof RGNF !== "undefined" && RGNF.refresh) {
+            if (isVisible(fv) && typeof RGNF !== "undefined" && RGNF.refresh) {
                 RGNF.refresh();
             }
             // clear so a stray second freeze (matchEnd fetch + logged response)
@@ -8199,7 +8200,7 @@
     // refresh clan tab in place if it's open
     function refreshClanViewIfOpen() {
         const view = document.getElementById("rgClanView");
-        if (view && view.style.display !== "none") {
+        if (isVisible(view)) {
             renderClanViewFromMemory();
             if (myClan) attachClanListener();
         }
@@ -8431,7 +8432,7 @@
             mHeader.onclick = () => {
                 const list = document.getElementById("rgMembersList");
                 const arrow = document.getElementById("rgMembersArrow");
-                const open = list.style.display !== "none";
+                const open = isVisible(list);
                 list.style.display = open ? "none" : "block";
                 arrow.textContent = open ? "▶" : "▼";
             };
@@ -8442,7 +8443,7 @@
             tHeader.onclick = () => {
                 const body = document.getElementById("rgClanTagBody");
                 const arrow = document.getElementById("rgClanTagArrow");
-                const open = body.style.display !== "none";
+                const open = isVisible(body);
                 body.style.display = open ? "none" : "block";
                 arrow.textContent = open ? "▶" : "▼";
             };
@@ -8631,7 +8632,7 @@
     setInterval(() => {
         if (_inMatch) return;
         if (!hud) return;
-        if (!hud.isConnected || hud.style.display === "none") {
+        if (!hud.isConnected || !isVisible(hud)) {
             setAutoVisible(true);
         }
     }, 2000);
