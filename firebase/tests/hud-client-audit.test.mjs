@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "20.0");
+  assert.equal(version, "20.1");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -102,12 +102,56 @@ test("deny logger attaches client-side reasons (19.5+)", () => {
   assert.match(hudSource, /function describeMatchSnapshotReasons\(/);
 });
 
+const resolveAtlasFirebaseApp = extractHudFunction("resolveAtlasFirebaseApp", {
+  ATLAS_FIREBASE_APP_NAME: "atlas",
+});
+const firebaseAuthShouldRetry = extractHudFunction("firebaseAuthShouldRetry");
+
+test("resolveAtlasFirebaseApp: empty page uses the default app like 19.9", () => {
+  const created = [];
+  const initializeApp = (config, name) => {
+    created.push(name || "[DEFAULT]");
+    return { name: name || "[DEFAULT]", options: config };
+  };
+  const app = resolveAtlasFirebaseApp([], { projectId: "rgleaderboard" }, initializeApp);
+  assert.equal(app.name, "[DEFAULT]");
+  assert.deepEqual(created, ["[DEFAULT]"]);
+});
+
+test("resolveAtlasFirebaseApp: reuses default when it is already rgleaderboard", () => {
+  const existing = [{ name: "[DEFAULT]", options: { projectId: "rgleaderboard" } }];
+  const app = resolveAtlasFirebaseApp(existing, { projectId: "rgleaderboard" }, () => {
+    throw new Error("should not create a second app");
+  });
+  assert.equal(app, existing[0]);
+});
+
+test("resolveAtlasFirebaseApp: uses named atlas only when default is another project", () => {
+  const existing = [{ name: "[DEFAULT]", options: { projectId: "rocketball-23c12" } }];
+  const created = [];
+  const initializeApp = (config, name) => {
+    created.push(name);
+    return { name, options: config };
+  };
+  const app = resolveAtlasFirebaseApp(existing, { projectId: "rgleaderboard" }, initializeApp);
+  assert.equal(app.name, "atlas");
+  assert.deepEqual(created, ["atlas"]);
+});
+
+test("firebaseAuthShouldRetry: Settings retry stays live until a uid exists", () => {
+  assert.equal(firebaseAuthShouldRetry(null), true);
+  assert.equal(firebaseAuthShouldRetry(""), true);
+  assert.equal(firebaseAuthShouldRetry("QQOCAgdfAkgkL22MEkVmXzIZJBk2"), false);
+});
+
 test("Firebase id row retries auth instead of staying on signing in", () => {
+  const initSource = hudFunctionSource("initFirebase");
   assert.match(hudSource, /function paintAuthUid\(/);
-  assert.match(hudSource, /initializeApp\(FIREBASE_CONFIG, "atlas"\)/);
-  assert.match(hudSource, /sign-in timed out/);
-  assert.match(hudSource, /firestoreInitPromise/);
+  assert.match(hudSource, /function retryFirebaseAuth\(/);
+  assert.match(initSource, /firebaseAuthShouldRetry\(firebaseAuthUid\)/);
+  assert.match(initSource, /retryFirebaseAuth\(\)/);
   assert.match(hudSource, /tap Settings to retry/);
+  assert.doesNotMatch(initSource, /sign-in timed out/);
 });
 
 test("HUD tells unlisted players to ask Pal or Jesus on Discord", () => {
@@ -115,6 +159,8 @@ test("HUD tells unlisted players to ask Pal or Jesus on Discord", () => {
   assert.match(hudSource, /function showNotAllowlistedUI/);
   assert.match(hudSource, /isAllowlistGatedLabel/);
   assert.match(hudSource, /allowedUserIds/);
+  const gate = hudFunctionSource("isUpdateRequired");
+  assert.match(gate, /if \(uid && \(!Array\.isArray\(allowed\)/);
 });
 
 test("clan MMR sync skips Firestore when no event is active", () => {

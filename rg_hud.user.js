@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.0
+// @version      20.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -400,7 +400,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1696,9 +1696,28 @@
 
     let firestoreReady = null;
     let firestoreInitPromise = null;
+    let atlasFirebaseAuth = null;
     // Set by initFirebase() after anon sign-in. Rules bind writes to this.
     let firebaseAuthUid = null;
     let firebaseAuthError = null;
+    const ATLAS_FIREBASE_APP_NAME = "atlas";
+
+    // 19.9 used the default app. 20.0 always created a named "atlas" app,
+    // which cannot see the existing anonymous session and then treated a
+    // failed sign-in as "ready", so Settings retry was a no-op.
+    function resolveAtlasFirebaseApp(existingApps, config, initializeApp) {
+        const apps = Array.isArray(existingApps) ? existingApps : [];
+        const named = apps.find((app) => app && app.name === ATLAS_FIREBASE_APP_NAME);
+        if (named) return named;
+        const def = apps.find((app) => app && app.name === "[DEFAULT]");
+        if (!def) return initializeApp(config);
+        if (def.options && def.options.projectId === config.projectId) return def;
+        return initializeApp(config, ATLAS_FIREBASE_APP_NAME);
+    }
+
+    function firebaseAuthShouldRetry(uid) {
+        return !uid;
+    }
 
     function paintAuthUid() {
         const uidLabel = document.getElementById("rgSetAuthUid");
@@ -2049,19 +2068,46 @@
 
     async function initFirebase() {
         if (!FIREBASE_CONFIG) return null;
-        if (firestoreReady) return firestoreReady;
+        if (firestoreReady && !firebaseAuthShouldRetry(firebaseAuthUid)) return firestoreReady;
         if (firestoreInitPromise) return firestoreInitPromise;
-        firestoreInitPromise = initFirebaseInner();
+        firestoreInitPromise = firestoreReady ? retryFirebaseAuth() : initFirebaseInner();
         try {
             return await firestoreInitPromise;
         } finally {
-            if (!firestoreReady) firestoreInitPromise = null;
+            firestoreInitPromise = null;
         }
     }
 
+    async function retryFirebaseAuth() {
+        try {
+            await ensureAnonymousAuth(atlasFirebaseAuth);
+            updateRequiredChecked = false;
+            if (firestoreReady) await isUpdateRequired(firestoreReady);
+            if (notAllowlisted) showNotAllowlistedUI();
+        } catch (authErr) {
+            firebaseAuthUid = null;
+            firebaseAuthError = getErrMsg(authErr);
+            dbg("retryFirebaseAuth failed: " + firebaseAuthError);
+        }
+        paintAuthUid();
+        return firestoreReady;
+    }
+
+    async function ensureAnonymousAuth(auth) {
+        if (!auth) throw new Error("Firebase auth is not ready");
+        if (!auth.currentUser) await signInAnonymouslyFn(auth);
+        firebaseAuthUid = auth.currentUser ? auth.currentUser.uid : null;
+        firebaseAuthError = firebaseAuthUid ? null : "no-uid";
+        if (!firebaseAuthUid) throw new Error("signInAnonymously resolved without a uid");
+    }
+
+    let signInAnonymouslyFn = async () => {
+        throw new Error("signInAnonymously is not loaded");
+    };
+
     async function initFirebaseInner() {
         try {
-            const { initializeApp, getApp, getApps } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
+            const { initializeApp, getApps } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
             const {
                 getFirestore,
                 doc,
@@ -2080,31 +2126,23 @@
                 runTransaction,
             } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-            const { getAuth, signInAnonymously } =
+            const { getAuth, signInAnonymously, initializeAuth, browserLocalPersistence } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
+            signInAnonymouslyFn = signInAnonymously;
 
-            // Named app so the game's own Firebase [DEFAULT] (Rocket Goal
-            // login) cannot collide with ours and leave Settings stuck on
-            // "signing in…".
-            const app = getApps().some(a => a.name === "atlas")
-                ? getApp("atlas")
-                : initializeApp(FIREBASE_CONFIG, "atlas");
+            const app = resolveAtlasFirebaseApp(getApps(), FIREBASE_CONFIG, initializeApp);
             const db = getFirestore(app);
             // Sign in before handing firestoreReady out; writes without
             // an auth.uid stamp get denied.
             try {
-                const auth = getAuth(app);
-                if (!auth.currentUser) {
-                    await Promise.race([
-                        signInAnonymously(auth),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error("sign-in timed out")), 12_000)),
-                    ]);
+                let auth;
+                try {
+                    auth = getAuth(app);
+                } catch (e) {
+                    auth = initializeAuth(app, { persistence: browserLocalPersistence });
                 }
-                firebaseAuthUid = auth.currentUser ? auth.currentUser.uid : null;
-                firebaseAuthError = firebaseAuthUid ? null : "no-uid";
-                if (!firebaseAuthUid) {
-                    dbg("initFirebase: signInAnonymously resolved without a uid");
-                }
+                atlasFirebaseAuth = auth;
+                await ensureAnonymousAuth(auth);
             } catch (authErr) {
                 firebaseAuthUid = null;
                 firebaseAuthError = getErrMsg(authErr);
@@ -2274,7 +2312,9 @@
                 }
                 const allowed = data.allowedUserIds;
                 const uid = firebaseAuthUid;
-                if (!Array.isArray(allowed) || !uid || !allowed.map(String).includes(uid)) {
+                // No uid yet means auth is still retrying — do not flash
+                // the invite bar as if the player were rejected.
+                if (uid && (!Array.isArray(allowed) || !allowed.map(String).includes(uid))) {
                     notAllowlisted = true;
                 }
             }
