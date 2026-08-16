@@ -731,6 +731,27 @@ export function normalizePublishName(name) {
     .replace(/\s+/g, " ");
 }
 
+// Same person, different HUD name or Firebase uid. Canonical key first,
+// then a display name they asked to keep on the public board.
+const IDENTITY_NAME_ALIASES = {
+  "romance anime a": "virtualzzs",
+  virtualzzs: "virtualzzs",
+};
+const IDENTITY_UID_ALIASES = {
+  "5UHW153KADWkCoU5aEDRpc6rrCw2": "virtualzzs",
+  Ly8RPbr4z4Svd0IyUMJrR9B1wRh1: "virtualzzs",
+};
+const IDENTITY_DISPLAY_NAMES = {
+  virtualzzs: "[KING] Virtualzzs",
+};
+
+export function identityKey(row) {
+  const uid = String(row?.sourceUserId || row?.uid || "").trim();
+  if (uid && IDENTITY_UID_ALIASES[uid]) return IDENTITY_UID_ALIASES[uid];
+  const name = normalizePublishName(row?.name);
+  return IDENTITY_NAME_ALIASES[name] || name;
+}
+
 function rowUid(row) {
   return String(row?.sourceUserId || row?.uid || row?._docId || "").trim();
 }
@@ -777,11 +798,17 @@ function absorbIdentityExtras(winner, loser) {
   if (out.iconSize == null && loser.iconSize != null) out.iconSize = loser.iconSize;
   if (!out.glowColor && loser.glowColor) out.glowColor = loser.glowColor;
   if (out.glowStrength == null && loser.glowStrength != null) out.glowStrength = loser.glowStrength;
-  const winnerTagged = /^\[[^\]]+\]\s*/.test(String(winner.name || "").trim());
-  const loserTagged = /^\[[^\]]+\]\s*/.test(String(loser.name || "").trim());
-  if (!winnerTagged && loserTagged
-      && normalizePublishName(winner.name) === normalizePublishName(loser.name)) {
-    out.name = loser.name;
+  const preferred = IDENTITY_DISPLAY_NAMES[identityKey(out)]
+    || IDENTITY_DISPLAY_NAMES[identityKey(loser)];
+  if (preferred) {
+    out.name = preferred;
+  } else {
+    const winnerTagged = /^\[[^\]]+\]\s*/.test(String(winner.name || "").trim());
+    const loserTagged = /^\[[^\]]+\]\s*/.test(String(loser.name || "").trim());
+    if (!winnerTagged && loserTagged
+        && identityKey(winner) === identityKey(loser)) {
+      out.name = loser.name;
+    }
   }
   return out;
 }
@@ -806,7 +833,10 @@ function collapseByKey(rows, playlist, keyFn) {
       kept.set(key, absorbIdentityExtras(existing, row));
     }
   }
-  return [...kept.values(), ...leftovers];
+  return [...kept.values(), ...leftovers].map((row) => {
+    const preferred = IDENTITY_DISPLAY_NAMES[identityKey(row)];
+    return preferred && row?.name !== preferred ? { ...row, name: preferred } : row;
+  });
 }
 
 // HUD reinstalls mint a new anonymous Firebase uid, so the same player
@@ -821,7 +851,7 @@ export function dedupeRowsByIdentity(rows, playlist) {
   return collapseByKey(
     byGameId,
     playlist,
-    row => normalizePublishName(row?.name),
+    row => identityKey(row),
   );
 }
 

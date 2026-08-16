@@ -18,6 +18,7 @@ import {
   keepAllowlistedRows,
   uidsToAutoBlacklist,
   dedupeRowsByIdentity,
+  identityKey,
   normalizePublishName,
   publicImageUrl,
   blacklistPausesWrites,
@@ -918,6 +919,50 @@ test("normalizePublishName strips clan tags before matching", () => {
   assert.equal(normalizePublishName("[KING] JesusDied4U"), "jesusdied4u");
   assert.equal(normalizePublishName("JesusDied4U"), "jesusdied4u");
   assert.equal(normalizePublishName("  [OG]  Chicken Jockey "), "chicken jockey");
+});
+
+test("identityKey aliases Romance anime a to Virtualzzs", () => {
+  assert.equal(identityKey({ name: "Romance anime a" }), "virtualzzs");
+  assert.equal(identityKey({ name: "[KING] Virtualzzs" }), "virtualzzs");
+  assert.equal(identityKey({ sourceUserId: "5UHW153KADWkCoU5aEDRpc6rrCw2", name: "Romance anime a" }), "virtualzzs");
+});
+
+test("dedupeRowsByIdentity renames a lone Romance row to Virtualzzs", () => {
+  const rows = dedupeRowsByIdentity([
+    {
+      sourceUserId: "5UHW153KADWkCoU5aEDRpc6rrCw2",
+      name: "Romance anime a",
+      wins: 2454,
+      matches: 2526,
+    },
+  ], "wins");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "[KING] Virtualzzs");
+});
+
+test("dedupeRowsByIdentity keeps Virtualzzs name on the live Romance row", () => {
+  const rows = dedupeRowsByIdentity([
+    {
+      sourceUserId: "Ly8RPbr4z4Svd0IyUMJrR9B1wRh1",
+      name: "[KING] Virtualzzs",
+      mmr: 20549,
+      flag: "https://i.imgur.com/B6VOEig.png",
+      icons: "https://i.imgur.com/VopY1JE.png,https://i.imgur.com/5VVlaO7.png",
+    },
+    {
+      sourceUserId: "5UHW153KADWkCoU5aEDRpc6rrCw2",
+      name: "Romance anime a",
+      mmr: 21066,
+      sessionLastSeen: 1786897495923,
+      currentStreak: 51,
+    },
+  ], "1v1");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceUserId, "5UHW153KADWkCoU5aEDRpc6rrCw2");
+  assert.equal(rows[0].mmr, 21066);
+  assert.equal(rows[0].name, "[KING] Virtualzzs");
+  assert.equal(rows[0].flag, "https://i.imgur.com/B6VOEig.png");
+  assert.equal(rows[0].icons, "https://i.imgur.com/VopY1JE.png,https://i.imgur.com/5VVlaO7.png");
 });
 
 test("dedupeRowsByIdentity prefers the live session when lastWriteAt is missing", () => {
