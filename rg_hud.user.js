@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.9
+// @version      21.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -6038,9 +6038,8 @@
     // Point reads only. Listing clans_directory billed 17,959 reads per
     // Clan-panel open (Virt 2026-08-16) and blew Spark. Standings come
     // from the single index doc plus our shard. If the index is missing,
-    // fall back to a hard-capped query — never an unbounded getDocs.
-    const CLAN_DIRECTORY_BROWSE_LIMIT = 50;
-
+    // do not query the junk drawer — that collection is ~18k orphan docs
+    // and even a limit(50) is 50 wasted reads of garbage.
     async function loadClanDirectoryLite(fb, clanId) {
         const budgetPassed = firestoreReadBudgetPassed();
         if (budgetPassed) {
@@ -6062,19 +6061,6 @@
             : null;
         if (Array.isArray(indexClans) && indexClans.length) {
             clans = indexClans;
-        } else if (!budgetPassed && !indexSnap?.exists()
-            && !firestoreReadBudgetPassed()) {
-            try {
-                const snap = await fb.getDocs(fb.query(
-                    fb.collection(fb.db, "clans_directory"),
-                    fb.limit(CLAN_DIRECTORY_BROWSE_LIMIT)
-                ));
-                clans = snap.docs
-                    .filter(docSnap => docSnap.id !== "index")
-                    .map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
-            } catch (e) {
-                dbg("clan directory browse query failed: " + getErrMsg(e));
-            }
         }
         if (clanId && shardSnap?.exists()) {
             clans = putClanInDirectory(clans, {
@@ -6365,15 +6351,17 @@
             const deviceId = getDeviceId();
             myClan = null;
             let mine = null;
+            let membership = null;
+            let device = null;
             if (useReservations) {
                 const [membershipSnap, deviceSnap] = await Promise.all([
                     fb.getDoc(fb.doc(fb.db, "clan_memberships", uid)),
                     fb.getDoc(fb.doc(fb.db, "clan_devices", deviceId)),
                 ]);
-                const membership = membershipSnap.exists()
+                membership = membershipSnap.exists()
                     ? membershipSnap.data()
                     : null;
-                const device = deviceSnap.exists() ? deviceSnap.data() : null;
+                device = deviceSnap.exists() ? deviceSnap.data() : null;
                 const clanId = membership?.clanId || device?.clanId || null;
                 clanDirectory = await loadClanDirectoryLite(fb, clanId);
                 mine = clanId
@@ -6415,12 +6403,24 @@
                     clan: myClan,
                     uid,
                     deviceId,
+                    membership,
+                    device,
                     directoryEntry,
                     useReservations,
                 });
-                if (useReservations
-                    || linkPlan.repairClan
-                    || linkPlan.repairPointer) {
+                if (linkPlan.conflictClanId) {
+                    const sameClan = linkPlan.conflictClanId === myClan.id;
+                    const other = clanDirectory.find(
+                        entry => entry?.id === linkPlan.conflictClanId
+                    );
+                    await showDialog({
+                        message: sameClan
+                            ? `This ATLAS device is already linked to another account in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. One of the accounts must leave the clan.`
+                            : `This ATLAS device is already linked to ${other?.tag ? `[${other.tag}] ` : ""}${other?.name || "another clan"}. This account is also in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. Leave one clan before using another account on this device.`,
+                        okLabel: "OK",
+                        cancelLabel: "Close",
+                    });
+                } else if (linkPlan.repairClan || linkPlan.repairPointer) {
                     try {
                         const linkResult = await linkCurrentClanDevice(
                             fb,
@@ -6430,16 +6430,6 @@
                         );
                         if (linkResult?.clan) myClan = sanitizeClanDoc(linkResult.clan);
                         if (linkResult?.directory) clanDirectory = linkResult.directory;
-                        if (linkResult?.conflict) {
-                            const sameClan = linkResult.conflict.id === myClan.id;
-                            await showDialog({
-                                message: sameClan
-                                    ? `This ATLAS device is already linked to another account in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. One of the accounts must leave the clan.`
-                                    : `This ATLAS device is already linked to ${linkResult.conflict.tag ? `[${linkResult.conflict.tag}] ` : ""}${linkResult.conflict.name}. This account is also in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. Leave one clan before using another account on this device.`,
-                                okLabel: "OK",
-                                cancelLabel: "Close",
-                            });
-                        }
                     } catch (linkErr) {
                         dbg("linkCurrentClanDevice failed: " + getErrMsg(linkErr));
                     }
