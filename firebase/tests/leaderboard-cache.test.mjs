@@ -920,6 +920,31 @@ test("normalizePublishName strips clan tags before matching", () => {
   assert.equal(normalizePublishName("  [OG]  Chicken Jockey "), "chicken jockey");
 });
 
+test("dedupeRowsByIdentity prefers the live session when lastWriteAt is missing", () => {
+  const rows = dedupeRowsByIdentity([
+    {
+      sourceUserId: "cemz",
+      name: "[KING] JesusDied4U",
+      mmr: 2128,
+      flag: "https://i.imgur.com/saBa4s8.png",
+      icons: "https://i.imgur.com/5VVlaO7.png",
+      sessionLastSeen: 1786723181277,
+    },
+    {
+      sourceUserId: "szfb",
+      name: "JesusDied4U",
+      mmr: 2096,
+      sessionLastSeen: 1786896159700,
+    },
+  ], "1v1");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceUserId, "szfb");
+  assert.equal(rows[0].mmr, 2096);
+  assert.equal(rows[0].name, "[KING] JesusDied4U");
+  assert.equal(rows[0].flag, "https://i.imgur.com/saBa4s8.png");
+  assert.equal(rows[0].icons, "https://i.imgur.com/5VVlaO7.png");
+});
+
 test("dedupeRowsByIdentity collapses tagged and untagged twins after a HUD reinstall", () => {
   const rows = dedupeRowsByIdentity([
     {

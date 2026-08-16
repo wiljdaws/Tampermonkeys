@@ -751,12 +751,20 @@ function rowScore(row, playlist) {
   return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
 }
 
+function rowSessionSeen(row) {
+  const value = Number(row?.sessionLastSeen);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function preferIdentityRow(current, candidate, playlist) {
   if (rowVersion(candidate) !== rowVersion(current)) {
     return rowVersion(candidate) > rowVersion(current);
   }
   if (rowWriteAt(candidate) !== rowWriteAt(current)) {
     return rowWriteAt(candidate) > rowWriteAt(current);
+  }
+  if (rowSessionSeen(candidate) !== rowSessionSeen(current)) {
+    return rowSessionSeen(candidate) > rowSessionSeen(current);
   }
   return rowScore(candidate, playlist) > rowScore(current, playlist);
 }
@@ -766,6 +774,9 @@ function absorbIdentityExtras(winner, loser) {
   const out = { ...winner };
   if (!out.flag && loser.flag) out.flag = loser.flag;
   if (!out.icons && loser.icons) out.icons = loser.icons;
+  if (out.iconSize == null && loser.iconSize != null) out.iconSize = loser.iconSize;
+  if (!out.glowColor && loser.glowColor) out.glowColor = loser.glowColor;
+  if (out.glowStrength == null && loser.glowStrength != null) out.glowStrength = loser.glowStrength;
   const winnerTagged = /^\[[^\]]+\]\s*/.test(String(winner.name || "").trim());
   const loserTagged = /^\[[^\]]+\]\s*/.test(String(loser.name || "").trim());
   if (!winnerTagged && loserTagged
