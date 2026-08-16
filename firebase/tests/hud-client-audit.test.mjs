@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "20.8");
+  assert.equal(version, "20.9");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -433,7 +433,6 @@ test("every client mutation path uses the central version gate", () => {
     "updateMyClanMMR",
     "maybeCaptureEventBaseline",
     "linkCurrentClanDevice",
-    "refreshDirectory",
     "saveClanTagStyle",
     "createClan",
     "requestJoin",
@@ -529,18 +528,93 @@ test("outdated clients see one update UI while reads stay available", async () =
 
 test("clan load never lists the entire clans_directory collection", () => {
   assert.match(hudSource, /async function loadClanDirectoryLite\(/);
-  assert.doesNotMatch(
-    hudFunctionSource("loadClanDataInner"),
-    /getDocs\(\s*fb\.collection\(\s*fb\.db,\s*"clans_directory"\s*\)/,
-  );
-  assert.doesNotMatch(
-    hudFunctionSource("refreshDirectory"),
-    /getDocs\(\s*fb\.collection\(\s*fb\.db,\s*"clans_directory"\s*\)/,
-  );
+  assert.match(hudSource, /const CLAN_DIRECTORY_BROWSE_LIMIT = 50;/);
   assert.doesNotMatch(
     hudSource,
     /getDocs\(\s*fb\.collection\(\s*fb\.db,\s*"clans_directory"\s*\)/,
   );
+  assert.doesNotMatch(
+    hudSource,
+    /getDocs\(\s*fb\.collection\(\s*fb\.db,\s*"clans"\s*\)/,
+  );
+
+  const load = hudFunctionSource("loadClanDataInner");
+  assert.match(load, /clan_memberships/);
+  assert.match(load, /clan_devices/);
+  assert.match(load, /loadClanDirectoryLite\(/);
+  assert.match(load, /fb\.doc\(\s*fb\.db,\s*"clans",\s*mine\.id\s*\)/);
+
+  const lite = hudFunctionSource("loadClanDirectoryLite");
+  assert.match(lite, /clans_directory",\s*"index"/);
+  assert.match(lite, /clans_directory",\s*clanId/);
+  assert.match(lite, /fb\.limit\(\s*CLAN_DIRECTORY_BROWSE_LIMIT/);
+  assert.match(lite, /firestoreReadBudgetPassed\(/);
+
+  const refresh = hudFunctionSource("refreshDirectory");
+  assert.match(refresh, /loadClanDirectoryLite\(/);
+  assert.match(refresh, /firestoreReadBudgetPassed\(/);
+  assert.doesNotMatch(refresh, /getDocs\(/);
+  assert.doesNotMatch(refresh, /atlasSetDoc\(/);
+
+  assert.match(
+    hudFunctionSource("fetchLeaderboardCache"),
+    /firestoreReadBudgetPassed\(/,
+  );
+});
+
+test("loadClanDirectoryLite point-reads index and shard, never getDocs", async () => {
+  const calls = [];
+  const canonicalClanDirectory = extractHudFunction("canonicalClanDirectory");
+  const putClanInDirectory = extractHudFunction("putClanInDirectory", {
+    canonicalClanDirectory,
+  });
+  const loadClanDirectoryLite = extractHudFunction("loadClanDirectoryLite", {
+    firestoreReadBudgetPassed: () => false,
+    putClanInDirectory,
+    canonicalClanDirectory,
+    clanDirectory: [],
+    dbg: () => {},
+    getErrMsg: (error) => error.message,
+    CLAN_DIRECTORY_BROWSE_LIMIT: 50,
+  });
+  const fb = {
+    db: {},
+    doc: (_db, collectionName, id) => ({ path: `${collectionName}/${id}` }),
+    collection: () => {
+      throw new Error("must not list a collection");
+    },
+    query: () => {
+      throw new Error("must not query when the index exists");
+    },
+    limit: (count) => ({ limit: count }),
+    getDoc: async (ref) => {
+      calls.push(["getDoc", ref.path]);
+      if (ref.path === "clans_directory/index") {
+        return {
+          exists: () => true,
+          data: () => ({ clans: [{ id: "other", name: "Other" }] }),
+        };
+      }
+      if (ref.path === "clans_directory/king") {
+        return {
+          exists: () => true,
+          data: () => ({ id: "king", name: "KING", tag: "KING" }),
+        };
+      }
+      return { exists: () => false, data: () => ({}) };
+    },
+    getDocs: async () => {
+      calls.push(["getDocs"]);
+      throw new Error("must not list clans_directory");
+    },
+  };
+  const result = await loadClanDirectoryLite(fb, "king");
+  assert.deepEqual(calls, [
+    ["getDoc", "clans_directory/index"],
+    ["getDoc", "clans_directory/king"],
+  ]);
+  assert.equal(result.some((clan) => clan.id === "king"), true);
+  assert.equal(result.some((clan) => clan.id === "other"), true);
 });
 
 test("Firestore diagnostics use rolling budgets without losing session totals", () => {

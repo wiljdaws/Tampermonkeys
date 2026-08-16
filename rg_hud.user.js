@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.8
+// @version      20.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -6037,17 +6037,50 @@
 
     // Point reads only. Listing clans_directory billed 17,959 reads per
     // Clan-panel open (Virt 2026-08-16) and blew Spark. Standings come
-    // from the single index doc plus our shard.
+    // from the single index doc plus our shard. If the index is missing,
+    // fall back to a hard-capped query — never an unbounded getDocs.
+    const CLAN_DIRECTORY_BROWSE_LIMIT = 50;
+
     async function loadClanDirectoryLite(fb, clanId) {
-        const reads = [fb.getDoc(fb.doc(fb.db, "clans_directory", "index"))];
-        if (clanId) reads.push(fb.getDoc(fb.doc(fb.db, "clans_directory", clanId)));
-        const [indexSnap, shardSnap] = await Promise.all(reads);
-        let clans = [];
-        if (indexSnap.exists() && Array.isArray(indexSnap.data()?.clans)) {
-            clans = indexSnap.data().clans;
+        const budgetPassed = firestoreReadBudgetPassed();
+        if (budgetPassed) {
+            dbg("clan directory browse skipped: read budget passed");
+        }
+        const indexPromise = budgetPassed
+            ? Promise.resolve(null)
+            : fb.getDoc(fb.doc(fb.db, "clans_directory", "index"));
+        const shardPromise = clanId
+            ? fb.getDoc(fb.doc(fb.db, "clans_directory", clanId))
+            : Promise.resolve(null);
+        const [indexSnap, shardSnap] = await Promise.all([
+            indexPromise,
+            shardPromise,
+        ]);
+        let clans = budgetPassed ? clanDirectory.slice() : [];
+        const indexClans = indexSnap?.exists()
+            ? indexSnap.data()?.clans
+            : null;
+        if (Array.isArray(indexClans) && indexClans.length) {
+            clans = indexClans;
+        } else if (!budgetPassed && !indexSnap?.exists()
+            && !firestoreReadBudgetPassed()) {
+            try {
+                const snap = await fb.getDocs(fb.query(
+                    fb.collection(fb.db, "clans_directory"),
+                    fb.limit(CLAN_DIRECTORY_BROWSE_LIMIT)
+                ));
+                clans = snap.docs
+                    .filter(docSnap => docSnap.id !== "index")
+                    .map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+            } catch (e) {
+                dbg("clan directory browse query failed: " + getErrMsg(e));
+            }
         }
         if (clanId && shardSnap?.exists()) {
-            clans = putClanInDirectory(clans, { id: clanId, ...shardSnap.data() });
+            clans = putClanInDirectory(clans, {
+                id: clanId,
+                ...shardSnap.data(),
+            });
         }
         return canonicalClanDirectory(clans);
     }
@@ -6573,8 +6606,8 @@
         return result;
     }
 
-    // Legacy mode rebuilds the shared index. Reservation mode only reads the
-    // directory shards; mutations update their own shard in the transaction.
+    // Browse list is a point read of clans_directory/index (or a hard-capped
+    // query). Mutations update the index or their own shard in-transaction.
 
     // zero-read patch of my own entry in the in-memory directory
     function patchMyClanInDirectory() {
@@ -6949,24 +6982,13 @@
 
     async function refreshDirectory(fb) {
         try {
-            if (!clanReservationsEnabled()) {
-                const snap = await fb.getDocs(fb.collection(fb.db, "clans"));
-                const discoveredClans = [];
-                snap.forEach(docSnap => {
-                    const d = docSnap.data();
-                    const clan = { ...d, id: docSnap.id };
-                    discoveredClans.push(clanDirectoryEntry(docSnap.id, clan));
-                });
-                const clans = canonicalClanDirectory(discoveredClans);
-                const wrote = await atlasSetDoc(
-                    fb,
-                    "legacy clan directory rebuild",
-                    fb.doc(fb.db, "clans_directory", "index"),
-                    { clans }
-                );
-                if (wrote) clanDirectory = clans;
+            if (firestoreReadBudgetPassed()) {
+                dbg("refreshDirectory skipped: read budget passed");
             } else {
-                clanDirectory = await loadClanDirectoryLite(fb, myClan?.id || null);
+                clanDirectory = await loadClanDirectoryLite(
+                    fb,
+                    myClan?.id || null
+                );
             }
         } catch (e) {
             dbg("refreshDirectory failed: " + getErrMsg(e));

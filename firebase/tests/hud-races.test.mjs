@@ -320,9 +320,13 @@ test("reservation path uses point locks and directory shards", () => {
     refreshStart,
   );
   const refreshSource = hudSource.slice(refreshStart, refreshEnd);
-  assert.match(refreshSource, /clanReservationsEnabled\(\)/);
-  assert.match(refreshSource, /fb\.collection\(fb\.db,\s*"clans_directory"\)/);
-  assert.match(refreshSource, /if\s*\(!clanReservationsEnabled\(\)\)/);
+  assert.match(refreshSource, /loadClanDirectoryLite\(/);
+  assert.match(refreshSource, /firestoreReadBudgetPassed\(/);
+  assert.doesNotMatch(refreshSource, /getDocs\(/);
+  assert.doesNotMatch(
+    hudSource,
+    /getDocs\(\s*fb\.collection\(\s*fb\.db,\s*"clans(?:_directory)?"\s*\)/,
+  );
 });
 
 test("new clan mutations keep score and structure in transactions", () => {
