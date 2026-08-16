@@ -1,12 +1,15 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.1
+// @version      20.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
+// @inject-into  page
 // @run-at       document-start
 // @updateURL    https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js
 // @downloadURL  https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js
@@ -386,21 +389,55 @@
     }
 
     // ---------- Device ID ----------
-    // per-install UUID for blacklisting. resets if localStorage clears, so it's friction not a fortress.
+    // Per-install UUID. Tampermonkey storage keeps it across a site-data
+    // wipe so the allow-list bind does not break when Auth is restored.
+
+    const DEVICE_ID_KEY = "rgHudDeviceId";
+
+    function readStoredDeviceId(storage) {
+        if (!storage || typeof storage.get !== "function") return "";
+        try {
+            const id = storage.get(DEVICE_ID_KEY);
+            return typeof id === "string" ? id.trim() : "";
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function writeStoredDeviceId(storage, id) {
+        if (!storage || typeof storage.set !== "function" || !id) return;
+        try { storage.set(DEVICE_ID_KEY, id); } catch (e) {}
+    }
+
+    function mintDeviceId() {
+        return crypto.randomUUID?.()
+            || (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 12));
+    }
+
+    function originDeviceStorage() {
+        try {
+            if (!localStorage) return null;
+            return {
+                get: (key) => localStorage.getItem(key),
+                set: (key, value) => { localStorage.setItem(key, value); },
+            };
+        } catch (e) {
+            return null;
+        }
+    }
 
     function getDeviceId() {
-        let id = null;
-        try { id = localStorage.getItem("rgHudDeviceId"); } catch (e) {}
-        if (!id) {
-            id = crypto.randomUUID?.()
-                || (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 12));
-            try { localStorage.setItem("rgHudDeviceId", id); } catch (e) {}
-        }
+        const tm = atlasTmStorage();
+        const origin = originDeviceStorage();
+        let id = readStoredDeviceId(tm) || readStoredDeviceId(origin);
+        if (!id) id = mintDeviceId();
+        writeStoredDeviceId(origin, id);
+        writeStoredDeviceId(tm, id);
         return id;
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -595,6 +632,11 @@
                             <span title="Send this to Pal or JesusDied4U if you need to be added to the board">Firebase id</span>
                             <code id="rgSetAuthUid" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:#8E9BC2;">signing in…</code>
                             <button type="button" id="rgSetCopyUid" class="rgBtn" style="padding:2px 8px;">Copy</button>
+                        </div>
+                        <div class="rgSettingRow" style="flex-wrap:wrap;gap:6px;">
+                            <span title="Tied to your Firebase id. Writes from another device are denied.">Device id</span>
+                            <code id="rgSetDeviceId" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:#8E9BC2;"></code>
+                            <button type="button" id="rgSetCopyDevice" class="rgBtn" style="padding:2px 8px;">Copy</button>
                         </div>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
@@ -802,6 +844,7 @@
         bindGlow(setColor1, "glowColor1", el => el.value);
         bindGlow(setColor2, "glowColor2", el => el.value);
         const copyUid = document.getElementById("rgSetCopyUid");
+        const copyDevice = document.getElementById("rgSetCopyDevice");
         paintAuthUid();
         if (copyUid) {
             copyUid.onclick = async () => {
@@ -811,6 +854,18 @@
                     showTempFeedback(copyUid, "Copied", 1600, "Copy");
                 } catch (e) {
                     showTempFeedback(copyUid, "Fail", 1600, "Copy");
+                }
+            };
+        }
+        if (copyDevice) {
+            copyDevice.onclick = async () => {
+                const deviceId = getDeviceId();
+                if (!deviceId) return;
+                try {
+                    await navigator.clipboard.writeText(deviceId);
+                    showTempFeedback(copyDevice, "Copied", 1600, "Copy");
+                } catch (e) {
+                    showTempFeedback(copyDevice, "Fail", 1600, "Copy");
                 }
             };
         }
@@ -1721,10 +1776,13 @@
 
     function paintAuthUid() {
         const uidLabel = document.getElementById("rgSetAuthUid");
-        if (!uidLabel) return;
-        if (firebaseAuthUid) uidLabel.textContent = firebaseAuthUid;
-        else if (firebaseAuthError) uidLabel.textContent = "sign-in failed — tap Settings to retry";
-        else uidLabel.textContent = "signing in…";
+        if (uidLabel) {
+            if (firebaseAuthUid) uidLabel.textContent = firebaseAuthUid;
+            else if (firebaseAuthError) uidLabel.textContent = "sign-in failed — tap Settings to retry";
+            else uidLabel.textContent = "signing in…";
+        }
+        const deviceLabel = document.getElementById("rgSetDeviceId");
+        if (deviceLabel) deviceLabel.textContent = getDeviceId();
     }
     let firestoreReadCount = 0;
     let firestoreWriteCount = 0;
@@ -2093,8 +2151,57 @@
         return firestoreReady;
     }
 
+    function atlasTmStorage() {
+        if (typeof GM_getValue !== "function" || typeof GM_setValue !== "function") return null;
+        return {
+            get: (key) => GM_getValue(key, null),
+            set: (key, value) => { GM_setValue(key, value); },
+            remove: (key) => {
+                if (typeof GM_deleteValue === "function") GM_deleteValue(key);
+                else GM_setValue(key, "");
+            },
+        };
+    }
+
+    // Tampermonkey storage survives a rocketgoal.io cache clear. Origin
+    // IndexedDB / localStorage do not. Firebase Auth must read this first
+    // or a wipe mints a new anonymous uid and the allow list misses.
+    function createAtlasAuthPersistence(storage = atlasTmStorage()) {
+        if (!storage) return null;
+        return {
+            type: "LOCAL",
+            _shouldAllowMigration: true,
+            _isAvailable: async () => true,
+            _set: async (key, value) => {
+                storage.set(key, JSON.stringify(value));
+            },
+            _get: async (key) => {
+                const raw = storage.get(key);
+                if (raw == null || raw === "") return null;
+                if (typeof raw === "object") return raw;
+                try { return JSON.parse(raw); } catch { return null; }
+            },
+            _remove: async (key) => { storage.remove(key); },
+            _addListener() {},
+            _removeListener() {},
+        };
+    }
+
+    function atlasAuthPersistenceList(gmPersistence, indexedDBLocalPersistence, browserLocalPersistence) {
+        const list = [];
+        if (gmPersistence) list.push(gmPersistence);
+        if (indexedDBLocalPersistence) list.push(indexedDBLocalPersistence);
+        if (browserLocalPersistence) list.push(browserLocalPersistence);
+        return list.length ? list : undefined;
+    }
+
     async function ensureAnonymousAuth(auth) {
         if (!auth) throw new Error("Firebase auth is not ready");
+        // Persistence restore is async. Signing in before it finishes
+        // creates a second uid and overwrites the saved session.
+        if (typeof auth.authStateReady === "function") {
+            await auth.authStateReady();
+        }
         if (!auth.currentUser) await signInAnonymouslyFn(auth);
         firebaseAuthUid = auth.currentUser ? auth.currentUser.uid : null;
         firebaseAuthError = firebaseAuthUid ? null : "no-uid";
@@ -2126,7 +2233,14 @@
                 runTransaction,
             } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-            const { getAuth, signInAnonymously, initializeAuth, browserLocalPersistence } =
+            const {
+                getAuth,
+                signInAnonymously,
+                initializeAuth,
+                setPersistence,
+                indexedDBLocalPersistence,
+                browserLocalPersistence,
+            } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
             signInAnonymouslyFn = signInAnonymously;
 
@@ -2135,11 +2249,22 @@
             // Sign in before handing firestoreReady out; writes without
             // an auth.uid stamp get denied.
             try {
+                const gmPersistence = createAtlasAuthPersistence();
+                const persistence = atlasAuthPersistenceList(
+                    gmPersistence,
+                    indexedDBLocalPersistence,
+                    browserLocalPersistence,
+                );
                 let auth;
                 try {
-                    auth = getAuth(app);
+                    auth = initializeAuth(app, persistence ? { persistence } : {});
                 } catch (e) {
-                    auth = initializeAuth(app, { persistence: browserLocalPersistence });
+                    auth = getAuth(app);
+                    if (gmPersistence && typeof setPersistence === "function") {
+                        try { await setPersistence(auth, gmPersistence); } catch (persistErr) {
+                            dbg("initFirebase: setPersistence failed: " + getErrMsg(persistErr));
+                        }
+                    }
                 }
                 atlasFirebaseAuth = auth;
                 await ensureAnonymousAuth(auth);

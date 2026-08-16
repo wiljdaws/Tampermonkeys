@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "20.1");
+  assert.equal(version, "20.3");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -136,6 +136,94 @@ test("resolveAtlasFirebaseApp: uses named atlas only when default is another pro
   const app = resolveAtlasFirebaseApp(existing, { projectId: "rgleaderboard" }, initializeApp);
   assert.equal(app.name, "atlas");
   assert.deepEqual(created, ["atlas"]);
+});
+
+test("getDeviceId keeps the same id in Tampermonkey storage after origin wipe", () => {
+  assert.match(hudFunctionSource("getDeviceId"), /atlasTmStorage\(\)/);
+  assert.match(hudFunctionSource("getDeviceId"), /readStoredDeviceId\(tm\)/);
+  const context = { DEVICE_ID_KEY: "rgHudDeviceId" };
+  const writeStoredDeviceId = extractHudFunction("writeStoredDeviceId", context);
+  const readStoredDeviceId = extractHudFunction("readStoredDeviceId", context);
+  const data = {};
+  const storage = {
+    get: (key) => data[key] ?? null,
+    set: (key, value) => { data[key] = value; },
+  };
+  writeStoredDeviceId(storage, "device-keep");
+  assert.equal(readStoredDeviceId(storage), "device-keep");
+});
+
+test("ATLAS persists Firebase Auth in Tampermonkey storage", () => {
+  assert.match(hudSource, /@grant\s+GM_getValue/);
+  assert.match(hudSource, /@grant\s+GM_setValue/);
+  assert.match(hudSource, /@grant\s+GM_deleteValue/);
+  assert.match(hudSource, /@inject-into\s+page/);
+  assert.match(hudSource, /function createAtlasAuthPersistence\(/);
+  assert.match(hudSource, /function atlasAuthPersistenceList\(/);
+  const initInner = hudFunctionSource("initFirebaseInner");
+  assert.match(initInner, /initializeAuth\(app,/);
+  assert.match(initInner, /createAtlasAuthPersistence\(\)/);
+  assert.match(initInner, /indexedDBLocalPersistence/);
+  const initAuthAt = initInner.indexOf("initializeAuth(app,");
+  const getAuthAt = initInner.indexOf("getAuth(app)");
+  assert.ok(initAuthAt >= 0 && getAuthAt > initAuthAt);
+});
+
+test("createAtlasAuthPersistence round-trips a user blob and skips when storage is missing", async () => {
+  const data = {};
+  const persistence = extractHudFunction("createAtlasAuthPersistence")({
+    get: (key) => data[key] ?? null,
+    set: (key, value) => { data[key] = value; },
+    remove: (key) => { delete data[key]; },
+  });
+  assert.equal(extractHudFunction("createAtlasAuthPersistence")(null), null);
+  assert.equal(persistence.type, "LOCAL");
+  await persistence._set("firebase:authUser:test", { uid: "QQOCAgdfAkgkL22MEkVmXzIZJBk2" });
+  assert.equal(
+    (await persistence._get("firebase:authUser:test")).uid,
+    "QQOCAgdfAkgkL22MEkVmXzIZJBk2",
+  );
+  await persistence._remove("firebase:authUser:test");
+  assert.equal(await persistence._get("firebase:authUser:test"), null);
+});
+
+test("atlasAuthPersistenceList keeps Tampermonkey storage ahead of origin storage", () => {
+  const atlasAuthPersistenceList = extractHudFunction("atlasAuthPersistenceList");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(atlasAuthPersistenceList("gm", "idb", "local"))),
+    ["gm", "idb", "local"],
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(atlasAuthPersistenceList(null, "idb", "local"))),
+    ["idb", "local"],
+  );
+  assert.equal(atlasAuthPersistenceList(null, null, null), undefined);
+});
+
+test("ensureAnonymousAuth waits for a restored session before minting a uid", async () => {
+  let signIns = 0;
+  const context = {
+    signInAnonymouslyFn: async (auth) => {
+      signIns += 1;
+      auth.currentUser = { uid: "new-uid" };
+    },
+    firebaseAuthUid: null,
+    firebaseAuthError: null,
+  };
+  const ensureAnonymousAuth = extractHudFunction("ensureAnonymousAuth", context);
+
+  const restored = {
+    currentUser: { uid: "QQOCAgdfAkgkL22MEkVmXzIZJBk2" },
+    authStateReady: async () => {},
+  };
+  await ensureAnonymousAuth(restored);
+  assert.equal(signIns, 0);
+  assert.equal(context.firebaseAuthUid, "QQOCAgdfAkgkL22MEkVmXzIZJBk2");
+
+  const fresh = { currentUser: null, authStateReady: async () => {} };
+  await ensureAnonymousAuth(fresh);
+  assert.equal(signIns, 1);
+  assert.equal(context.firebaseAuthUid, "new-uid");
 });
 
 test("firebaseAuthShouldRetry: Settings retry stays live until a uid exists", () => {
