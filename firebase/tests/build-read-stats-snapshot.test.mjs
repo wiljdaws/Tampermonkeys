@@ -105,47 +105,17 @@ test("buildSnapshot: includes total + visitor collections when supplied", () => 
   assert.equal(snap.visitors[0].adminEmail, undefined, "visitor adminEmail must be redacted too");
 });
 
-test("run: dry-run does not call writer, fetches token + both collections", async () => {
-  const now = new Date("2026-08-09T12:00:00Z");
-  const calls = { fetch: [], write: 0, mkdir: 0 };
-  const fetchImpl = async (url, opts) => {
-    calls.fetch.push({ url, body: opts?.body });
-    // Return a small structured-query response with one doc.
-    return {
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify([
-        {
-          document: {
-            name: "projects/x/databases/(default)/documents/admin_read_stats/2026-08-09_abc",
-            fields: {
-              date: { stringValue: "2026-08-09" },
-              sessionId: { stringValue: "abc" },
-              adminEmail: { stringValue: "leak@example.com" },
-              total: { integerValue: "10" },
-            },
-            createTime: "2026-08-09T00:00:00Z",
-            updateTime: "2026-08-09T00:00:00Z",
-          },
-        },
-      ]),
-    };
-  };
+test("run: refuses to query Firestore while the snapshot job is disabled", async () => {
+  const calls = { fetch: 0, token: 0, write: 0 };
   const snap = await run({
-    argv: ["--state-dir", "/tmp/does-not-exist", "--dry-run"],
-    fetchImpl,
-    getToken: async () => "test-token",
-    now,
+    argv: ["--state-dir", "/tmp/does-not-exist"],
+    fetchImpl: async () => { calls.fetch += 1; throw new Error("should not fetch"); },
+    getToken: async () => { calls.token += 1; return "test-token"; },
     writer: async () => { calls.write += 1; },
-    mkdirImpl: async () => { calls.mkdir += 1; },
     logger: { info() {} },
   });
-  assert.equal(calls.write, 0, "dry-run must not write");
-  assert.equal(calls.mkdir, 0, "dry-run must not mkdir");
-  assert.equal(calls.fetch.length, 4, "one query per collection (admin, hud, total, visitor)");
-  assert.ok(snap.site.length > 0);
-  assert.equal(snap.site[0].adminEmail, undefined, "email redacted before write");
-  // Structural check: run() now populates total + visitors alongside site + hud.
-  assert.ok(Array.isArray(snap.total), "snapshot has total collection");
-  assert.ok(Array.isArray(snap.visitors), "snapshot has visitors collection");
+  assert.deepEqual(snap, { disabled: true });
+  assert.equal(calls.fetch, 0);
+  assert.equal(calls.token, 0);
+  assert.equal(calls.write, 0);
 });

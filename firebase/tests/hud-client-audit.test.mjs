@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "20.5");
+  assert.equal(version, "20.6");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -308,9 +308,12 @@ test("a leaderboard name is ours when the Firebase id or in-game id matches", ()
 
 test("board display names drop a clan tag prefix", () => {
   const boardNameWithoutClanTag = extractHudFunction("boardNameWithoutClanTag");
+  const boardIdentityFromDocs = extractHudFunction("boardIdentityFromDocs", {
+    boardNameWithoutClanTag,
+  });
   const displayNameFromLeaderboardDocs = extractHudFunction(
     "displayNameFromLeaderboardDocs",
-    { boardNameWithoutClanTag },
+    { boardIdentityFromDocs },
   );
   assert.equal(boardNameWithoutClanTag("[KING] JesusDied4U"), "JesusDied4U");
   assert.equal(boardNameWithoutClanTag("JesusDied4U"), "JesusDied4U");
@@ -328,6 +331,15 @@ test("board display names drop a clan tag prefix", () => {
     ),
     "",
   );
+});
+
+test("a new Firebase id does not publish a second row for the same in-game account", () => {
+  const shouldPublishLeaderboardRow = extractHudFunction("shouldPublishLeaderboardRow");
+  assert.equal(shouldPublishLeaderboardRow("", "new-uid"), true);
+  assert.equal(shouldPublishLeaderboardRow("old-uid", "old-uid"), true);
+  assert.equal(shouldPublishLeaderboardRow("old-uid", "new-uid"), false);
+  const sync = hudFunctionSource("syncToRealLeaderboard");
+  assert.match(sync, /shouldPublishLeaderboardRow\(/);
 });
 
 test("leaderboard submit reuses a stored or board name before prompting", () => {
@@ -578,6 +590,8 @@ test("support bundle redacts stable identifiers and full user agents", () => {
   assert.doesNotMatch(debugSource, /deviceId:\s*getDeviceId\(\)/);
   assert.doesNotMatch(debugSource, /userAgent:\s*/);
   assert.match(debugSource, /redactSupportText\(text, redactions\)/);
+  assert.match(debugSource, /rgDump: _rgLogBuf\.slice\(\)/);
+  assert.match(debugSource, /JSON\.stringify\(payload,/);
 });
 
 test("settings keep the streak toggle and remove ranked popup controls", () => {

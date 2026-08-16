@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.5
+// @version      20.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -616,7 +616,7 @@
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:8px;" id="rgDragHandle">
                 <span id="rgTitle" style="font-size:16px;font-weight:bold;color:#00bfff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">ATLAS</span>
                 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
-                    <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;">⚠</span>
+                    <span id="rgErrDot" title="" style="display:none;color:#ff5555;font-weight:bold;font-size:14px;cursor:help;">⚠</span>
                     <span id="rgWarnDot" title="" style="display:none;color:#ffbb33;font-weight:bold;font-size:14px;cursor:help;" data-tip="ATLAS saw something unexpected (hover for details, or run rgDump() for full log)">⚑</span>
                     <button id="rgClanBtn" class="rgIconBtn" title="Clans">🛡️</button>
                     <button id="rgForgeBtn" class="rgIconBtn" title="Name Forge">🎨</button>
@@ -974,14 +974,11 @@
                 ];
                 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
                 const filename = `atlas-debug-${stamp}.txt`;
-                const text = [
-                    "=== ATLAS DEBUG BUNDLE ===",
-                    JSON.stringify(bundle, null, 2),
-                    "",
-                    "=== RAW GAME CONSOLE LOG ===",
-                    _rawLogBuf.join("\n"),
-                    "",
-                ].join("\n");
+                const payload = {
+                    bundle,
+                    rgDump: _rgLogBuf.slice(),
+                };
+                const text = JSON.stringify(payload, null, 2);
                 const safeText = redactSupportText(text, redactions);
                 const url = URL.createObjectURL(new Blob([safeText], {
                     type: "text/plain;charset=utf-8",
@@ -1114,7 +1111,12 @@
         const dot = document.getElementById("rgErrDot");
         if (dot) {
             dot.style.display = "inline";
-            dot.title = message;
+            const fromBuf = _rgErrorBuf.slice(-5).map(e => {
+                const when = e.at ? new Date(e.at).toLocaleTimeString() + " — " : "";
+                return when + (e.origin ? `[${e.origin}] ` : "") + (e.msg || "");
+            }).filter(Boolean);
+            const lines = [message, ...fromBuf].filter(Boolean);
+            dot.title = lines.join("\n") || "ATLAS hit an error. Download debug from Settings.";
         }
     }
 
@@ -2838,12 +2840,23 @@
     }
 
     function displayNameFromLeaderboardDocs(rows, rgPlayerId) {
+        return boardIdentityFromDocs(rows, rgPlayerId).displayName;
+    }
+
+    function boardIdentityFromDocs(rows, rgPlayerId) {
         for (const row of rows || []) {
             if (!row || row.rgPlayerId !== rgPlayerId) continue;
-            const stripped = boardNameWithoutClanTag(row.name).slice(0, 15);
-            if (stripped) return stripped;
+            return {
+                displayName: boardNameWithoutClanTag(row.name).slice(0, 15),
+                sourceUserId: typeof row.sourceUserId === "string" ? row.sourceUserId : "",
+            };
         }
-        return "";
+        return { displayName: "", sourceUserId: "" };
+    }
+
+    function shouldPublishLeaderboardRow(existingSourceUserId, firebaseUid) {
+        if (!existingSourceUserId) return true;
+        return existingSourceUserId === firebaseUid;
     }
 
     async function lookupDisplayNameFromBoard(fb, rgPlayerId) {
@@ -2855,7 +2868,7 @@
                 fb.limit(1)
             );
             const snap = await fb.getDocs(q);
-            return displayNameFromLeaderboardDocs(snap.docs.map((d) => d.data()), rgPlayerId);
+            return boardIdentityFromDocs(snap.docs.map((d) => d.data()), rgPlayerId).displayName;
         } catch (e) {
             dbg("lookupDisplayNameFromBoard failed: " + getErrMsg(e));
             return "";
@@ -4505,6 +4518,25 @@
         }
         const sourceUserId = firebaseAuthUid;
         const rgPlayerId = data.Id;
+
+        try {
+            const q = fb.query(
+                fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                fb.where("rgPlayerId", "==", rgPlayerId),
+                fb.limit(1)
+            );
+            const snap = await fb.getDocs(q);
+            const priorUid = boardIdentityFromDocs(
+                snap.docs.map((d) => d.data()),
+                rgPlayerId,
+            ).sourceUserId;
+            if (!shouldPublishLeaderboardRow(priorUid, sourceUserId)) {
+                dbg(`syncToRealLeaderboard skipped: ${rgPlayerId} already on the board as ${priorUid}`);
+                return;
+            }
+        } catch (e) {
+            dbg("syncToRealLeaderboard owner check failed: " + getErrMsg(e));
+        }
 
         // piggy-back: refresh this member's MMR in the clan doc, get tag back
         const clanInfo = await queueClanMMRSync(fb, data);

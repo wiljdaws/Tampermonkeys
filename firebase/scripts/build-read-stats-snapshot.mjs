@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-// Publishes a 7-day snapshot of the four read-stats collections
-// (admin_read_stats + hud_read_stats + read_stats_total + visitor_read_stats)
-// to state/read-stats.json. The Reads admin dashboard reads from here
-// instead of hitting Firestore for any of the four. adminEmail is stripped
-// on the way out. Run once a day from the publisher schedule — a 15-min
-// 60-day scan is what blew Spark reads on 2026-08-15.
+// DISABLED. The Reads tab is gone. A 15-min / 60-day scan of
+// admin_read_stats is what blew Spark on 2026-08-15, and the
+// date >= query still shows up in Query Insights if this script runs.
+// Keep the helpers for tests; run() must not touch Firestore.
 //
 // Usage:
 //   node scripts/build-read-stats-snapshot.mjs --state-dir path/to/site-repo/state
@@ -151,6 +149,8 @@ export function buildSnapshot({
   };
 }
 
+export const READ_STATS_SNAPSHOT_DISABLED = true;
+
 export async function run({
   argv = process.argv.slice(2),
   fetchImpl = globalThis.fetch,
@@ -160,6 +160,10 @@ export async function run({
   mkdirImpl = mkdir,
   logger = console,
 } = {}) {
+  if (READ_STATS_SNAPSHOT_DISABLED) {
+    logger.info?.("[read-stats-snapshot] disabled — not querying Firestore");
+    return { disabled: true };
+  }
   const args = parseArgs(argv);
   if (!args.stateDir) {
     throw new Error("build-read-stats-snapshot: --state-dir is required");
