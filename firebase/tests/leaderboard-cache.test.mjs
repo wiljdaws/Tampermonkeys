@@ -18,6 +18,7 @@ import {
   keepAllowlistedRows,
   uidsToAutoBlacklist,
   dedupeRowsByIdentity,
+  normalizePublishName,
   publicImageUrl,
   blacklistPausesWrites,
   sortSnapshotForPlaylist,
@@ -911,6 +912,39 @@ test("dedupeRowsByIdentity collapses same name when only one row has rgPlayerId"
   ], "3v3");
   assert.equal(rows.length, 1);
   assert.equal(rows[0].sourceUserId, "new");
+});
+
+test("normalizePublishName strips clan tags before matching", () => {
+  assert.equal(normalizePublishName("[KING] JesusDied4U"), "jesusdied4u");
+  assert.equal(normalizePublishName("JesusDied4U"), "jesusdied4u");
+  assert.equal(normalizePublishName("  [OG]  Chicken Jockey "), "chicken jockey");
+});
+
+test("dedupeRowsByIdentity collapses tagged and untagged twins after a HUD reinstall", () => {
+  const rows = dedupeRowsByIdentity([
+    {
+      sourceUserId: "cemz",
+      name: "[KING] JesusDied4U",
+      mmr: 8508,
+      flag: "https://i.imgur.com/saBa4s8.png",
+      icons: "https://i.imgur.com/VopY1JE.png",
+      versionNum: 19.5,
+      lastWriteAt: "2026-08-15T07:32:00Z",
+    },
+    {
+      sourceUserId: "szfb",
+      name: "JesusDied4U",
+      mmr: 8650,
+      versionNum: 20.7,
+      lastWriteAt: "2026-08-16T16:20:00Z",
+    },
+  ], "3v3");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceUserId, "szfb");
+  assert.equal(rows[0].mmr, 8650);
+  assert.equal(rows[0].name, "[KING] JesusDied4U");
+  assert.equal(rows[0].flag, "https://i.imgur.com/saBa4s8.png");
+  assert.equal(rows[0].icons, "https://i.imgur.com/VopY1JE.png");
 });
 
 test("blacklistPausesWrites is only on for boolean true", () => {

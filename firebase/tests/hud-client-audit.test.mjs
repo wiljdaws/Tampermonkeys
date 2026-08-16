@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "20.7");
+  assert.equal(version, "20.8");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -525,6 +525,22 @@ test("outdated clients see one update UI while reads stay available", async () =
       `${readName} blocks a read`,
     );
   }
+});
+
+test("clan load never lists the entire clans_directory collection", () => {
+  assert.match(hudSource, /async function loadClanDirectoryLite\(/);
+  assert.doesNotMatch(
+    hudFunctionSource("loadClanDataInner"),
+    /getDocs\(\s*fb\.collection\(\s*fb\.db,\s*"clans_directory"\s*\)/,
+  );
+  assert.doesNotMatch(
+    hudFunctionSource("refreshDirectory"),
+    /getDocs\(\s*fb\.collection\(\s*fb\.db,\s*"clans_directory"\s*\)/,
+  );
+  assert.doesNotMatch(
+    hudSource,
+    /getDocs\(\s*fb\.collection\(\s*fb\.db,\s*"clans_directory"\s*\)/,
+  );
 });
 
 test("Firestore diagnostics use rolling budgets without losing session totals", () => {

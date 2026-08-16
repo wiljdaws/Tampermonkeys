@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.7
+// @version      20.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2031,6 +2031,11 @@
         };
     }
 
+    function firestoreReadBudgetPassed() {
+        firestoreBudgetWindow = nextFirestoreBudgetWindow(firestoreBudgetWindow);
+        return firestoreBudgetWindow.reads > FIRESTORE_READ_BUDGET;
+    }
+
     function logRead(label, count = 1) {
         const charged = Math.max(1, Number(count) || 1);
         firestoreBudgetWindow = nextFirestoreBudgetWindow(firestoreBudgetWindow);
@@ -3599,6 +3604,10 @@
 
     async function fetchLeaderboardCache(mode) {
         try {
+            if (firestoreReadBudgetPassed()) {
+                dbg("leaderboard cache fetch skipped: read budget passed");
+                return null;
+            }
             const fb = await initFirebase();
             if (!fb) return null;
             const playlist = RG_LB_MODE_TO_PLAYLIST[mode];
@@ -3617,6 +3626,10 @@
                 } catch (e) {
                     dbg("leaderboard aggregate failed, falling back to query");
                 }
+            }
+            if (firestoreReadBudgetPassed()) {
+                dbg("leaderboard cache query skipped: read budget passed");
+                return null;
             }
             return await fetchLeaderboardCacheDirect(fb, mode, playlist);
         } catch (e) {
@@ -6022,6 +6035,23 @@
             : fb.doc(fb.db, "clans_directory", "index");
     }
 
+    // Point reads only. Listing clans_directory billed 17,959 reads per
+    // Clan-panel open (Virt 2026-08-16) and blew Spark. Standings come
+    // from the single index doc plus our shard.
+    async function loadClanDirectoryLite(fb, clanId) {
+        const reads = [fb.getDoc(fb.doc(fb.db, "clans_directory", "index"))];
+        if (clanId) reads.push(fb.getDoc(fb.doc(fb.db, "clans_directory", clanId)));
+        const [indexSnap, shardSnap] = await Promise.all(reads);
+        let clans = [];
+        if (indexSnap.exists() && Array.isArray(indexSnap.data()?.clans)) {
+            clans = indexSnap.data().clans;
+        }
+        if (clanId && shardSnap?.exists()) {
+            clans = putClanInDirectory(clans, { id: clanId, ...shardSnap.data() });
+        }
+        return canonicalClanDirectory(clans);
+    }
+
     function clanDeviceLinkPlan({
         clan,
         uid,
@@ -6303,21 +6333,16 @@
             myClan = null;
             let mine = null;
             if (useReservations) {
-                const [membershipSnap, deviceSnap, directorySnap] = await Promise.all([
+                const [membershipSnap, deviceSnap] = await Promise.all([
                     fb.getDoc(fb.doc(fb.db, "clan_memberships", uid)),
                     fb.getDoc(fb.doc(fb.db, "clan_devices", deviceId)),
-                    fb.getDocs(fb.collection(fb.db, "clans_directory")),
                 ]);
                 const membership = membershipSnap.exists()
                     ? membershipSnap.data()
                     : null;
                 const device = deviceSnap.exists() ? deviceSnap.data() : null;
                 const clanId = membership?.clanId || device?.clanId || null;
-                clanDirectory = canonicalClanDirectory(
-                    directorySnap.docs
-                        .filter(snapshot => snapshot.id !== "index")
-                        .map(snapshot => ({ id: snapshot.id, ...snapshot.data() }))
-                );
+                clanDirectory = await loadClanDirectoryLite(fb, clanId);
                 mine = clanId
                     ? (clanDirectory.find(entry => entry.id === clanId)
                         || { id: clanId })
@@ -6363,23 +6388,27 @@
                 if (useReservations
                     || linkPlan.repairClan
                     || linkPlan.repairPointer) {
-                    const linkResult = await linkCurrentClanDevice(
-                        fb,
-                        myClan,
-                        uid,
-                        deviceId
-                    );
-                    if (linkResult?.clan) myClan = sanitizeClanDoc(linkResult.clan);
-                    if (linkResult?.directory) clanDirectory = linkResult.directory;
-                    if (linkResult?.conflict) {
-                        const sameClan = linkResult.conflict.id === myClan.id;
-                        await showDialog({
-                            message: sameClan
-                                ? `This ATLAS device is already linked to another account in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. One of the accounts must leave the clan.`
-                                : `This ATLAS device is already linked to ${linkResult.conflict.tag ? `[${linkResult.conflict.tag}] ` : ""}${linkResult.conflict.name}. This account is also in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. Leave one clan before using another account on this device.`,
-                            okLabel: "OK",
-                            cancelLabel: "Close",
-                        });
+                    try {
+                        const linkResult = await linkCurrentClanDevice(
+                            fb,
+                            myClan,
+                            uid,
+                            deviceId
+                        );
+                        if (linkResult?.clan) myClan = sanitizeClanDoc(linkResult.clan);
+                        if (linkResult?.directory) clanDirectory = linkResult.directory;
+                        if (linkResult?.conflict) {
+                            const sameClan = linkResult.conflict.id === myClan.id;
+                            await showDialog({
+                                message: sameClan
+                                    ? `This ATLAS device is already linked to another account in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. One of the accounts must leave the clan.`
+                                    : `This ATLAS device is already linked to ${linkResult.conflict.tag ? `[${linkResult.conflict.tag}] ` : ""}${linkResult.conflict.name}. This account is also in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. Leave one clan before using another account on this device.`,
+                                okLabel: "OK",
+                                cancelLabel: "Close",
+                            });
+                        }
+                    } catch (linkErr) {
+                        dbg("linkCurrentClanDevice failed: " + getErrMsg(linkErr));
                     }
                 }
             }
@@ -6937,14 +6966,7 @@
                 );
                 if (wrote) clanDirectory = clans;
             } else {
-                const snap = await fb.getDocs(
-                    fb.collection(fb.db, "clans_directory")
-                );
-                clanDirectory = canonicalClanDirectory(
-                    snap.docs
-                        .filter(docSnap => docSnap.id !== "index")
-                        .map(docSnap => ({ id: docSnap.id, ...docSnap.data() }))
-                );
+                clanDirectory = await loadClanDirectoryLite(fb, myClan?.id || null);
             }
         } catch (e) {
             dbg("refreshDirectory failed: " + getErrMsg(e));

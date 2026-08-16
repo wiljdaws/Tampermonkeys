@@ -23,7 +23,7 @@ export const PUBLISH_MMR_JUMP_CUSHION = 2500;
 // they look "first-seen" after a restore or a HUD reinstall.
 export const PUBLISH_KEEP_NAMES = Object.freeze([
   "king von",
-  "[king] virtualzzs",
+  "virtualzzs",
 ]);
 export const MAX_CACHE_DOC_BYTES = 900_000;
 export const SCHEMA_VERSION = 1;
@@ -723,7 +723,12 @@ export function mergeSnapshot(previous, delta) {
 }
 
 export function normalizePublishName(name) {
-  return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return String(name || "")
+    .trim()
+    .replace(/^\[[^\]]+\]\s*/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 }
 
 function rowUid(row) {
@@ -756,6 +761,20 @@ function preferIdentityRow(current, candidate, playlist) {
   return rowScore(candidate, playlist) > rowScore(current, playlist);
 }
 
+function absorbIdentityExtras(winner, loser) {
+  if (!winner || !loser) return winner;
+  const out = { ...winner };
+  if (!out.flag && loser.flag) out.flag = loser.flag;
+  if (!out.icons && loser.icons) out.icons = loser.icons;
+  const winnerTagged = /^\[[^\]]+\]\s*/.test(String(winner.name || "").trim());
+  const loserTagged = /^\[[^\]]+\]\s*/.test(String(loser.name || "").trim());
+  if (!winnerTagged && loserTagged
+      && normalizePublishName(winner.name) === normalizePublishName(loser.name)) {
+    out.name = loser.name;
+  }
+  return out;
+}
+
 function collapseByKey(rows, playlist, keyFn) {
   const kept = new Map();
   const leftovers = [];
@@ -766,8 +785,14 @@ function collapseByKey(rows, playlist, keyFn) {
       continue;
     }
     const existing = kept.get(key);
-    if (!existing || preferIdentityRow(existing, row, playlist)) {
+    if (!existing) {
       kept.set(key, row);
+      continue;
+    }
+    if (preferIdentityRow(existing, row, playlist)) {
+      kept.set(key, absorbIdentityExtras(row, existing));
+    } else {
+      kept.set(key, absorbIdentityExtras(existing, row));
     }
   }
   return [...kept.values(), ...leftovers];
@@ -799,7 +824,7 @@ export function holdSuspiciousRankedRows(rows, previousRows = []) {
   const seenNames = new Set(
     prev.map(row => normalizePublishName(row?.name)).filter(Boolean),
   );
-  const keepNames = new Set(PUBLISH_KEEP_NAMES);
+  const keepNames = new Set(PUBLISH_KEEP_NAMES.map(normalizePublishName));
   let previousMax = 0;
   for (const row of prev) {
     const mmr = Number(row?.mmr);
