@@ -2,6 +2,12 @@
 
 A free Tampermonkey script that turns [Rocket Goal](https://rocketgoal.io) into a live service game - stats HUD, community leaderboard, clans with events, and a full custom name editor. The devs stopped updating, so we did it ourselves.
 
+[Install ATLAS](https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js)
+· [Player board](https://wiljdaws.github.io/rg_player_leaderboard/)
+· [Clan Clash](https://wiljdaws.github.io/RG_Clan_Leaderboard/)
+· [Discord](https://discord.gg/MDz7hsrh9m)
+· [Contributing](CONTRIBUTING.md)
+
 This guide assumes you've never used Tampermonkey before. Just follow the steps in order. Full feature list is at the [bottom](#whats-actually-in-this-thing) if you want to see everything it does first.
 
 ---
@@ -107,7 +113,7 @@ If you don't see the box at all:
 
 ## Found a bug or have a suggestion?
 
-[Open an issue here](https://github.com/wiljdaws/Tampermonkeys/issues/new) or ping us in the Discord.
+[Open an issue](https://github.com/wiljdaws/Tampermonkeys/issues/new/choose) or ping Pal / JesusDied4U in the [Championship Discord](https://discord.gg/MDz7hsrh9m).
 
 ---
 ---
@@ -131,7 +137,7 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 
 ## 🏆 Community Leaderboard
 
-- Your stats auto-sync to the [community leaderboard](https://abuarqob.github.io/rgleaderboard/) after every match - nothing to do manually
+- Your stats auto-sync to the [community leaderboard](https://wiljdaws.github.io/rg_player_leaderboard/) after every match - nothing to do manually
 - Pick your own display name, rename whenever
 - The anti-cheat is real: server-side rules, device blacklisting, forged-stat detection, and old exploited versions get force-updated
 
@@ -196,3 +202,16 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 ---
 
 *Update from the [install link](https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js) and go make a name so shiny the other team scores on themselves.* 🏔️
+
+---
+
+## Community
+
+ATLAS is a fan project. It is not affiliated with Rocket Goal.
+
+- [Contributing](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security policy](SECURITY.md)
+- [MIT License](LICENSE)
+- [Privacy](https://wiljdaws.github.io/rg_player_leaderboard/privacy.html)
+- [Terms](https://wiljdaws.github.io/rg_player_leaderboard/terms.html)
