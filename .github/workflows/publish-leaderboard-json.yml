@@ -32,11 +32,6 @@ on:
         type: boolean
         required: false
         default: false
-      build_read_stats:
-        description: Also rebuild the 7-day read-stats snapshot (daily schedule already does this)
-        type: boolean
-        required: false
-        default: false
 
 permissions:
   contents: read
@@ -156,16 +151,6 @@ jobs:
       #     npm run publish:tournament-json -- \
       #       --project "$PROJECT" \
       #       --output-dir "$GITHUB_WORKSPACE/out"
-
-      # Once a day with the 10:13 UTC full publish. The 15-min CDC
-      # dispatches must not scan telemetry — that path was 22k reads/day.
-      - name: Build read-stats snapshot
-        if: github.event_name == 'schedule' || github.event.inputs.build_read_stats == 'true'
-        working-directory: firebase
-        run: |
-          npm run build:read-stats-snapshot -- \
-            --project "$PROJECT" \
-            --state-dir "$GITHUB_WORKSPACE/site-repo/state"
 
       - name: Warn if we held new high-MMR rows
         run: |
