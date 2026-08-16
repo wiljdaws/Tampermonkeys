@@ -22,8 +22,6 @@ play. That still means there are house rules.
 - Sexual talk, porn, or hitting on people in here
 - Doxxing, leaking DMs, or posting someone's uid to start a fight
 - Harassment, slurs, or piling on
-- Using the Lord's name as punctuation, or using faith as a club
-- Turning the server into a politics channel. We came here to hit the ball.
 
 ## Where this applies
 
