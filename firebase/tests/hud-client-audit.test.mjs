@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "20.6");
+  assert.equal(version, "20.7");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -391,6 +391,19 @@ test("Firebase id row retries auth instead of staying on signing in", () => {
   assert.match(initSource, /retryFirebaseAuth\(\)/);
   assert.match(hudSource, /tap Settings to retry/);
   assert.doesNotMatch(initSource, /sign-in timed out/);
+});
+
+test("HUD errors tell the player to message JesusDied4U in Discord", () => {
+  const formatAtlasError = extractHudFunction("formatAtlasError");
+  assert.equal(
+    formatAtlasError("Stats submission failed -- check console"),
+    "Stats submission failed, message JesusDied4U in Discord",
+  );
+  assert.equal(
+    formatAtlasError("Firebase failed to load"),
+    "Firebase failed to load, message JesusDied4U in Discord",
+  );
+  assert.match(hudFunctionSource("showError"), /formatAtlasError\(/);
 });
 
 test("HUD tells unlisted players to ask Pal or Jesus on Discord", () => {

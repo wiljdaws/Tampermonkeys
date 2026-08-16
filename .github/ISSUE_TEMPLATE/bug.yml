@@ -19,7 +19,7 @@ body:
     attributes:
       label: ATLAS version
       description: Settings shows this, or the `@version` line in the script.
-      placeholder: "20.6"
+      placeholder: "20.7"
     validations:
       required: true
   - type: input

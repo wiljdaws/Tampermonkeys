@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.6
+// @version      20.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1107,7 +1107,17 @@
 
     // ---------- Error indicator ----------
 
+    function formatAtlasError(message) {
+        const raw = String(message || "Something failed").trim()
+            .replace(/\s*(?:—|--).*$/, "")
+            .replace(/\.+$/, "");
+        const head = /fail/i.test(raw) ? raw : `${raw} failed`;
+        if (/JesusDied4U/i.test(head)) return head;
+        return `${head}, message JesusDied4U in Discord`;
+    }
+
     function showError(message) {
+        const text = formatAtlasError(message);
         const dot = document.getElementById("rgErrDot");
         if (dot) {
             dot.style.display = "inline";
@@ -1115,8 +1125,8 @@
                 const when = e.at ? new Date(e.at).toLocaleTimeString() + " — " : "";
                 return when + (e.origin ? `[${e.origin}] ` : "") + (e.msg || "");
             }).filter(Boolean);
-            const lines = [message, ...fromBuf].filter(Boolean);
-            dot.title = lines.join("\n") || "ATLAS hit an error. Download debug from Settings.";
+            const lines = [text, ...fromBuf].filter(Boolean);
+            dot.title = lines.join("\n") || text;
         }
     }
 
