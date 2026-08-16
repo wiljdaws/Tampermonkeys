@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "20.4");
+  assert.equal(version, "20.5");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -240,6 +240,103 @@ test("page hooks target the game window, not the userscript sandbox", () => {
   assert.match(hudSource, /const gameWindow = pageWindow\(\)/);
   assert.match(hudSource, /gameWindow\.fetch = async function/);
   assert.match(hudSource, /pageConsole\.log = function/);
+});
+
+test("display name storage survives a refresh for the same in-game account", () => {
+  const data = {};
+  const storage = {
+    get: (key) => data[key] ?? null,
+    set: (key, value) => { data[key] = value; },
+  };
+  const displayNameStorageKey = extractHudFunction("displayNameStorageKey");
+  const writeStoredDisplayName = extractHudFunction("writeStoredDisplayName", {
+    displayNameStorageKey,
+  });
+  const readStoredDisplayName = extractHudFunction("readStoredDisplayName", {
+    displayNameStorageKey,
+  });
+  writeStoredDisplayName(storage, "cemzDSxfDgV0gvEilUGqzRFLp252", "JesusDied4U");
+  assert.equal(
+    readStoredDisplayName(storage, "cemzDSxfDgV0gvEilUGqzRFLp252"),
+    "JesusDied4U",
+  );
+  assert.equal(readStoredDisplayName(storage, "someone-else"), "");
+  assert.equal(readStoredDisplayName(null, "cemzDSxfDgV0gvEilUGqzRFLp252"), "");
+});
+
+test("a leaderboard name is ours when the Firebase id or in-game id matches", () => {
+  const nameRowBelongsToPlayer = extractHudFunction("nameRowBelongsToPlayer");
+  const isNameTakenByOthers = extractHudFunction("isNameTakenByOthers", {
+    nameRowBelongsToPlayer,
+  });
+  const ownGame = "cemzDSxfDgV0gvEilUGqzRFLp252";
+  const oldUid = "QQOCAgdfAkgkL22MEkVmXzIZJBk2";
+  const newUid = "newFirebaseUid123";
+  assert.equal(
+    nameRowBelongsToPlayer({ sourceUserId: oldUid, rgPlayerId: ownGame }, newUid, ownGame),
+    true,
+  );
+  assert.equal(
+    nameRowBelongsToPlayer({ sourceUserId: newUid }, newUid, ownGame),
+    true,
+  );
+  assert.equal(
+    nameRowBelongsToPlayer({ sourceUserId: "other-uid", rgPlayerId: "other-game" }, newUid, ownGame),
+    false,
+  );
+  assert.equal(
+    isNameTakenByOthers(
+      [{ sourceUserId: oldUid, rgPlayerId: ownGame, name: "JesusDied4U" }],
+      newUid,
+      ownGame,
+    ),
+    false,
+  );
+  assert.equal(
+    isNameTakenByOthers(
+      [{ sourceUserId: "other-uid", rgPlayerId: "other-game", name: "JesusDied4U" }],
+      newUid,
+      ownGame,
+    ),
+    true,
+  );
+  assert.equal(
+    isNameTakenByOthers([{ name: "JesusDied4U" }], newUid, ownGame),
+    true,
+  );
+});
+
+test("board display names drop a clan tag prefix", () => {
+  const boardNameWithoutClanTag = extractHudFunction("boardNameWithoutClanTag");
+  const displayNameFromLeaderboardDocs = extractHudFunction(
+    "displayNameFromLeaderboardDocs",
+    { boardNameWithoutClanTag },
+  );
+  assert.equal(boardNameWithoutClanTag("[KING] JesusDied4U"), "JesusDied4U");
+  assert.equal(boardNameWithoutClanTag("JesusDied4U"), "JesusDied4U");
+  assert.equal(
+    displayNameFromLeaderboardDocs(
+      [{ rgPlayerId: "cemzDSxfDgV0gvEilUGqzRFLp252", name: "[KING] JesusDied4U" }],
+      "cemzDSxfDgV0gvEilUGqzRFLp252",
+    ),
+    "JesusDied4U",
+  );
+  assert.equal(
+    displayNameFromLeaderboardDocs(
+      [{ rgPlayerId: "other", name: "Nope" }],
+      "cemzDSxfDgV0gvEilUGqzRFLp252",
+    ),
+    "",
+  );
+});
+
+test("leaderboard submit reuses a stored or board name before prompting", () => {
+  const inner = hudFunctionSource("submitToLeaderboardInner");
+  assert.match(inner, /readStoredDisplayName\(/);
+  assert.match(inner, /writeStoredDisplayName\(/);
+  assert.match(inner, /lookupDisplayNameFromBoard\(/);
+  assert.match(inner, /isNameTaken\(fb, suggestion, firebaseAuthUid, data\.Id\)/);
+  assert.match(hudSource, /askDisplayName\(suggestion, isRename, fb, firebaseAuthUid, data\.Id\)/);
 });
 
 test("ensureAnonymousAuth waits for a restored session before minting a uid", async () => {

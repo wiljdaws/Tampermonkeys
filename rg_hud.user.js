@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.4
+// @version      20.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2803,17 +2803,79 @@
         }, true); // capture — must run before Unity's listener
     });
 
+    function displayNameStorageKey(rgPlayerId) {
+        return "atlasDisplayName:" + String(rgPlayerId || "").trim();
+    }
+
+    function readStoredDisplayName(storage, rgPlayerId) {
+        if (!storage || typeof storage.get !== "function" || !rgPlayerId) return "";
+        try {
+            const name = storage.get(displayNameStorageKey(rgPlayerId));
+            return typeof name === "string" ? name.trim() : "";
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function writeStoredDisplayName(storage, rgPlayerId, name) {
+        if (!storage || typeof storage.set !== "function" || !rgPlayerId || !name) return;
+        try { storage.set(displayNameStorageKey(rgPlayerId), String(name).trim()); } catch (e) {}
+    }
+
+    function boardNameWithoutClanTag(name) {
+        return String(name || "").trim().replace(/^\[[^\]]+\]\s*/, "").trim();
+    }
+
+    function nameRowBelongsToPlayer(row, firebaseUid, rgPlayerId) {
+        if (!row || typeof row !== "object") return false;
+        if (firebaseUid && row.sourceUserId === firebaseUid) return true;
+        if (rgPlayerId && row.rgPlayerId === rgPlayerId) return true;
+        return false;
+    }
+
+    function isNameTakenByOthers(rows, firebaseUid, rgPlayerId) {
+        return (rows || []).some((row) => !nameRowBelongsToPlayer(row, firebaseUid, rgPlayerId));
+    }
+
+    function displayNameFromLeaderboardDocs(rows, rgPlayerId) {
+        for (const row of rows || []) {
+            if (!row || row.rgPlayerId !== rgPlayerId) continue;
+            const stripped = boardNameWithoutClanTag(row.name).slice(0, 15);
+            if (stripped) return stripped;
+        }
+        return "";
+    }
+
+    async function lookupDisplayNameFromBoard(fb, rgPlayerId) {
+        if (!fb || !rgPlayerId) return "";
+        try {
+            const q = fb.query(
+                fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                fb.where("rgPlayerId", "==", rgPlayerId),
+                fb.limit(1)
+            );
+            const snap = await fb.getDocs(q);
+            return displayNameFromLeaderboardDocs(snap.docs.map((d) => d.data()), rgPlayerId);
+        } catch (e) {
+            dbg("lookupDisplayNameFromBoard failed: " + getErrMsg(e));
+            return "";
+        }
+    }
+
     // best-effort collision check. two simultaneous picks could both pass,
     // but that's rare enough to live with.
-    async function isNameTaken(fb, name, ownSourceUserId) {
+    async function isNameTaken(fb, name, firebaseUid, rgPlayerId) {
         try {
             const q = fb.query(
                 fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
                 fb.where("name", "==", name)
             );
             const snap = await fb.getDocs(q);
-            // taken only if some entry belongs to another player
-            return snap.docs.some(d => d.data().sourceUserId !== ownSourceUserId);
+            return isNameTakenByOthers(
+                snap.docs.map((d) => d.data()),
+                firebaseUid,
+                rgPlayerId,
+            );
         } catch (e) {
             // don't block on check failure, let it through
             dbg("isNameTaken check failed (letting through): " + getErrMsg(e));
@@ -2822,7 +2884,7 @@
         }
     }
 
-    function askDisplayName(suggestion, isRename, fb, ownSourceUserId) {
+    function askDisplayName(suggestion, isRename, fb, firebaseUid, rgPlayerId) {
         return new Promise(resolve => {
             const title = isRename
                 ? "Enter your new leaderboard name:"
@@ -2857,7 +2919,7 @@
                     errEl.style.color = "#7ec8ff";
                     errEl.textContent = "Checking availability...";
                     saveBtn.disabled = true;
-                    const taken = fb ? await isNameTaken(fb, entered, ownSourceUserId) : false;
+                    const taken = fb ? await isNameTaken(fb, entered, firebaseUid, rgPlayerId) : false;
                     saveBtn.disabled = false;
                     errEl.style.color = "#ff6b6b";
 
@@ -2929,8 +2991,14 @@
 
         const docRef = fb.doc(fb.db, LEADERBOARD_COLLECTION, firebaseAuthUid);
 
-        // ask for display name once per player unless Rename forces it
+        // ask for display name once per player unless Rename forces it.
+        // Memory dies on refresh; Tampermonkey storage and the public board
+        // keep the same in-game account from getting the first-run prompt
+        // after a new Firebase id.
         let existingDisplayName = cachedDisplayNames.get(data.Id) ?? null;
+        if (!existingDisplayName) {
+            existingDisplayName = readStoredDisplayName(atlasTmStorage(), data.Id) || null;
+        }
 
         if (!existingDisplayName || forceRenamePrompt) {
             try {
@@ -2939,8 +3007,12 @@
                     existingDisplayName = existing.data().displayName;
                 }
             } catch (e) {
-                dbg("submitToLeaderboardInner: prior displayName read failed, will prompt");
+                dbg("submitToLeaderboardInner: prior displayName read failed");
             }
+        }
+
+        if (!existingDisplayName && !forceRenamePrompt) {
+            existingDisplayName = await lookupDisplayNameFromBoard(fb, data.Id) || null;
         }
 
         let displayName = (!forceRenamePrompt && existingDisplayName) ? existingDisplayName : null;
@@ -2948,14 +3020,20 @@
         forceRenamePrompt = false;
 
         if (!displayName) {
-            // no saved name, prompt. cancel skips the submission (we'll ask next time)
             const cleaned = cleanName(data.Nickname).slice(0, 15);
             const suggestion = (cleaned && cleaned.toLowerCase() !== "player") ? cleaned : "";
-            displayName = await askDisplayName(suggestion, isRename, fb, data.Id);
-            if (!displayName) return;
+            if (suggestion && !isRename) {
+                const taken = await isNameTaken(fb, suggestion, firebaseAuthUid, data.Id);
+                if (!taken) displayName = suggestion;
+            }
+            if (!displayName) {
+                displayName = await askDisplayName(suggestion, isRename, fb, firebaseAuthUid, data.Id);
+                if (!displayName) return;
+            }
         }
 
         cachedDisplayNames.set(data.Id, displayName);
+        writeStoredDisplayName(atlasTmStorage(), data.Id, displayName);
 
         // Full Glicko snapshot per playlist: rating, displayRating, rd,
         // vol. snapshotKey below only hashes displayRating + stats so
