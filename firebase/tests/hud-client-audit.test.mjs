@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "20.3");
+  assert.equal(version, "20.4");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -158,46 +158,88 @@ test("ATLAS persists Firebase Auth in Tampermonkey storage", () => {
   assert.match(hudSource, /@grant\s+GM_setValue/);
   assert.match(hudSource, /@grant\s+GM_deleteValue/);
   assert.match(hudSource, /@inject-into\s+page/);
-  assert.match(hudSource, /function createAtlasAuthPersistence\(/);
-  assert.match(hudSource, /function atlasAuthPersistenceList\(/);
+  assert.match(hudSource, /function hydrateAtlasAuthFromTm\(/);
+  assert.match(hudSource, /function backupAtlasAuthToTm\(/);
   const initInner = hudFunctionSource("initFirebaseInner");
   assert.match(initInner, /initializeAuth\(app,/);
-  assert.match(initInner, /createAtlasAuthPersistence\(\)/);
+  assert.match(initInner, /hydrateAtlasAuthFromTm\(/);
+  assert.match(initInner, /backupAtlasAuthToTm\(/);
+  assert.match(initInner, /browserLocalPersistence/);
   assert.match(initInner, /indexedDBLocalPersistence/);
+  assert.doesNotMatch(initInner, /createAtlasAuthPersistence/);
+  assert.doesNotMatch(initInner, /setPersistence/);
   const initAuthAt = initInner.indexOf("initializeAuth(app,");
   const getAuthAt = initInner.indexOf("getAuth(app)");
   assert.ok(initAuthAt >= 0 && getAuthAt > initAuthAt);
 });
 
-test("createAtlasAuthPersistence round-trips a user blob and skips when storage is missing", async () => {
-  const data = {};
-  const persistence = extractHudFunction("createAtlasAuthPersistence")({
-    get: (key) => data[key] ?? null,
-    set: (key, value) => { data[key] = value; },
-    remove: (key) => { delete data[key]; },
-  });
-  assert.equal(extractHudFunction("createAtlasAuthPersistence")(null), null);
-  assert.equal(persistence.type, "LOCAL");
-  await persistence._set("firebase:authUser:test", { uid: "QQOCAgdfAkgkL22MEkVmXzIZJBk2" });
+test("hydrateAtlasAuthFromTm writes a missing Auth blob and leaves an existing one", () => {
+  const hydrateAtlasAuthFromTm = extractHudFunction("hydrateAtlasAuthFromTm");
+  const data = { atlasFirebaseAuthUser: '{"uid":"QQOCAgdfAkgkL22MEkVmXzIZJBk2"}' };
+  const store = {};
+  const localStore = {
+    getItem: (key) => store[key] ?? null,
+    setItem: (key, value) => { store[key] = value; },
+  };
+  assert.equal(hydrateAtlasAuthFromTm(null, "key", "[DEFAULT]", localStore), false);
   assert.equal(
-    (await persistence._get("firebase:authUser:test")).uid,
-    "QQOCAgdfAkgkL22MEkVmXzIZJBk2",
+    hydrateAtlasAuthFromTm(
+      { get: (key) => data[key] ?? null },
+      "key",
+      "[DEFAULT]",
+      localStore,
+    ),
+    true,
   );
-  await persistence._remove("firebase:authUser:test");
-  assert.equal(await persistence._get("firebase:authUser:test"), null);
+  assert.equal(store["firebase:authUser:key:[DEFAULT]"], '{"uid":"QQOCAgdfAkgkL22MEkVmXzIZJBk2"}');
+  store["firebase:authUser:key:[DEFAULT]"] = '{"uid":"keep-me"}';
+  hydrateAtlasAuthFromTm(
+    { get: (key) => data[key] ?? null },
+    "key",
+    "[DEFAULT]",
+    localStore,
+  );
+  assert.equal(store["firebase:authUser:key:[DEFAULT]"], '{"uid":"keep-me"}');
 });
 
-test("atlasAuthPersistenceList keeps Tampermonkey storage ahead of origin storage", () => {
-  const atlasAuthPersistenceList = extractHudFunction("atlasAuthPersistenceList");
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(atlasAuthPersistenceList("gm", "idb", "local"))),
-    ["gm", "idb", "local"],
+test("backupAtlasAuthToTm copies localStorage then falls back to user.toJSON", () => {
+  const backupAtlasAuthToTm = extractHudFunction("backupAtlasAuthToTm");
+  const data = {};
+  const storage = {
+    get: (key) => data[key] ?? null,
+    set: (key, value) => { data[key] = value; },
+  };
+  const localStore = {
+    getItem: (key) => (
+      key === "firebase:authUser:key:[DEFAULT]" ? '{"uid":"from-ls"}' : null
+    ),
+  };
+  assert.equal(backupAtlasAuthToTm(null, "key", "[DEFAULT]", localStore), false);
+  assert.equal(backupAtlasAuthToTm(storage, "key", "[DEFAULT]", localStore), true);
+  assert.equal(data.atlasFirebaseAuthUser, '{"uid":"from-ls"}');
+  const emptyStore = { getItem: () => null };
+  const emptyData = {};
+  const emptyStorage = { set: (key, value) => { emptyData[key] = value; } };
+  assert.equal(
+    backupAtlasAuthToTm(emptyStorage, "key", "[DEFAULT]", emptyStore, {
+      toJSON: () => ({ uid: "from-user" }),
+    }),
+    true,
   );
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(atlasAuthPersistenceList(null, "idb", "local"))),
-    ["idb", "local"],
-  );
-  assert.equal(atlasAuthPersistenceList(null, null, null), undefined);
+  assert.equal(emptyData.atlasFirebaseAuthUser, '{"uid":"from-user"}');
+});
+
+test("page hooks target the game window, not the userscript sandbox", () => {
+  const pageWindow = extractHudFunction("pageWindow", {
+    unsafeWindow: { id: "page" },
+    window: { id: "sandbox" },
+  });
+  assert.equal(pageWindow().id, "page");
+  const fallback = extractHudFunction("pageWindow", { window: { id: "sandbox" } });
+  assert.equal(fallback().id, "sandbox");
+  assert.match(hudSource, /const gameWindow = pageWindow\(\)/);
+  assert.match(hudSource, /gameWindow\.fetch = async function/);
+  assert.match(hudSource, /pageConsole\.log = function/);
 });
 
 test("ensureAnonymousAuth waits for a restored session before minting a uid", async () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      20.3
+// @version      20.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -18,6 +18,15 @@
 
 (function () {
     'use strict';
+
+    // @grant puts Tampermonkey in the isolated world on Chrome. Game
+    // fetch / console.log live on the page. Always hook that window.
+    function pageWindow() {
+        try {
+            if (typeof unsafeWindow !== "undefined" && unsafeWindow) return unsafeWindow;
+        } catch (e) {}
+        return window;
+    }
 
     // dbg() defined up top so early localStorage try/catches can call it
     const oldLog = console.log;
@@ -126,7 +135,7 @@
     }
 
     // expose on page window so DevTools "top" context can call rgDump()
-    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).rgDump =
+    pageWindow().rgDump =
         () => oldLog.call(console, _rgLogBuf.join("\n"));
 
     // raw console.log/warn from the game, not just our own dbg. lets us hunt
@@ -145,14 +154,14 @@
             if (_rawLogBuf.length > 800) _rawLogBuf.shift();
         } catch (e) {}
     }
-    const _rawOldWarn = console.warn;
-    console.warn = function () { _rawPush("warn", arguments); _rawOldWarn.apply(console, arguments); };
+    const _rawOldWarn = pageWindow().console.warn;
+    pageWindow().console.warn = function () { _rawPush("warn", arguments); _rawOldWarn.apply(pageWindow().console, arguments); };
     // console.log wrapper gets set later; we install a passthrough hook via oldLog above at line 21
     // by wrapping _rawPush into the existing console.log override at the bottom of the script.
 
     // fullscreen textarea dump so users can select-copy the raw buffer without
     // clipboard perms or console truncation
-    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).atlasCap = function () {
+    pageWindow().atlasCap = function () {
         const out = _rawLogBuf.join("\n");
         const t = document.createElement("textarea");
         t.value = out;
@@ -167,7 +176,7 @@
         t.select();
         return "dumped " + _rawLogBuf.length + " lines";
     };
-    (typeof unsafeWindow !== "undefined" ? unsafeWindow : window).atlasCapReset = function () { _rawLogBuf.length = 0; };
+    pageWindow().atlasCapReset = function () { _rawLogBuf.length = 0; };
     // catch anything a handler throws so it lands in the debug bundle
     if (typeof window !== "undefined") {
         window.addEventListener("error", ev => {
@@ -437,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "20.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2164,35 +2173,48 @@
     }
 
     // Tampermonkey storage survives a rocketgoal.io cache clear. Origin
-    // IndexedDB / localStorage do not. Firebase Auth must read this first
-    // or a wipe mints a new anonymous uid and the allow list misses.
-    function createAtlasAuthPersistence(storage = atlasTmStorage()) {
-        if (!storage) return null;
-        return {
-            type: "LOCAL",
-            _shouldAllowMigration: true,
-            _isAvailable: async () => true,
-            _set: async (key, value) => {
-                storage.set(key, JSON.stringify(value));
-            },
-            _get: async (key) => {
-                const raw = storage.get(key);
-                if (raw == null || raw === "") return null;
-                if (typeof raw === "object") return raw;
-                try { return JSON.parse(raw); } catch { return null; }
-            },
-            _remove: async (key) => { storage.remove(key); },
-            _addListener() {},
-            _removeListener() {},
-        };
+    // IndexedDB / localStorage do not. Copy the official Auth blob into
+    // localStorage before initializeAuth — Firebase 10 rejects a duck-typed
+    // persistence object ("Expected a class definition").
+    function hydrateAtlasAuthFromTm(storage, apiKey, appName, localStore) {
+        if (!storage || !apiKey || !localStore || typeof localStore.getItem !== "function") return false;
+        let raw;
+        try { raw = storage.get("atlasFirebaseAuthUser"); } catch (e) { return false; }
+        if (raw == null || raw === "") return false;
+        const blob = typeof raw === "string" ? raw : JSON.stringify(raw);
+        const names = ["[DEFAULT]", "atlas"];
+        if (appName && names.indexOf(appName) < 0) names.unshift(appName);
+        let wrote = false;
+        for (let i = 0; i < names.length; i++) {
+            const key = "firebase:authUser:" + apiKey + ":" + names[i];
+            try {
+                if (!localStore.getItem(key)) {
+                    localStore.setItem(key, blob);
+                    wrote = true;
+                }
+            } catch (e) {}
+        }
+        return wrote;
     }
 
-    function atlasAuthPersistenceList(gmPersistence, indexedDBLocalPersistence, browserLocalPersistence) {
-        const list = [];
-        if (gmPersistence) list.push(gmPersistence);
-        if (indexedDBLocalPersistence) list.push(indexedDBLocalPersistence);
-        if (browserLocalPersistence) list.push(browserLocalPersistence);
-        return list.length ? list : undefined;
+    function backupAtlasAuthToTm(storage, apiKey, appName, localStore, user) {
+        if (!storage || typeof storage.set !== "function") return false;
+        let blob = null;
+        if (localStore && apiKey && typeof localStore.getItem === "function") {
+            const names = ["[DEFAULT]", "atlas"];
+            if (appName && names.indexOf(appName) < 0) names.unshift(appName);
+            for (let i = 0; i < names.length; i++) {
+                try {
+                    const fromLs = localStore.getItem("firebase:authUser:" + apiKey + ":" + names[i]);
+                    if (fromLs) { blob = fromLs; break; }
+                } catch (e) {}
+            }
+        }
+        if (!blob && user && typeof user.toJSON === "function") {
+            try { blob = JSON.stringify(user.toJSON()); } catch (e) {}
+        }
+        if (!blob) return false;
+        try { storage.set("atlasFirebaseAuthUser", blob); return true; } catch (e) { return false; }
     }
 
     async function ensureAnonymousAuth(auth) {
@@ -2237,7 +2259,6 @@
                 getAuth,
                 signInAnonymously,
                 initializeAuth,
-                setPersistence,
                 indexedDBLocalPersistence,
                 browserLocalPersistence,
             } =
@@ -2249,25 +2270,20 @@
             // Sign in before handing firestoreReady out; writes without
             // an auth.uid stamp get denied.
             try {
-                const gmPersistence = createAtlasAuthPersistence();
-                const persistence = atlasAuthPersistenceList(
-                    gmPersistence,
-                    indexedDBLocalPersistence,
-                    browserLocalPersistence,
-                );
+                const tm = atlasTmStorage();
+                const appName = app && app.name ? app.name : "[DEFAULT]";
+                hydrateAtlasAuthFromTm(tm, FIREBASE_CONFIG.apiKey, appName, localStorage);
                 let auth;
                 try {
-                    auth = initializeAuth(app, persistence ? { persistence } : {});
+                    auth = initializeAuth(app, {
+                        persistence: [browserLocalPersistence, indexedDBLocalPersistence],
+                    });
                 } catch (e) {
                     auth = getAuth(app);
-                    if (gmPersistence && typeof setPersistence === "function") {
-                        try { await setPersistence(auth, gmPersistence); } catch (persistErr) {
-                            dbg("initFirebase: setPersistence failed: " + getErrMsg(persistErr));
-                        }
-                    }
                 }
                 atlasFirebaseAuth = auth;
                 await ensureAnonymousAuth(auth);
+                backupAtlasAuthToTm(tm, FIREBASE_CONFIG.apiKey, appName, localStorage, auth && auth.currentUser);
             } catch (authErr) {
                 firebaseAuthUid = null;
                 firebaseAuthError = getErrMsg(authErr);
@@ -5086,8 +5102,10 @@
 
     const API_HOST_FRAGMENT = "us-central1-rocketball-23c12.cloudfunctions.net";
 
-    const oldFetch = window.fetch;
-    window.fetch = async function (...args) {
+    const gameWindow = pageWindow();
+    dbg("page hooks on " + (gameWindow === window ? "window" : "unsafeWindow"));
+    const oldFetch = gameWindow.fetch.bind(gameWindow);
+    gameWindow.fetch = async function (...args) {
         const response = await oldFetch.apply(this, args);
         try {
             const url = args[0]?.toString?.() ?? "";
@@ -5176,8 +5194,10 @@
         return response;
     };
 
-    console.log = function (...args) {
-        oldLog.apply(console, args);
+    const pageConsole = gameWindow.console;
+    const oldPageLog = pageConsole.log.bind(pageConsole);
+    pageConsole.log = function (...args) {
+        oldPageLog.apply(pageConsole, args);
         // feed the raw buffer for atlasCap()
         _rawPush("log", args);
         // wrap: a throw in any branch below unwinds the loop and every
