@@ -1,8 +1,7 @@
 # Code of Conduct
 
 This is a Rocket Goal community. We keep score, we keep it clean, and we
-try to treat people the way we'd want to be treated after church and
-before a 3v3.
+try to treat people like we'll see them in the next queue. Because we will.
 
 We are not a company. We are Pal, JesusDied4U, and whoever showed up to
 play. That still means there are house rules.
@@ -19,9 +18,9 @@ play. That still means there are house rules.
 ## How we do not act
 
 - Cheating, forged stats, ban evasion, or "helpful" workarounds
-- Sexual talk, porn, or hitting on people in here
 - Doxxing, leaking DMs, or posting someone's uid to start a fight
 - Harassment, slurs, or piling on
+- Turning the server into a politics channel. We came here to hit the ball.
 
 ## Where this applies
 
