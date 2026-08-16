@@ -1,135 +1,53 @@
-# Contributor Covenant Code of Conduct
+# Code of Conduct
 
-## Our Pledge
+This is a Rocket Goal community. We keep score, we keep it clean, and we
+try to treat people the way we'd want to be treated after church and
+before a 3v3.
 
-We as members, contributors, and leaders pledge to make participation in our
-community a harassment-free experience for everyone, regardless of age, body
-size, visible or invisible disability, ethnicity, sex characteristics, gender
-identity and expression, level of experience, education, socio-economic status,
-nationality, personal appearance, race, caste, color, religion, or sexual
-identity and orientation.
+We are not a company. We are Pal, JesusDied4U, and whoever showed up to
+play. That still means there are house rules.
 
-We pledge to act and interact in ways that contribute to an open, welcoming,
-diverse, inclusive, and healthy community.
+## How we act
 
-## Our Standards
+- Be honest. Fake MMR is just a lie with extra steps.
+- Be decent. Trash talk the play, not the person.
+- Keep it clean. Kids wander through Discord. So do parents.
+- Own your mess. If you broke it, say so and help fix it.
+- Disagree like an adult. You can be wrong in public. You cannot be cruel.
+- Remember people have names, families, and a next match. Act like it.
 
-Examples of behavior that contributes to a positive environment for our
-community include:
+## How we do not act
 
-* Demonstrating empathy and kindness toward other people
-* Being respectful of differing opinions, viewpoints, and experiences
-* Giving and gracefully accepting constructive feedback
-* Accepting responsibility and apologizing to those affected by our mistakes,
-  and learning from the experience
-* Focusing on what is best not just for us as individuals, but for the overall
-  community
+- Cheating, forged stats, ban evasion, or "helpful" workarounds
+- Sexual talk, porn, or hitting on people in here
+- Doxxing, leaking DMs, or posting someone's uid to start a fight
+- Harassment, slurs, or piling on
+- Using the Lord's name as punctuation, or using faith as a club
+- Turning the server into a politics channel. We came here to hit the ball.
 
-Examples of unacceptable behavior include:
+## Where this applies
 
-* The use of sexualized language or imagery, and sexual attention or advances of
-  any kind
-* Trolling, insulting or derogatory comments, and personal or political attacks
-* Public or private harassment
-* Publishing others' private information, such as a physical or email address,
-  without their explicit permission
-* Cheating, forging stats, or helping others bypass leaderboard or clan rules
-* Other conduct which could reasonably be considered inappropriate in a
-  community setting
+The ATLAS HUD, both leaderboard sites, this GitHub repo, and the
+Championship Discord. If you're wearing the ATLAS name in public, this
+still counts.
 
-## Enforcement Responsibilities
+## If someone crosses the line
 
-Community leaders are responsible for clarifying and enforcing our standards of
-acceptable behavior and will take appropriate and fair corrective action in
-response to any behavior that they deem inappropriate, threatening, offensive,
-or harmful.
+Private message Pal or JesusDied4U in the
+[Championship Discord](https://discord.gg/MDz7hsrh9m), or file a
+[private GitHub advisory](https://github.com/wiljdaws/Tampermonkeys/security/advisories/new).
 
-Community leaders have the right and responsibility to remove, edit, or reject
-comments, commits, code, wiki edits, issues, and other contributions that are
-not aligned to this Code of Conduct, and will communicate reasons for moderation
-decisions when appropriate.
+Don't make a scene in the channel if you can help it. We'll look into it,
+we'll keep your name out of it, and we'll be fair.
 
-## Scope
+## What happens next
 
-This Code of Conduct applies within all community spaces, including this
-repository, the ATLAS HUD, the player and clan leaderboard sites, and the
-Rocket Goal Championship Discord. It also applies when an individual is
-officially representing the community in public spaces.
+1. **A quiet word.** Most things end here.
+2. **A real warning.** Don't test it.
+3. **A timeout.** Go touch grass. Come back when you can be a teammate.
+4. **A permanent ban.** Some doors do not reopen.
 
-## Enforcement
+We will not litigate this in a 40-message thread. If we got it wrong, say
+so privately and we'll listen.
 
-Report abusive, harassing, or otherwise unacceptable behavior to Pal or
-JesusDied4U in the
-[Rocket Goal Championship Discord](https://discord.gg/MDz7hsrh9m)
-(private message preferred), or through a
-[private GitHub security advisory](https://github.com/wiljdaws/Tampermonkeys/security/advisories/new).
-
-All complaints will be reviewed and investigated promptly and fairly.
-
-All community leaders are obligated to respect the privacy and security of the
-reporter of any incident.
-
-## Enforcement Guidelines
-
-Community leaders will follow these Community Impact Guidelines in determining
-the consequences for any action they deem in violation of this Code of Conduct:
-
-### 1. Correction
-
-**Community Impact**: Use of inappropriate language or other behavior deemed
-unprofessional or unwelcome in the community.
-
-**Consequence**: A private, written warning, providing clarity around the
-nature of the violation and an explanation of why the behavior was
-inappropriate. A public apology may be requested.
-
-### 2. Warning
-
-**Community Impact**: A violation through a single incident or series of
-actions.
-
-**Consequence**: A warning with consequences for continued behavior. No
-interaction with the people involved, including unsolicited interaction with
-those enforcing the Code of Conduct, for a specified period of time. This
-includes avoiding interactions in community spaces as well as external channels
-like social media. Violating these terms may lead to a temporary or permanent
-ban.
-
-### 3. Temporary Ban
-
-**Community Impact**: A serious violation of community standards, including
-sustained inappropriate behavior.
-
-**Consequence**: A temporary ban from any sort of interaction or public
-communication with the community for a specified period of time. No public or
-private interaction with the people involved, including unsolicited interaction
-with those enforcing the Code of Conduct, is allowed during this period.
-Violating these terms may lead to a permanent ban.
-
-### 4. Permanent Ban
-
-**Community Impact**: Demonstrating a pattern of violation of community
-standards, including sustained inappropriate behavior, harassment of an
-individual, or aggression toward or disparagement of classes of individuals.
-
-**Consequence**: A permanent ban from any sort of public interaction within the
-community.
-
-## Attribution
-
-This Code of Conduct is adapted from the [Contributor Covenant][homepage],
-version 2.1, available at
-[https://www.contributor-covenant.org/version/2/1/code_of_conduct.html][v2.1].
-
-Community Impact Guidelines were inspired by
-[Mozilla's code of conduct enforcement ladder][Mozilla CoC].
-
-For answers to common questions about this code of conduct, see the FAQ at
-[https://www.contributor-covenant.org/faq][FAQ]. Translations are available at
-[https://www.contributor-covenant.org/translations][translations].
-
-[homepage]: https://www.contributor-covenant.org
-[v2.1]: https://www.contributor-covenant.org/version/2/1/code_of_conduct.html
-[Mozilla CoC]: https://github.com/mozilla/diversity
-[FAQ]: https://www.contributor-covenant.org/faq
-[translations]: https://www.contributor-covenant.org/translations
+Play hard. Keep short accounts. See you in queue.
