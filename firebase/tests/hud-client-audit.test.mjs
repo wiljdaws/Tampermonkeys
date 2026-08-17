@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "21.5");
+  assert.equal(version, "21.6");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1079,6 +1079,7 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const artFitSizePct = extractHudFunction("artFitSizePct");
   const artLineHeightPct = extractHudFunction("artLineHeightPct");
   const artMspaceEm = extractHudFunction("artMspaceEm");
+  const artLineHeightEm = extractHudFunction("artLineHeightEm", { artMspaceEm });
   const brailleToAsciiArt = extractHudFunction("brailleToAsciiArt");
   const isBrailleArtText = extractHudFunction("isBrailleArtText");
   const packAsciiArt = extractHudFunction("packAsciiArt", {
@@ -1087,6 +1088,7 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
     artFitSizePct,
     artLineHeightPct,
     artMspaceEm,
+    artLineHeightEm,
     brailleToAsciiArt,
   });
   const editableTextFromRaw = extractHudFunction("editableTextFromRaw");
@@ -1104,8 +1106,8 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   assert.equal(editableFieldsFromRaw("Player\nChampion").titleOn, true);
 
   const packedDots = packAsciiArt("●●●●●\n●   ●");
-  assert.match(packedDots, /<mspace=0\.9em>/);
-  assert.match(packedDots, /<line-height=0\.9em>/);
+  assert.match(packedDots, /<mspace=0\.8em>/);
+  assert.match(packedDots, /<line-height=1\.0em>/);
   assert.match(packedDots, /●●●●●<br>●   ●/);
   assert.match(packedDots, /^<line-height=/);
 
@@ -1124,8 +1126,8 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   assert.equal(/[\u2800-\u28FF]/.test(brailleToAsciiArt(crew)), false);
   assert.equal(/[\u2800-\u28FF]/.test(packAsciiArt(crew)), false);
   const packedCrew = packAsciiArt(crew);
-  assert.match(packedCrew, /<mspace=0\.9em>/);
-  assert.match(packedCrew, /<line-height=0\.9em>/);
+  assert.match(packedCrew, /<mspace=0\.8em>/);
+  assert.match(packedCrew, /<line-height=1\.0em>/);
 });
 
 test("Name Forge remembers a Scored default and keeps clan tags off the name", () => {

@@ -72,6 +72,7 @@ const artLineStats = extractHudFunction("artLineStats");
 const artFitSizePct = extractHudFunction("artFitSizePct");
 const artLineHeightPct = extractHudFunction("artLineHeightPct");
 const artMspaceEm = extractHudFunction("artMspaceEm");
+const artLineHeightEm = extractHudFunction("artLineHeightEm", { artMspaceEm });
 const brailleToAsciiArt = extractHudFunction("brailleToAsciiArt");
 const packAsciiArt = extractHudFunction("packAsciiArt", {
   preserveForgeNewlines,
@@ -79,6 +80,7 @@ const packAsciiArt = extractHudFunction("packAsciiArt", {
   artFitSizePct,
   artLineHeightPct,
   artMspaceEm,
+  artLineHeightEm,
   brailleToAsciiArt,
 });
 const colorizeText = extractHudFunction("colorizeText", {
