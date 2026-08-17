@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      21.0
+// @version      21.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9126,20 +9126,51 @@
   }
 
   // rawCode is the exact in-game TMP markup, while the structured fields are
-  // used as soon as somebody touches a Forge control. The first non-empty line
-  // is the name and the last is its editable title.
+  // used as soon as somebody touches a Forge control. A short name plus one
+  // extra line is still name + title. Three or more lines (ASCII art) stay
+  // in the name so spaces and breaks are not crushed.
+  function isAsciiArtText(text) {
+    const lines = String(text ?? "")
+      .replace(/<br\s*\/?\s*>/gi, "\n")
+      .split(/\r\n?|\n/)
+      .filter((line) => line.trim().length);
+    if (lines.length >= 3) return true;
+    return lines.some((line) => /[\\/_]{2,}/.test(line));
+  }
+
+  function preserveForgeNewlines(code) {
+    return String(code ?? "")
+      .replace(/\r\n/g, "\n")
+      .replace(/\n/g, "<br>");
+  }
+
+  function wrapAsciiMonospace(code) {
+    const value = String(code ?? "");
+    if (!value || /<mspace=/i.test(value)) return value;
+    return `<mspace=0.6em>${value}</mspace>`;
+  }
+
   function editableTextFromRaw(raw) {
     return String(raw ?? "")
+      .replace(/<br\s*\/?\s*>/gi, "\n")
       .replace(/<(?!sprite=\d+\s*>)[^>]*>/gi, "")
-      .replace(/\s+/g, " ")
-      .trim();
+      .replace(/\r\n/g, "\n")
+      .replace(/^\n+|\n+$/g, "");
   }
 
   function editableFieldsFromRaw(raw) {
-    const lines = String(raw ?? "")
-      .split(/<br\s*\/?\s*>|\r\n?|\n/gi)
+    const prepared = String(raw ?? "").replace(/<br\s*\/?\s*>/gi, "\n");
+    if (isAsciiArtText(prepared)) {
+      return {
+        name: editableTextFromRaw(prepared),
+        titleOn: false,
+        titleText: "",
+      };
+    }
+    const lines = prepared
+      .split(/\r\n?|\n/)
       .map(editableTextFromRaw)
-      .filter(Boolean);
+      .filter((line) => line.trim().length);
     const titleText = lines.length > 1 ? lines[lines.length - 1] : "";
     return {
       name: lines[0] ?? "",
@@ -9415,13 +9446,13 @@
     const aaSolid = solidAlpha < 255 ? alphaHex(solidAlpha) : '';
 
     // fast paths when no per-letter work is needed
-    if (!wave && mode === 'none') return text;
-    if (!wave && mode === 'solid') return `<${solid.toUpperCase()}${aaSolid}>` + text;
+    if (!wave && mode === 'none') return preserveForgeNewlines(text);
+    if (!wave && mode === 'solid') return `<${solid.toUpperCase()}${aaSolid}>` + preserveForgeNewlines(text);
 
     const tokens = tokenize(text);
     const paintable = tokens.filter(t => t.type === 'char' && !(skipSpaces && t.value === ' '));
     const n = paintable.length;
-    if (n === 0) return mode === 'solid' ? `<${solid.toUpperCase()}>` + text : text;
+    if (n === 0) return mode === 'solid' ? `<${solid.toUpperCase()}>` + preserveForgeNewlines(text) : preserveForgeNewlines(text);
 
     let i = 0;
     let lastColor = null;
@@ -9431,6 +9462,7 @@
     }
     for (const tok of tokens) {
       if (tok.type === 'sprite') { out += tok.value; continue; }
+      if (tok.type === 'br') { out += '<br>'; continue; }
       if (skipSpaces && tok.value === ' ') { out += ' '; continue; }
       if (wave) out += `<rotate=${i % 2 === 0 ? waveAmp : -waveAmp}>`;
       if (mode === 'gradient') {
@@ -9452,11 +9484,19 @@
     let lastIndex = 0;
     let m;
     while ((m = re.exec(text)) !== null) {
-      for (const ch of text.slice(lastIndex, m.index)) tokens.push({ type: 'char', value: ch });
+      for (const ch of text.slice(lastIndex, m.index)) {
+        if (ch === '\r') continue;
+        if (ch === '\n') tokens.push({ type: 'br', value: '<br>' });
+        else tokens.push({ type: 'char', value: ch });
+      }
       tokens.push({ type: 'sprite', value: m[0] });
       lastIndex = m.index + m[0].length;
     }
-    for (const ch of text.slice(lastIndex)) tokens.push({ type: 'char', value: ch });
+    for (const ch of text.slice(lastIndex)) {
+      if (ch === '\r') continue;
+      if (ch === '\n') tokens.push({ type: 'br', value: '<br>' });
+      else tokens.push({ type: 'char', value: ch });
+    }
     return tokens;
   }
 
@@ -9500,6 +9540,7 @@
     );
 
     let code = open + nameCode + close;
+    if (isAsciiArtText(s.name)) code = wrapAsciiMonospace(code);
 
     // title line, fully independent styling
     if (s.titleOn && s.titleText.trim().length > 0) {
@@ -9532,7 +9573,11 @@
 
   function effectiveForgeCode(s) {
     if (typeof s.rawCode === 'string') {
-      return s.rawCode + scoredSuffix(s);
+      let raw = preserveForgeNewlines(s.rawCode);
+      if (isAsciiArtText(s.rawCode) || isAsciiArtText(s.name)) {
+        raw = wrapAsciiMonospace(raw);
+      }
+      return raw + scoredSuffix(s);
     }
     return buildCode(s);
   }
@@ -9544,7 +9589,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'rgnf-preview-inner';
 
-    const nameLine = document.createElement('div');
+    let nameLine = document.createElement('div');
     nameLine.className = 'rgnf-preview-name';
 
     const styles = [];
@@ -9597,11 +9642,34 @@
     if (s.strike) decoParts.push('line-through');
     const decoCSS = decoParts.length ? decoParts.join(' ') : '';
 
+    const ascii = isAsciiArtText(s.name);
+    if (ascii) {
+      wrap.classList.add('rgnf-ascii');
+      nameLine.style.whiteSpace = 'pre';
+      nameLine.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
+      nameLine.style.textAlign = 'left';
+    }
     const tokens = tokenize(s.name);
     const paintable = tokens.filter(t => t.type === 'char' && !(s.skipSpaces && t.value === ' '));
     const n = paintable.length;
     let i = 0;
+    const startNameLine = () => {
+      const line = document.createElement('div');
+      line.className = 'rgnf-preview-name';
+      if (ascii) {
+        line.style.whiteSpace = 'pre';
+        line.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
+        line.style.textAlign = 'left';
+      }
+      line.style.cssText = (line.style.cssText ? line.style.cssText + ';' : '') + styles.join(';');
+      return line;
+    };
     for (const tok of tokens) {
+      if (tok.type === 'br') {
+        wrap.appendChild(nameLine);
+        nameLine = startNameLine();
+        continue;
+      }
       const span = document.createElement('span');
       if (tok.type === 'sprite') {
         const num = Number(tok.value.match(/\d+/)[0]);
@@ -9971,6 +10039,16 @@
       margin-bottom: 8px;
     }
     .rgnf-preview-name { font-size: 18px; font-weight: 400; word-break: break-word; }
+    .rgnf-preview-inner.rgnf-ascii { text-align: left; }
+    .rgnf-preview-inner.rgnf-ascii .rgnf-preview-name {
+      white-space: pre; word-break: normal; font-family: ui-monospace, Menlo, Consolas, monospace;
+    }
+    .rgnf-name-input {
+      width: 100%; min-height: 42px; resize: vertical; box-sizing: border-box;
+      font: 12px/1.3 ui-monospace, Menlo, Consolas, monospace; white-space: pre; tab-size: 4;
+      background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
+      border-radius: 8px; padding: 8px; color: inherit;
+    }
     .rgnf-preview-title { margin-top: 2px; }
     .rgnf-code {
       margin-top: 8px; background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
@@ -10278,7 +10356,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
     while (i < raw.length) {
       const rest = raw.slice(i);
       let m;
-      if ((m = rest.match(/^<br\s*\/?\s*>/i))) { line = document.createElement('div'); root.appendChild(line); i += m[0].length; continue; }
+      if ((m = rest.match(/^<br\s*\/?\s*>/i)) || rest[0] === '\n') {
+        line = document.createElement('div');
+        root.appendChild(line);
+        i += m ? m[0].length : 1;
+        continue;
+      }
+      if (rest[0] === '\r') { i += 1; continue; }
       // TMP accepts 3/4/6/8-char hex shortcuts; match all so the preview lines
       // up with what the game actually renders (was 6/8 only).
       if ((m = rest.match(/^<(#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))>/))) { st.color = m[1]; i += m[0].length; continue; }
@@ -10489,11 +10573,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // ---- Name ----
     const secName = el('div', { class: 'rgnf-sec' });
     secName.appendChild(el('h4', { text: 'Name' }));
-    const nameInput = el('input', {
-      type: 'text', value: state.name,
-      placeholder: 'Type your name…',
+    const nameInput = el('textarea', {
+      class: 'rgnf-name-input',
+      rows: '4',
+      placeholder: 'Type your name, or paste ASCII art…',
       oninput: (e) => { state.name = e.target.value; refreshPreview(); },
     });
+    nameInput.value = state.name;
     secName.appendChild(el('div', { class: 'rgnf-row' }, [
       nameInput,
       el('button', {

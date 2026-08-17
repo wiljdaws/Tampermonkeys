@@ -65,9 +65,13 @@ function extractHudFunction(name, context = {}) {
 
 const alphaHex = extractHudFunction("alphaHex");
 const tokenize = extractHudFunction("tokenize");
+const isAsciiArtText = extractHudFunction("isAsciiArtText");
+const preserveForgeNewlines = extractHudFunction("preserveForgeNewlines");
+const wrapAsciiMonospace = extractHudFunction("wrapAsciiMonospace");
 const colorizeText = extractHudFunction("colorizeText", {
   alphaHex,
   tokenize,
+  preserveForgeNewlines,
 });
 const resolveTitleColorStyle = extractHudFunction("resolveTitleColorStyle");
 const captureForgeScroll = extractHudFunction("captureForgeScroll");
@@ -79,6 +83,7 @@ const splitRawScoredSuffix = extractHudFunction("splitRawScoredSuffix");
 const hudEditableTextFromRaw = extractHudFunction("editableTextFromRaw");
 const hudEditableFieldsFromRaw = extractHudFunction("editableFieldsFromRaw", {
   editableTextFromRaw: hudEditableTextFromRaw,
+  isAsciiArtText,
 });
 const rawSnapshotFields = extractHudFunction("rawSnapshotFields", {
   editableFieldsFromRaw: hudEditableFieldsFromRaw,
@@ -97,10 +102,15 @@ const buildCode = extractHudFunction("buildCode", {
   colorizeText,
   resolveTitleColorStyle,
   scoredSuffix,
+  isAsciiArtText,
+  wrapAsciiMonospace,
 });
 const effectiveForgeCode = extractHudFunction("effectiveForgeCode", {
   buildCode,
   scoredSuffix,
+  preserveForgeNewlines,
+  isAsciiArtText,
+  wrapAsciiMonospace,
 });
 const clanMembers = extractHudFunction("clanMembers");
 const clanMembersField = extractHudFunction("clanMembersField", {
@@ -1081,6 +1091,47 @@ test("raw Name Forge snapshots keep titles and Scored modifiers", () => {
     assert.equal(state.scoredMode, mode);
     assert.equal(effectiveForgeCode(state), base + suffix);
   }
+});
+
+test("Name Forge keeps ASCII art line breaks and spaces", () => {
+  const art = " __\n/_/\\/\\\n\\_\\  /";
+  assert.equal(isAsciiArtText(art), true);
+  assert.equal(preserveForgeNewlines(art), " __<br>/_/\\/\\<br>\\_\\  /");
+  const fields = hudEditableFieldsFromRaw(art);
+  assert.equal(fields.name, art);
+  assert.equal(fields.titleOn, false);
+  const code = buildCode({
+    name: art,
+    colorMode: "none",
+    solidColor: "#ffffff",
+    stops: ["#ffffff", "#000000"],
+    skipSpaces: true,
+    waveOn: false,
+    waveAmp: 0,
+    rotateDeg: 0,
+    sizePct: 100,
+    markOn: false,
+    bold: false,
+    italic: false,
+    underline: false,
+    strike: false,
+    titleOn: false,
+    titleText: "",
+    titleColorMode: "inherit",
+    titleSizePct: 100,
+    titleSub: false,
+    titleBold: false,
+    titleItalic: false,
+    titleUnderline: false,
+    titleStrike: false,
+    scoredMode: "default",
+  });
+  assert.match(code, /<mspace=0\.6em>/);
+  assert.match(code, / __<br>\/_\/\\\/\\<br>\\_\\  \//);
+  assert.equal(
+    effectiveForgeCode({ rawCode: art, name: art, scoredMode: "default" }),
+    `<mspace=0.6em>${preserveForgeNewlines(art)}</mspace>`,
+  );
 });
 
 test("title Inherit explicitly reuses the Name solid color", () => {
