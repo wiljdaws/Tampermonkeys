@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.0
+// @version      22.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9119,17 +9119,37 @@
   state = Object.assign(defaultState(), state);
 
   // ---- Utilities ----
+  // Tampermonkey storage survives a rocketgoal.io site-data wipe.
+  // Origin localStorage does not. Read TM first, then localStorage, and
+  // write both so a wipe still leaves presets / last name / history.
+  function saveJSON(key, val) {
+    const raw = JSON.stringify(val);
+    try { localStorage.setItem(key, raw); } catch (e) { /* ignore */ }
+    try {
+      const tm = atlasTmStorage();
+      if (tm) tm.set(key, raw);
+    } catch (e) { /* ignore */ }
+  }
+
   function loadJSON(key, fallback) {
     try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
+      let raw = null;
+      try {
+        const tm = atlasTmStorage();
+        const fromTm = tm && tm.get(key);
+        if (typeof fromTm === "string" && fromTm) raw = fromTm;
+        else if (fromTm && typeof fromTm === "object") raw = JSON.stringify(fromTm);
+      } catch (e) { /* ignore */ }
+      if (raw == null) {
+        try { raw = localStorage.getItem(key); } catch (e) { /* ignore */ }
+      }
+      if (!raw) return fallback;
+      const val = JSON.parse(raw);
+      saveJSON(key, val);
+      return val;
     } catch (e) {
       return fallback;
     }
-  }
-
-  function saveJSON(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ }
   }
 
   // rawCode is the exact in-game TMP markup, while the structured fields are

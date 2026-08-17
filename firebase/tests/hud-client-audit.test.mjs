@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "22.0");
+  assert.equal(version, "22.1");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1173,6 +1173,30 @@ test("Name Forge remembers a Scored default and keeps clan tags off the name", (
   assert.match(hudSource, /setTagStripper/);
   assert.match(hudSource, /_stripTag\(effectiveForgeCode\(state\)\)/);
   assert.match(hudFunctionSource("setRawSnapshot"), /_stripTag\(restorePreferredArtChars\(raw\)\)/);
+});
+
+test("Name Forge presets survive an origin localStorage wipe via Tampermonkey storage", () => {
+  const tm = new Map();
+  const atlasTmStorage = () => ({
+    get: (key) => (tm.has(key) ? tm.get(key) : null),
+    set: (key, value) => { tm.set(key, value); },
+  });
+  const { window } = new JSDOM("", { url: "https://rocketgoal.io/" });
+  const saveJSON = extractHudFunction("saveJSON", {
+    atlasTmStorage,
+    localStorage: window.localStorage,
+  });
+  const loadJSON = extractHudFunction("loadJSON", {
+    atlasTmStorage,
+    localStorage: window.localStorage,
+    saveJSON,
+  });
+  const key = nameForgePresetKey("player-one");
+  saveJSON(key, [{ name: "Fire" }]);
+  window.localStorage.clear();
+  const restored = loadJSON(key, []);
+  assert.equal(JSON.stringify(restored), JSON.stringify([{ name: "Fire" }]));
+  assert.equal(window.localStorage.getItem(key), JSON.stringify([{ name: "Fire" }]));
 });
 
 test("Name Forge presets and clan-tag cleanup are account safe", () => {
