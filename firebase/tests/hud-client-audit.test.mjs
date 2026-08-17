@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "21.8");
+  assert.equal(version, "21.9");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1081,7 +1081,10 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const artMspaceEm = extractHudFunction("artMspaceEm");
   const artLineHeightEm = extractHudFunction("artLineHeightEm", { artMspaceEm });
   const brailleToAsciiArt = extractHudFunction("brailleToAsciiArt");
-  const gameSafeArtChars = extractHudFunction("gameSafeArtChars");
+  const restorePreferredArtChars = extractHudFunction("restorePreferredArtChars");
+  const gameSafeArtChars = extractHudFunction("gameSafeArtChars", {
+    restorePreferredArtChars,
+  });
   const isBrailleArtText = extractHudFunction("isBrailleArtText");
   const packAsciiArt = extractHudFunction("packAsciiArt", {
     preserveForgeNewlines,
@@ -1130,8 +1133,11 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const packedCrew = packAsciiArt(crew);
   assert.match(packedCrew, /<mspace=0\.72em>/);
   assert.match(packedCrew, /<line-height=1\.12em>/);
-  assert.equal(gameSafeArtChars(".++#####++:+#:"), ".==#####=='=#'");
-  assert.equal(/[+:]/.test(packAsciiArt(".++#####++:+#:\n##")), false);
+  assert.match(gameSafeArtChars("+:+"), /\+<size=0>\.<\/size>:/);
+  assert.equal(restorePreferredArtChars("==##''"), "++##::");
+  const strippedSafe = gameSafeArtChars(".++#####++:+#:").replace(/<[^>]*>/g, "");
+  assert.equal(/\+:\+/.test(strippedSafe), false);
+  assert.match(packAsciiArt(".++#####++:+#:\n##"), /[+:]/);
 });
 
 test("Name Forge remembers a Scored default and keeps clan tags off the name", () => {

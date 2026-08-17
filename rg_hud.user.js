@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      21.8
+// @version      21.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9186,7 +9186,7 @@
 
   function artMspaceEm(text) {
     if (/[\u2800-\u28FF\u2580-\u25FF]/.test(text)) return "0.72em";
-    if (/[#=]/.test(text) && /[.*']/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.72em";
+    if (/[#:+]/.test(text) && /[.:]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.72em";
     if (/[·•●○◦∙⋅.]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.68em";
     return "0.65em";
   }
@@ -9219,16 +9219,32 @@
       }
       if (n === 0) return " ";
       if (n <= 2) return ".";
-      if (n <= 4) return "'";
-      if (n <= 6) return "=";
+      if (n <= 4) return ":";
+      if (n <= 6) return "+";
       return "#";
     });
   }
 
-  // The nickname API leets +→t and :→i, so "+:+" in shading reads as a
-  // blocked word. Use marks that do not leet.
+  // 21.8 used = / ' as filter-safe stand-ins. Put + / : back for looks.
+  function restorePreferredArtChars(text) {
+    return String(text ?? "").replace(/(<[^>]*>)|[=']/g, (all, tag) => {
+      if (tag) return tag;
+      return all === "=" ? "+" : ":";
+    });
+  }
+
+  // The nickname API strips tags, then leets +→t and :→i, so "+:+" is blocked.
+  // Keep the marks; hide a dot that survives strip and breaks the word.
   function gameSafeArtChars(text) {
-    return String(text ?? "").replace(/\+/g, "=").replace(/:/g, "'");
+    const restored = restorePreferredArtChars(text);
+    return restored
+      .replace(/\+((?:<[^>]*>)*):/g, "+$1<size=0>.</size>:")
+      .replace(/:((?:<[^>]*>)*)\+/g, ":$1<size=0>.</size>+");
+  }
+
+  function artPreviewText(text) {
+    return restorePreferredArtChars(brailleToAsciiArt(text))
+      .replace(/<size=0>\.<\/size>/gi, "");
   }
 
   function preserveForgeNewlines(code) {
@@ -9699,7 +9715,7 @@
     if (s.underline) { open += '<u>'; close = '</u>' + close; }
     if (s.strike) { open += '<s>'; close = '</s>' + close; }
 
-    const artName = gameSafeArtChars(brailleToAsciiArt(s.name));
+    const artName = restorePreferredArtChars(brailleToAsciiArt(s.name));
     const nameCode = colorizeText(
       artName,
       s.colorMode,
@@ -9811,7 +9827,7 @@
     if (s.strike) decoParts.push('line-through');
     const decoCSS = decoParts.length ? decoParts.join(' ') : '';
 
-    const previewName = gameSafeArtChars(brailleToAsciiArt(s.name));
+    const previewName = artPreviewText(s.name);
     const ascii = isAsciiArtText(previewName) || isAsciiArtText(s.name);
     if (ascii) {
       wrap.classList.add('rgnf-ascii');
@@ -10603,7 +10619,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   function renderRawPreview(raw, s) {
-    const shown = gameSafeArtChars(brailleToAsciiArt(raw));
+    const shown = artPreviewText(raw);
     if (s.scoredMode === 'hide') return renderRawTMP(shown);
     return renderRawTMP(shown + scoredSuffix(s) + ' Scored!');
   }
