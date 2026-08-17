@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "21.6");
+  assert.equal(version, "21.7");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1106,8 +1106,8 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   assert.equal(editableFieldsFromRaw("Player\nChampion").titleOn, true);
 
   const packedDots = packAsciiArt("●●●●●\n●   ●");
-  assert.match(packedDots, /<mspace=0\.8em>/);
-  assert.match(packedDots, /<line-height=1\.0em>/);
+  assert.match(packedDots, /<mspace=0\.75em>/);
+  assert.match(packedDots, /<line-height=1\.05em>/);
   assert.match(packedDots, /●●●●●<br>●   ●/);
   assert.match(packedDots, /^<line-height=/);
 
@@ -1126,8 +1126,8 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   assert.equal(/[\u2800-\u28FF]/.test(brailleToAsciiArt(crew)), false);
   assert.equal(/[\u2800-\u28FF]/.test(packAsciiArt(crew)), false);
   const packedCrew = packAsciiArt(crew);
-  assert.match(packedCrew, /<mspace=0\.8em>/);
-  assert.match(packedCrew, /<line-height=1\.0em>/);
+  assert.match(packedCrew, /<mspace=0\.75em>/);
+  assert.match(packedCrew, /<line-height=1\.05em>/);
 });
 
 test("Name Forge remembers a Scored default and keeps clan tags off the name", () => {
