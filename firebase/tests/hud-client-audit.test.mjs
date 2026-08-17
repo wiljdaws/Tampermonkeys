@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "21.9");
+  assert.equal(version, "22.0");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1133,10 +1133,12 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const packedCrew = packAsciiArt(crew);
   assert.match(packedCrew, /<mspace=0\.72em>/);
   assert.match(packedCrew, /<line-height=1\.12em>/);
-  assert.match(gameSafeArtChars("+:+"), /\+<size=0>\.<\/size>:/);
+  assert.match(gameSafeArtChars("+:+"), /\+\u200B:/);
   assert.equal(restorePreferredArtChars("==##''"), "++##::");
+  assert.equal(restorePreferredArtChars("=##:"), "+##:");
   const strippedSafe = gameSafeArtChars(".++#####++:+#:").replace(/<[^>]*>/g, "");
   assert.equal(/\+:\+/.test(strippedSafe), false);
+  assert.match(strippedSafe, /[+:]/);
   assert.match(packAsciiArt(".++#####++:+#:\n##"), /[+:]/);
 });
 
@@ -1170,7 +1172,7 @@ test("Name Forge remembers a Scored default and keeps clan tags off the name", (
   assert.match(hudSource, /writeScoredDefault\(v\)/);
   assert.match(hudSource, /setTagStripper/);
   assert.match(hudSource, /_stripTag\(effectiveForgeCode\(state\)\)/);
-  assert.match(hudFunctionSource("setRawSnapshot"), /_stripTag\(raw\)/);
+  assert.match(hudFunctionSource("setRawSnapshot"), /_stripTag\(restorePreferredArtChars\(raw\)\)/);
 });
 
 test("Name Forge presets and clan-tag cleanup are account safe", () => {

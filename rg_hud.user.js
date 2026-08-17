@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      21.9
+// @version      22.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9227,24 +9227,27 @@
 
   // 21.8 used = / ' as filter-safe stand-ins. Put + / : back for looks.
   function restorePreferredArtChars(text) {
-    return String(text ?? "").replace(/(<[^>]*>)|[=']/g, (all, tag) => {
-      if (tag) return tag;
-      return all === "=" ? "+" : ":";
-    });
+    return String(text ?? "")
+      .replace(/<size=0>\.<\/size>/gi, "")
+      .replace(/\u200B/g, "")
+      .replace(/(<[^>]*>)|[=']/g, (all, tag) => {
+        if (tag) return tag;
+        return all === "=" ? "+" : ":";
+      });
   }
 
-  // The nickname API strips tags, then leets +→t and :→i, so "+:+" is blocked.
-  // Keep the marks; hide a dot that survives strip and breaks the word.
+  // The nickname API strips TMP tags, then leets +→t and :→i, so "+:+"
+  // is blocked. Keep those marks; a zero-width space is invisible in TMP
+  // and breaks the run after tags are stripped.
   function gameSafeArtChars(text) {
     const restored = restorePreferredArtChars(text);
     return restored
-      .replace(/\+((?:<[^>]*>)*):/g, "+$1<size=0>.</size>:")
-      .replace(/:((?:<[^>]*>)*)\+/g, ":$1<size=0>.</size>+");
+      .replace(/\+((?:<[^>]*>)*):/g, "+$1\u200B:")
+      .replace(/:((?:<[^>]*>)*)\+/g, ":$1\u200B+");
   }
 
   function artPreviewText(text) {
-    return restorePreferredArtChars(brailleToAsciiArt(text))
-      .replace(/<size=0>\.<\/size>/gi, "");
+    return restorePreferredArtChars(brailleToAsciiArt(text));
   }
 
   function preserveForgeNewlines(code) {
@@ -9562,7 +9565,7 @@
   }
 
   function setRawSnapshot(raw) {
-    Object.assign(state, rawSnapshotFields(_stripTag(raw)));
+    Object.assign(state, rawSnapshotFields(_stripTag(restorePreferredArtChars(raw))));
     state.scoredMode = resolveScoredMode(state.scoredMode, readScoredDefault());
   }
 
