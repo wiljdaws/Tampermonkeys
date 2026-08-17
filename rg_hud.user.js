@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      21.2
+// @version      21.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -782,6 +782,9 @@
             forgeView.style.display = "block";
             actionRow.style.display = "none"; // hide leaderboard/sub in forge
             if (RGNF.setPrefixProvider) RGNF.setPrefixProvider(getClanTagPrefix);
+            if (RGNF.setTagStripper) RGNF.setTagStripper(stripLeadingClanTagMarkup);
+            // tag prefix needs myClan; a prior failed reload used to wipe it
+            loadClanData().then(() => { if (RGNF.refresh) RGNF.refresh(); }).catch(() => {});
             // imposter roster: last game's players minus you, minus profanity
             if (RGNF.setRosterProvider) RGNF.setRosterProvider(
                 () => lastGamePlayers
@@ -6349,7 +6352,8 @@
             await loadEventConfig(fb);
             const useReservations = clanReservationsEnabled();
             const deviceId = getDeviceId();
-            myClan = null;
+            const previousClan = myClan;
+            let nextClan = null;
             let mine = null;
             let membership = null;
             let device = null;
@@ -6382,19 +6386,22 @@
                 // streaming this clan — the in-memory myClan is fresher than
                 // a getDoc would be anyway.
                 const listenerCoversClan =
-                    _clanListenerId === mine.id && myClan?.id === mine.id;
-                if (!listenerCoversClan) {
+                    _clanListenerId === mine.id && previousClan?.id === mine.id;
+                if (listenerCoversClan) {
+                    nextClan = previousClan;
+                } else {
                     const clanSnap = await fb.getDoc(
                         fb.doc(fb.db, "clans", mine.id)
                     );
                     if (clanSnap.exists()) {
-                        myClan = sanitizeClanDoc({
+                        nextClan = sanitizeClanDoc({
                             id: mine.id,
                             ...clanSnap.data(),
                         });
                     }
                 }
             }
+            myClan = nextClan;
             if (myClan) {
                 const directoryEntry = clanDirectory.find(
                     entry => entry.id === myClan.id
@@ -9101,7 +9108,7 @@
     titleAlpha: 255,                  // 0-255 alpha on titleColor (solid only)
     // alpha on the name's solid color, dims trailing URL text etc
     solidAlpha: 255,
-    scoredMode: 'default',            // 'default' | 'hide' | 'tiny' | 'styled'
+    scoredMode: readScoredDefault() || 'default', // 'default' | 'hide' | 'tiny' | 'styled'
     scoredColor: '#22d3ee',
     scoredSizePct: 100,
     rawCode: null,                    // when set: exact current in-game markup, used verbatim
@@ -9127,15 +9134,60 @@
 
   // rawCode is the exact in-game TMP markup, while the structured fields are
   // used as soon as somebody touches a Forge control. A short name plus one
-  // extra line is still name + title. Three or more lines (ASCII art) stay
-  // in the name so spaces and breaks are not crushed.
+  // extra line is still name + title. Art (ASCII, dots, braille) stays in
+  // the name so spaces and breaks are not crushed.
   function isAsciiArtText(text) {
+    const artMark = /[\\/_#.*:`'"^~+\-|<>()[\]{}=$@%!?]|[·•●○◦∙⋅░▒▓█▄▀▌▐■□▪▫]|[\u2800-\u28FF]|[\u2580-\u25FF]/;
+    const isArtLine = (line) => {
+      const chars = [...String(line ?? "")].filter((ch) => ch !== " " && ch !== "\t");
+      if (chars.length < 2) return false;
+      const marks = chars.filter((ch) => artMark.test(ch)).length;
+      return marks / chars.length >= 0.5;
+    };
     const lines = String(text ?? "")
       .replace(/<br\s*\/?\s*>/gi, "\n")
       .split(/\r\n?|\n/)
-      .filter((line) => line.trim().length);
+      .filter((line) => line.trim().length || /[\u2800]/.test(line));
     if (lines.length >= 3) return true;
-    return lines.some((line) => /[\\/_]{2,}/.test(line));
+    if (lines.length >= 2 && lines.filter(isArtLine).length >= 2) return true;
+    return lines.some((line) =>
+      /[\\/_]{2,}/.test(line)
+      || /[.]{3,}/.test(line)
+      || /[·•●○◦∙⋅]{2,}/.test(line)
+      || /[\u2800-\u28FF]{2,}/.test(line)
+      || /[\u2580-\u25FF]{2,}/.test(line)
+    );
+  }
+
+  function artLineStats(text) {
+    const lines = String(text ?? "")
+      .replace(/<br\s*\/?\s*>/gi, "\n")
+      .replace(/\r\n/g, "\n")
+      .split("\n");
+    const visible = (line) => [...String(line).replace(/<[^>]*>/g, "")].length;
+    return {
+      lines,
+      height: lines.length,
+      width: lines.reduce((max, line) => Math.max(max, visible(line)), 0),
+    };
+  }
+
+  function artFitSizePct(height, width) {
+    const byHeight = height <= 4 ? 100 : Math.round((4 / height) * 100);
+    const byWidth = width <= 20 ? 100 : Math.round((20 / width) * 100);
+    return Math.max(18, Math.min(100, byHeight, byWidth));
+  }
+
+  function artLineHeightPct(height) {
+    if (height <= 4) return 100;
+    if (height <= 8) return 70;
+    return 55;
+  }
+
+  function artMspaceEm(text) {
+    if (/[\u2800-\u28FF\u2580-\u25FF]/.test(text)) return "0.85em";
+    if (/[·•●○◦∙⋅.]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.7em";
+    return "0.6em";
   }
 
   function preserveForgeNewlines(code) {
@@ -9148,6 +9200,28 @@
     const value = String(code ?? "");
     if (!value || /<mspace=/i.test(value)) return value;
     return `<mspace=0.6em>${value}</mspace>`;
+  }
+
+  // Monospace + fit-to-nameplate. Plain art `<` `>` become fullwidth so TMP
+  // does not eat the rest of a FIGlet / dot piece as tags.
+  function packAsciiArt(text) {
+    const value = String(text ?? "");
+    if (!value) return value;
+    if (/<mspace=/i.test(value)) return preserveForgeNewlines(value);
+    const normalized = value.replace(/\r\n/g, "\n").replace(/<br\s*\/?\s*>/gi, "\n");
+    const lines = normalized.split("\n");
+    const hasTmp = /<(size|color|b|i|u|s|mark|sprite|sub|sup|\/|#)/i.test(normalized)
+      || /<#[0-9A-Fa-f]{3,8}>/.test(normalized);
+    const body = lines.map((line) => (
+      hasTmp ? line : line.replace(/</g, "\uFF1C").replace(/>/g, "\uFF1E")
+    )).join("<br>");
+    const stats = artLineStats(normalized);
+    const size = artFitSizePct(stats.height, stats.width);
+    const lineHeight = artLineHeightPct(stats.height);
+    let out = `<mspace=${artMspaceEm(normalized)}>${body}</mspace>`;
+    if (size < 100) out = `<size=${size}%>${out}`;
+    if (lineHeight < 100) out = `<line-height=${lineHeight}%>${out}`;
+    return out;
   }
 
   function editableTextFromRaw(raw) {
@@ -9177,6 +9251,33 @@
       titleOn: Boolean(titleText),
       titleText,
     };
+  }
+
+  function scoredDefaultKey() {
+    return 'rgNameForge.scoredDefault.v1.' + (_currentUserId || 'anon');
+  }
+
+  function readScoredDefault() {
+    try {
+      const v = loadJSON(scoredDefaultKey(), null);
+      if (v === 'hide' || v === 'tiny' || v === 'styled' || v === 'default') return v;
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function writeScoredDefault(mode) {
+    if (mode === 'hide' || mode === 'tiny' || mode === 'styled' || mode === 'default') {
+      saveJSON(scoredDefaultKey(), mode);
+    }
+  }
+
+  // Names without a Scored suffix keep the player's saved default (Hide, etc).
+  function resolveScoredMode(parsedMode, pref) {
+    if (parsedMode && parsedMode !== 'default') return parsedMode;
+    if (pref === 'hide' || pref === 'tiny' || pref === 'styled' || pref === 'default') {
+      return pref;
+    }
+    return parsedMode || 'default';
   }
 
   function scoredSuffix(s) {
@@ -9309,6 +9410,18 @@
       + trailingTags;
   }
 
+  function replaceRawNameText(raw, nextName) {
+    const value = String(raw ?? '');
+    if (isAsciiArtText(value) || isAsciiArtText(nextName)) {
+      return replaceRawVisibleText(value, nextName);
+    }
+    const lineBreak = /<br\s*\/?\s*>|\r\n?|\n/i;
+    const match = lineBreak.exec(value);
+    if (!match) return replaceRawVisibleText(value, nextName);
+    return replaceRawVisibleText(value.slice(0, match.index), nextName)
+      + value.slice(match.index);
+  }
+
   function replaceRawTitleText(raw, nextTitle) {
     const value = String(raw ?? '');
     const lineBreak = /<br\s*\/?\s*>|\r\n?|\n/gi;
@@ -9374,10 +9487,12 @@
   function loadStateSnapshot(snapshot) {
     state = Object.assign(defaultState(), snapshot || {});
     if (state.rawCode) setRawSnapshot(state.rawCode);
+    else state.scoredMode = resolveScoredMode(state.scoredMode, readScoredDefault());
   }
 
   function setRawSnapshot(raw) {
-    Object.assign(state, rawSnapshotFields(raw));
+    Object.assign(state, rawSnapshotFields(_stripTag(raw)));
+    state.scoredMode = resolveScoredMode(state.scoredMode, readScoredDefault());
   }
 
   // Repair a persisted pre-fix state before the first render.
@@ -9540,7 +9655,7 @@
     );
 
     let code = open + nameCode + close;
-    if (isAsciiArtText(s.name)) code = wrapAsciiMonospace(code);
+    if (isAsciiArtText(s.name)) code = packAsciiArt(code);
 
     // title line, fully independent styling
     if (s.titleOn && s.titleText.trim().length > 0) {
@@ -9573,10 +9688,8 @@
 
   function effectiveForgeCode(s) {
     if (typeof s.rawCode === 'string') {
-      let raw = preserveForgeNewlines(s.rawCode);
-      if (isAsciiArtText(s.rawCode) || isAsciiArtText(s.name)) {
-        raw = wrapAsciiMonospace(raw);
-      }
+      const art = isAsciiArtText(s.rawCode) || isAsciiArtText(s.name);
+      const raw = art ? packAsciiArt(s.rawCode) : preserveForgeNewlines(s.rawCode);
       return raw + scoredSuffix(s);
     }
     return buildCode(s);
@@ -10541,10 +10654,27 @@ _rgnfFab = fab; _rgnfPanel = panel;
     const charSpan = el('span', { text: '' });
     const letterSpan = el('span', { text: '' });
     secPreview.appendChild(el('div', { class: 'rgnf-meta' }, [charSpan, letterSpan]));
+    const artHint = el('div', { text: '' });
+    artHint.style.cssText = 'color:var(--rgnf-muted);font-size:11px;margin-top:4px;';
+    secPreview.appendChild(artHint);
     panel.appendChild(secPreview);
 
     // update preview/code/meta without rebuilding the panel, so the name field
     // keeps focus and cursor position while typing
+    const refreshArtHint = (src, packedLen) => {
+      if (!isAsciiArtText(src)) {
+        artHint.textContent = packedLen > 450
+          ? "This name is long — the game may cut it off."
+          : "";
+        return;
+      }
+      const { height, width } = artLineStats(src);
+      const size = artFitSizePct(height, width);
+      const bits = [];
+      if (size < 100) bits.push(`Scaled to ${size}% so the whole piece fits the nameplate.`);
+      if (packedLen > 450) bits.push("Still long — the game may cut the bottom.");
+      artHint.textContent = bits.join(" ");
+    };
     const refreshPreview = () => {
       if (state.rawCode) {
         // clan-tag prefix applies in raw mode too. old hardcoded tags in the raw
@@ -10557,6 +10687,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         charSpan.textContent = `${rawEffective.length} chars`;
         const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
         letterSpan.textContent = `${[...plainLetters].length} letters`;
+        refreshArtHint(state.rawCode, rawEffective.length);
         saveJSON(stateKey(), state);
         return;
       }
@@ -10569,6 +10700,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       autosizeRawEdit();
       charSpan.textContent = `${code.length} chars`;
       letterSpan.textContent = `${[...state.name].length} letters`;
+      refreshArtHint(state.name, code.length);
       saveJSON(stateKey(), state);
     };
     refreshPreview();
@@ -10577,10 +10709,23 @@ _rgnfFab = fab; _rgnfPanel = panel;
     const secName = el('div', { class: 'rgnf-sec' });
     secName.appendChild(el('h4', { text: 'Name' }));
     const nameInput = el('textarea', {
-      class: 'rgnf-name-input',
+      class: 'rgnf-name-input rgnf-raw-text-safe',
       rows: '4',
       placeholder: 'Type your name, or paste ASCII art…',
-      oninput: (e) => { state.name = e.target.value; refreshPreview(); },
+      oninput: (e) => {
+        const next = e.target.value;
+        state.name = next;
+        if (typeof state.rawCode === 'string') {
+          const keepScored = state.scoredMode;
+          if (isAsciiArtText(next) || isAsciiArtText(state.rawCode)) {
+            setRawSnapshot(next);
+            state.scoredMode = keepScored;
+          } else {
+            state.rawCode = replaceRawNameText(state.rawCode, next);
+          }
+        }
+        refreshPreview();
+      },
     });
     nameInput.value = state.name;
     secName.appendChild(el('div', { class: 'rgnf-row' }, [
@@ -10854,10 +10999,30 @@ _rgnfFab = fab; _rgnfPanel = panel;
     [['default', 'Default'], ['hide', 'Hide'], ['tiny', 'Tiny'], ['styled', 'Styled']].forEach(([v, label]) => {
       sRow.appendChild(el('button', {
         class: `rgnf-chip ${state.scoredMode === v ? 'rgnf-on' : ''}`, text: label,
-        onclick: () => { state.scoredMode = v; render(panel); },
+        onclick: () => {
+          state.scoredMode = v;
+          writeScoredDefault(v);
+          render(panel);
+        },
       }));
     });
     secScored.appendChild(sRow);
+    {
+      const pref = readScoredDefault();
+      const hint = el('div', {
+        text: pref === 'hide'
+          ? 'Default for other names: Hide'
+          : pref === 'tiny'
+            ? 'Default for other names: Tiny'
+            : pref === 'styled'
+              ? 'Default for other names: Styled'
+              : pref === 'default'
+                ? 'Default for other names: Default'
+                : 'This choice is remembered when you load another name.',
+      });
+      hint.style.cssText = 'color:var(--rgnf-muted);font-size:11px;margin-top:4px;';
+      secScored.appendChild(hint);
+    }
     if (state.scoredMode === 'styled') {
       secScored.appendChild(el('div', { class: 'rgnf-row' }, [
         el('label', { text: 'Color' }),
@@ -10901,11 +11066,12 @@ _rgnfFab = fab; _rgnfPanel = panel;
             b.disabled = true;
             try {
               // one-click: apply first, reveal over a name that's already live
-              const codeApplied = _prefix() + raw;
-              const r = await applyNicknameStable(codeApplied, raw);
+              const stolen = _stripTag(raw);
+              const codeApplied = _prefix() + stolen;
+              const r = await applyNicknameStable(codeApplied, stolen);
               if (r.ok) {
-                setRawSnapshot(raw);
-                _lastRawNickname = raw;
+                setRawSnapshot(stolen);
+                _lastRawNickname = stolen;
                 recordRecentApply(codeApplied, raw);
                 render(panel);
                 showImposterReveal(raw);
@@ -11052,8 +11218,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
         // rawCode wins: state.name can be stale (leftover from a prior nickname
         // or a name-field click) so re-derive the plain-text name from raw
         // before saving. Otherwise stolen presets export with the current
-        // in-game nickname baked in.
-        if (snap.rawCode) snap.name = editableFieldsFromRaw(snap.rawCode).name;
+        // in-game nickname baked in. Clan tag stays on the checkbox, not the preset.
+        if (snap.rawCode) {
+          snap.rawCode = _stripTag(snap.rawCode);
+          snap.name = editableFieldsFromRaw(snap.rawCode).name;
+        }
         const defaultName = (snap.name || state.name).replace(/<[^>]*>/g, '').slice(0, 30) || 'Preset';
         openFolderPicker(panel, {
           title: 'Save preset',
@@ -11174,7 +11343,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             class: 'rgnf-chip', text: '💾', title: 'Save this as a permanent preset',
             onclick: () => {
               // strip the clan-tag prefix, the checkbox owns it
-              let code = h.rawCode || h.code;
+              let code = _stripTag(h.rawCode || h.code);
               const pfx = _prefix();
               if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
               const snap = Object.assign(defaultState(), { rawCode: code });
@@ -11211,15 +11380,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
               const b = e.currentTarget;
               b.textContent = '…';
               try {
-                const r = await applyNicknameStable(h.code, h.code);
+                let code = _stripTag(h.rawCode || h.code);
+                const pfx = _prefix();
+                if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
+                setRawSnapshot(code);
+                const unprefixed = effectiveForgeCode(state);
+                const codeApplied = pfx + unprefixed;
+                const r = await applyNicknameStable(codeApplied, unprefixed);
                 if (r.ok) {
                   // load what was applied into preview so the screen matches live
-                  let code = h.rawCode || h.code;
-                  const pfx = _prefix();
-                  if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
-                  setRawSnapshot(code);
-                  _lastRawNickname = code;
-                  recordRecentApply(h.code, code);
+                  _lastRawNickname = unprefixed;
+                  recordRecentApply(codeApplied, unprefixed);
                   render(panel);
                   return;
                 }
@@ -11249,7 +11420,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         statusLine.className = 'rgnf-status';
         statusLine.textContent = '';
         try {
-          const unprefixedCode = effectiveForgeCode(state);
+          const unprefixedCode = _stripTag(effectiveForgeCode(state));
           const codeApplied = _prefix() + unprefixedCode;
           // reset target is unprefixed, checkbox owns the tag (double-tag fix)
           _lastRawNickname = unprefixedCode;
@@ -11396,11 +11567,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
       // HUD sets this to getClanTagPrefix so Forge stays clan-agnostic
       let _prefixProvider = null;
       function _prefix() { try { return _prefixProvider ? _prefixProvider() : ""; } catch { return ""; } }
+      let _tagStripper = null;
+      function _stripTag(raw) {
+        try { return _tagStripper ? _tagStripper(raw) : String(raw ?? ""); }
+        catch { return String(raw ?? ""); }
+      }
       // HUD supplies last game's names (raw TMP, own name filtered)
       let _rosterProvider = null;
       function _roster() { try { return _rosterProvider ? _rosterProvider() : []; } catch { return []; } }
       return {
         setPrefixProvider(fn) { _prefixProvider = fn; },
+        setTagStripper(fn) { _tagStripper = fn; },
         setRosterProvider(fn) { _rosterProvider = fn; },
         // HUD calls this from /login response too, not just Forge open.
         // fixes the "steal, refresh, receipt expires before Forge opens" case.
@@ -11459,5 +11636,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         },
       };
     })();
+    if (RGNF.setPrefixProvider) RGNF.setPrefixProvider(getClanTagPrefix);
+    if (RGNF.setTagStripper) RGNF.setTagStripper(stripLeadingClanTagMarkup);
 
 })();

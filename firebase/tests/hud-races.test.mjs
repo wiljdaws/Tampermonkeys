@@ -68,6 +68,17 @@ const tokenize = extractHudFunction("tokenize");
 const isAsciiArtText = extractHudFunction("isAsciiArtText");
 const preserveForgeNewlines = extractHudFunction("preserveForgeNewlines");
 const wrapAsciiMonospace = extractHudFunction("wrapAsciiMonospace");
+const artLineStats = extractHudFunction("artLineStats");
+const artFitSizePct = extractHudFunction("artFitSizePct");
+const artLineHeightPct = extractHudFunction("artLineHeightPct");
+const artMspaceEm = extractHudFunction("artMspaceEm");
+const packAsciiArt = extractHudFunction("packAsciiArt", {
+  preserveForgeNewlines,
+  artLineStats,
+  artFitSizePct,
+  artLineHeightPct,
+  artMspaceEm,
+});
 const colorizeText = extractHudFunction("colorizeText", {
   alphaHex,
   tokenize,
@@ -104,6 +115,7 @@ const buildCode = extractHudFunction("buildCode", {
   scoredSuffix,
   isAsciiArtText,
   wrapAsciiMonospace,
+  packAsciiArt,
 });
 const effectiveForgeCode = extractHudFunction("effectiveForgeCode", {
   buildCode,
@@ -111,6 +123,7 @@ const effectiveForgeCode = extractHudFunction("effectiveForgeCode", {
   preserveForgeNewlines,
   isAsciiArtText,
   wrapAsciiMonospace,
+  packAsciiArt,
 });
 const clanMembers = extractHudFunction("clanMembers");
 const clanMembersField = extractHudFunction("clanMembersField", {

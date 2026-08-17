@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "21.2");
+  assert.equal(version, "21.3");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -545,6 +545,8 @@ test("clan load never lists the entire clans_directory collection", () => {
   assert.match(load, /membership,/);
   assert.match(load, /device,/);
   assert.match(load, /linkPlan\.repairClan/);
+  assert.match(load, /const previousClan = myClan/);
+  assert.match(load, /nextClan = previousClan/);
   assert.doesNotMatch(load, /if \(useReservations\s*\n?\s*\|\|/);
 
   const lite = hudFunctionSource("loadClanDirectoryLite");
@@ -1068,6 +1070,78 @@ test("popup preferences cover roles, safe corners, and reduced motion", () => {
     hudSource,
     /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none/,
   );
+});
+
+test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
+  const isAsciiArtText = extractHudFunction("isAsciiArtText");
+  const preserveForgeNewlines = extractHudFunction("preserveForgeNewlines");
+  const artLineStats = extractHudFunction("artLineStats");
+  const artFitSizePct = extractHudFunction("artFitSizePct");
+  const artLineHeightPct = extractHudFunction("artLineHeightPct");
+  const artMspaceEm = extractHudFunction("artMspaceEm");
+  const packAsciiArt = extractHudFunction("packAsciiArt", {
+    preserveForgeNewlines,
+    artLineStats,
+    artFitSizePct,
+    artLineHeightPct,
+    artMspaceEm,
+  });
+  const editableTextFromRaw = extractHudFunction("editableTextFromRaw");
+  const editableFieldsFromRaw = extractHudFunction("editableFieldsFromRaw", {
+    editableTextFromRaw,
+    isAsciiArtText,
+  });
+
+  const dots = "..--..\n.    .\n..--..";
+  assert.equal(isAsciiArtText(dots), true);
+  assert.equal(isAsciiArtText("●●●●●\n●   ●"), true);
+  assert.equal(isAsciiArtText("........\n.      ."), true);
+  assert.equal(isAsciiArtText("Player\nChampion"), false);
+  assert.equal(editableFieldsFromRaw("●●●●●\n●   ●").titleOn, false);
+  assert.equal(editableFieldsFromRaw("Player\nChampion").titleOn, true);
+
+  const packedDots = packAsciiArt("●●●●●\n●   ●");
+  assert.match(packedDots, /<mspace=0\.85em>/);
+  assert.match(packedDots, /●●●●●<br>●   ●/);
+
+  const figlet = "  ____\n / __/\n/ /__ \n\\___/ ";
+  assert.equal(isAsciiArtText(figlet), true);
+  const packedFig = packAsciiArt(figlet + "\n" + figlet);
+  assert.match(packedFig, /<size=\d+%>/);
+  assert.match(packAsciiArt(" <tag> "), /\uFF1Ctag\uFF1E/);
+});
+
+test("Name Forge remembers a Scored default and keeps clan tags off the name", () => {
+  const resolveScoredMode = extractHudFunction("resolveScoredMode");
+  assert.equal(resolveScoredMode("default", "hide"), "hide");
+  assert.equal(resolveScoredMode("hide", "default"), "hide");
+  assert.equal(resolveScoredMode("styled", "hide"), "styled");
+  assert.equal(resolveScoredMode("default", null), "default");
+  assert.equal(resolveScoredMode("", "tiny"), "tiny");
+
+  const isAsciiArtText = extractHudFunction("isAsciiArtText");
+  const editableGlyphs = extractHudFunction("editableGlyphs");
+  const replaceRawVisibleText = extractHudFunction("replaceRawVisibleText", {
+    editableGlyphs,
+  });
+  const replaceRawNameText = extractHudFunction("replaceRawNameText", {
+    isAsciiArtText,
+    replaceRawVisibleText,
+  });
+  assert.equal(
+    replaceRawNameText("<#4C67B5>Old<br><size=50%>Title", "New"),
+    "<#4C67B5>New<br><size=50%>Title",
+  );
+  assert.equal(
+    replaceRawNameText("<#4C67B5>Old", "New"),
+    "<#4C67B5>New",
+  );
+
+  assert.match(hudSource, /rgNameForge\.scoredDefault\.v1/);
+  assert.match(hudSource, /writeScoredDefault\(v\)/);
+  assert.match(hudSource, /setTagStripper/);
+  assert.match(hudSource, /_stripTag\(effectiveForgeCode\(state\)\)/);
+  assert.match(hudFunctionSource("setRawSnapshot"), /_stripTag\(raw\)/);
 });
 
 test("Name Forge presets and clan-tag cleanup are account safe", () => {
