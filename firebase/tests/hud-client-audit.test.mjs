@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "21.4");
+  assert.equal(version, "21.5");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1104,13 +1104,17 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   assert.equal(editableFieldsFromRaw("Player\nChampion").titleOn, true);
 
   const packedDots = packAsciiArt("●●●●●\n●   ●");
-  assert.match(packedDots, /<mspace=0\.85em>/);
+  assert.match(packedDots, /<mspace=0\.9em>/);
+  assert.match(packedDots, /<line-height=0\.9em>/);
   assert.match(packedDots, /●●●●●<br>●   ●/);
+  assert.match(packedDots, /^<line-height=/);
 
   const figlet = "  ____\n / __/\n/ /__ \n\\___/ ";
   assert.equal(isAsciiArtText(figlet), true);
   const packedFig = packAsciiArt(figlet + "\n" + figlet);
   assert.match(packedFig, /<size=\d+%>/);
+  assert.match(packedFig, /<line-height=/);
+  assert.ok(packedFig.indexOf("<size=") < packedFig.indexOf("<line-height="));
   assert.match(packAsciiArt(" <tag> "), /\uFF1Ctag\uFF1E/);
 
   const crew = "⠀⠀⣠⣤⣶⣦⣤⡀⠀\n⠀⣼⣿⠋⠀⠀⢻⣿⡄\n⣿⣿⣿⣿⣿⣿⣿⣿⣿";
@@ -1119,7 +1123,9 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   assert.equal(brailleToAsciiArt("⣿"), "#");
   assert.equal(/[\u2800-\u28FF]/.test(brailleToAsciiArt(crew)), false);
   assert.equal(/[\u2800-\u28FF]/.test(packAsciiArt(crew)), false);
-  assert.match(packAsciiArt(crew), /<mspace=/);
+  const packedCrew = packAsciiArt(crew);
+  assert.match(packedCrew, /<mspace=0\.9em>/);
+  assert.match(packedCrew, /<line-height=0\.9em>/);
 });
 
 test("Name Forge remembers a Scored default and keeps clan tags off the name", () => {

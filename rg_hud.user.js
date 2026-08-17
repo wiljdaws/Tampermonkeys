@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      21.4
+// @version      21.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9173,21 +9173,22 @@
   }
 
   function artFitSizePct(height, width) {
-    const byHeight = height <= 4 ? 100 : Math.round((4 / height) * 100);
+    // Tight line-height lets more rows fit, so shrink less than a 4-line nameplate.
+    const byHeight = height <= 4 ? 100 : Math.round((7 / height) * 100);
     const byWidth = width <= 20 ? 100 : Math.round((20 / width) * 100);
-    return Math.max(18, Math.min(100, byHeight, byWidth));
+    return Math.max(22, Math.min(100, byHeight, byWidth));
   }
 
   function artLineHeightPct(height) {
-    if (height <= 4) return 100;
-    if (height <= 8) return 70;
-    return 55;
+    if (height <= 1) return 100;
+    return 100;
   }
 
   function artMspaceEm(text) {
-    if (/[\u2800-\u28FF\u2580-\u25FF]/.test(text)) return "0.85em";
-    if (/[·•●○◦∙⋅.]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.7em";
-    return "0.6em";
+    if (/[\u2800-\u28FF\u2580-\u25FF]/.test(text)) return "0.9em";
+    if (/[#:+]/.test(text) && /[.:]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.9em";
+    if (/[·•●○◦∙⋅.]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.75em";
+    return "0.65em";
   }
 
   // Rocket Goal's font has no braille. Those cells become tofu boxes in-game.
@@ -9242,10 +9243,12 @@
     )).join("<br>");
     const stats = artLineStats(normalized);
     const size = artFitSizePct(stats.height, stats.width);
-    const lineHeight = artLineHeightPct(stats.height);
-    let out = `<mspace=${artMspaceEm(normalized)}>${body}</mspace>`;
+    const mspace = artMspaceEm(normalized);
+    // Size must wrap line-height. Percent line-height outside <size> uses the
+    // nameplate's huge default leading, which stretches 19 rows into a tower.
+    let out = `<mspace=${mspace}>${body}</mspace>`;
+    if (stats.height > 1) out = `<line-height=${mspace}>${out}`;
     if (size < 100) out = `<size=${size}%>${out}`;
-    if (lineHeight < 100) out = `<line-height=${lineHeight}%>${out}`;
     return out;
   }
 
@@ -9788,6 +9791,7 @@
       nameLine.style.whiteSpace = 'pre';
       nameLine.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
       nameLine.style.textAlign = 'left';
+      nameLine.style.lineHeight = '0.9';
     }
     const tokens = tokenize(previewName);
     const paintable = tokens.filter(t => t.type === 'char' && !(s.skipSpaces && t.value === ' '));
@@ -9800,6 +9804,7 @@
         line.style.whiteSpace = 'pre';
         line.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
         line.style.textAlign = 'left';
+        line.style.lineHeight = '0.9';
       }
       line.style.cssText = (line.style.cssText ? line.style.cssText + ';' : '') + styles.join(';');
       return line;
