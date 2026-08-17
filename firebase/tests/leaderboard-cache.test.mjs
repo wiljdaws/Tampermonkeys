@@ -887,6 +887,17 @@ test("uidsToAutoBlacklist only bans first-seen rows over 20k", () => {
   );
 });
 
+test("uidsToAutoBlacklist does not re-ban an allowlisted uid", () => {
+  assert.deepEqual(
+    uidsToAutoBlacklist(
+      [{ uid: "yama", mmr: 21295 }],
+      [],
+      ["yama"],
+    ),
+    [],
+  );
+});
+
 test("dedupeRowsByIdentity keeps the newer HUD version of the same name", () => {
   const rows = dedupeRowsByIdentity([
     { sourceUserId: "old", name: "[KING] JesusDied4U", mmr: 8508, versionNum: 19.5, lastWriteAt: "2026-08-15T07:32:00Z" },

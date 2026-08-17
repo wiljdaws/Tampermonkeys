@@ -963,13 +963,14 @@ export function keepAllowlistedRows(rows, allowedUserIds) {
 // First-seen poison rows already held off the public JSON. Ban the uid
 // when MMR is cartoonishly high so the next HUD write dies in rules.
 export const AUTO_BLACKLIST_MMR = 20000;
-export function uidsToAutoBlacklist(heldRows, alreadyBanned = []) {
+export function uidsToAutoBlacklist(heldRows, alreadyBanned = [], alreadyAllowed = []) {
   const banned = new Set((alreadyBanned || []).map(id => String(id || "").trim()));
+  const allowed = new Set((alreadyAllowed || []).map(id => String(id || "").trim()).filter(Boolean));
   const add = [];
   for (const row of Array.isArray(heldRows) ? heldRows : []) {
     const uid = String(row?.uid || "").trim();
     const mmr = Number(row?.mmr);
-    if (!uid || banned.has(uid) || !Number.isFinite(mmr) || mmr < AUTO_BLACKLIST_MMR) continue;
+    if (!uid || banned.has(uid) || allowed.has(uid) || !Number.isFinite(mmr) || mmr < AUTO_BLACKLIST_MMR) continue;
     banned.add(uid);
     add.push(uid);
   }
@@ -1364,7 +1365,7 @@ export async function buildLeaderboardCaches({
       label: "build-leaderboard-cache",
       reads: readsThisRun,
     });
-    const autoBan = uidsToAutoBlacklist(heldRows, access.userIds);
+    const autoBan = uidsToAutoBlacklist(heldRows, access.userIds, access.allowedUserIds);
     if (autoBan.length) {
       try {
         await appendBlacklistUserIds(fetchImpl, token, project, autoBan);
