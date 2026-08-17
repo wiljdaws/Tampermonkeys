@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.1
+// @version      22.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2590,15 +2590,15 @@
     }
 
     function atlasStampedMutationData(ref, data) {
-        const path = String(ref?.path || "");
-        if (!/^clans\/[^/]+$/.test(path)
-            || !data
-            || typeof data !== "object"
-            || Array.isArray(data)) {
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
             return data;
         }
+        const deviceId = getDeviceId();
+        const stamped = deviceId ? { ...data, deviceId } : { ...data };
+        const path = String(ref?.path || "");
+        if (!/^clans\/[^/]+$/.test(path)) return stamped;
         return {
-            ...data,
+            ...stamped,
             scriptVersion: SCRIPT_VERSION,
             versionNum: SCRIPT_VERSION_NUM,
         };

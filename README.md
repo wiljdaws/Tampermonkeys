@@ -111,6 +111,21 @@ If you don't see the box at all:
 
 ---
 
+## Step 8: Get on the allowlist (required for the board and clans)
+
+The leaderboard and clans are invite-only. Installing ATLAS is not enough — Pal or JesusDied4U has to add your Firebase id before you can sync stats or use clans.
+
+1. Go to [rocketgoal.io](https://rocketgoal.io) and log in so ATLAS is showing your stats.
+2. Click the **⚙** settings button on the ATLAS box.
+3. Find the **Firebase id** row. Wait until it shows a long id instead of `signing in…`.
+4. Click **Copy** next to it.
+5. Also copy the **Device id** on the row below (writes from a different device are denied).
+6. Message **JesusDied4U** (or Pal) in the [Championship Discord](https://discord.gg/MDz7hsrh9m) and paste both ids. Ask to be added to the allowlist.
+
+If the Firebase id still says `signing in…`, wait a few seconds, or close and reopen settings. Do not send a screenshot of someone else's id, and do not reuse an id from an old install after a full cache wipe — that mints a new Firebase id and you would need to be added again.
+
+---
+
 ## Found a bug or have a suggestion?
 
 [Open an issue](https://github.com/wiljdaws/Tampermonkeys/issues/new/choose) or ping Pal / JesusDied4U in the [Championship Discord](https://discord.gg/MDz7hsrh9m).

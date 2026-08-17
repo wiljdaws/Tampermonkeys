@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "22.1");
+  assert.equal(version, "22.2");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -464,6 +464,7 @@ test("every clan write carries the forced-upgrade version", () => {
     {
       SCRIPT_VERSION: "16.1",
       SCRIPT_VERSION_NUM: 16.1,
+      getDeviceId: () => "device-bound",
     },
   );
   assert.deepEqual(
@@ -473,6 +474,7 @@ test("every clan write carries the forced-upgrade version", () => {
     ))),
     {
       totalMMR: 1234,
+      deviceId: "device-bound",
       scriptVersion: "16.1",
       versionNum: 16.1,
     },
@@ -482,7 +484,10 @@ test("every clan write carries the forced-upgrade version", () => {
       { path: "clans_directory/clan-one" },
       { totalMMR: 1234 },
     ))),
-    { totalMMR: 1234 },
+    {
+      totalMMR: 1234,
+      deviceId: "device-bound",
+    },
   );
 });
 
