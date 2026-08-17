@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      21.7
+// @version      21.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9185,9 +9185,9 @@
   }
 
   function artMspaceEm(text) {
-    if (/[\u2800-\u28FF\u2580-\u25FF]/.test(text)) return "0.75em";
-    if (/[#:+]/.test(text) && /[.:]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.75em";
-    if (/[·•●○◦∙⋅.]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.7em";
+    if (/[\u2800-\u28FF\u2580-\u25FF]/.test(text)) return "0.72em";
+    if (/[#=]/.test(text) && /[.*']/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.72em";
+    if (/[·•●○◦∙⋅.]/.test(text) && !/[\\/_]{2,}/.test(text)) return "0.68em";
     return "0.65em";
   }
 
@@ -9195,9 +9195,9 @@
   function artLineHeightEm(text, height) {
     if (height <= 1) return null;
     const mspace = artMspaceEm(text);
-    if (mspace === "0.75em") return "1.05em";
-    if (mspace === "0.7em") return "0.9em";
-    return "0.85em";
+    if (mspace === "0.72em") return "1.12em";
+    if (mspace === "0.68em") return "0.95em";
+    return "0.88em";
   }
 
   // Rocket Goal's font has no braille. Those cells become tofu boxes in-game.
@@ -9219,10 +9219,16 @@
       }
       if (n === 0) return " ";
       if (n <= 2) return ".";
-      if (n <= 4) return ":";
-      if (n <= 6) return "+";
+      if (n <= 4) return "'";
+      if (n <= 6) return "=";
       return "#";
     });
+  }
+
+  // The nickname API leets +→t and :→i, so "+:+" in shading reads as a
+  // blocked word. Use marks that do not leet.
+  function gameSafeArtChars(text) {
+    return String(text ?? "").replace(/\+/g, "=").replace(/:/g, "'");
   }
 
   function preserveForgeNewlines(code) {
@@ -9240,9 +9246,20 @@
   // Monospace + fit-to-nameplate. Plain art `<` `>` become fullwidth so TMP
   // does not eat the rest of a FIGlet / dot piece as tags.
   function packAsciiArt(text) {
-    const value = brailleToAsciiArt(String(text ?? ""));
+    const value = gameSafeArtChars(brailleToAsciiArt(String(text ?? "")));
     if (!value) return value;
-    if (/<mspace=/i.test(value)) return preserveForgeNewlines(value);
+    if (/<mspace=/i.test(value)) {
+      const mspace = artMspaceEm(value);
+      const brs = (value.match(/<br\s*\/?\s*>/gi) || []).length;
+      const lineHeight = artLineHeightEm(value, brs + 1);
+      let packed = value.replace(/<mspace=[^>]*>/gi, `<mspace=${mspace}>`);
+      if (lineHeight) {
+        packed = /<line-height=/i.test(packed)
+          ? packed.replace(/<line-height=[^>]*>/gi, `<line-height=${lineHeight}>`)
+          : `<line-height=${lineHeight}>${packed}`;
+      }
+      return preserveForgeNewlines(packed);
+    }
     const normalized = value.replace(/\r\n/g, "\n").replace(/<br\s*\/?\s*>/gi, "\n");
     const lines = normalized.split("\n");
     const hasTmp = /<(size|color|b|i|u|s|mark|sprite|sub|sup|\/|#)/i.test(normalized)
@@ -9682,7 +9699,7 @@
     if (s.underline) { open += '<u>'; close = '</u>' + close; }
     if (s.strike) { open += '<s>'; close = '</s>' + close; }
 
-    const artName = brailleToAsciiArt(s.name);
+    const artName = gameSafeArtChars(brailleToAsciiArt(s.name));
     const nameCode = colorizeText(
       artName,
       s.colorMode,
@@ -9794,7 +9811,7 @@
     if (s.strike) decoParts.push('line-through');
     const decoCSS = decoParts.length ? decoParts.join(' ') : '';
 
-    const previewName = brailleToAsciiArt(s.name);
+    const previewName = gameSafeArtChars(brailleToAsciiArt(s.name));
     const ascii = isAsciiArtText(previewName) || isAsciiArtText(s.name);
     if (ascii) {
       wrap.classList.add('rgnf-ascii');
@@ -10586,7 +10603,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   function renderRawPreview(raw, s) {
-    const shown = brailleToAsciiArt(raw);
+    const shown = gameSafeArtChars(brailleToAsciiArt(raw));
     if (s.scoredMode === 'hide') return renderRawTMP(shown);
     return renderRawTMP(shown + scoredSuffix(s) + ' Scored!');
   }

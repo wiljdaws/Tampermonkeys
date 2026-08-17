@@ -74,6 +74,7 @@ const artLineHeightPct = extractHudFunction("artLineHeightPct");
 const artMspaceEm = extractHudFunction("artMspaceEm");
 const artLineHeightEm = extractHudFunction("artLineHeightEm", { artMspaceEm });
 const brailleToAsciiArt = extractHudFunction("brailleToAsciiArt");
+const gameSafeArtChars = extractHudFunction("gameSafeArtChars");
 const packAsciiArt = extractHudFunction("packAsciiArt", {
   preserveForgeNewlines,
   artLineStats,
@@ -82,6 +83,7 @@ const packAsciiArt = extractHudFunction("packAsciiArt", {
   artMspaceEm,
   artLineHeightEm,
   brailleToAsciiArt,
+  gameSafeArtChars,
 });
 const colorizeText = extractHudFunction("colorizeText", {
   alphaHex,
@@ -121,6 +123,7 @@ const buildCode = extractHudFunction("buildCode", {
   wrapAsciiMonospace,
   packAsciiArt,
   brailleToAsciiArt,
+  gameSafeArtChars,
 });
 const effectiveForgeCode = extractHudFunction("effectiveForgeCode", {
   buildCode,
@@ -1356,6 +1359,7 @@ test("raw preview omits synthetic Scored text when Hide is selected", () => {
     renderRawTMP,
     scoredSuffix,
     brailleToAsciiArt,
+    gameSafeArtChars,
   });
   const collectText = node => [
     node.textContent || "",
