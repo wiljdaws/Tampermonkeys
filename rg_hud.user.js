@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      21.1
+// @version      21.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -652,7 +652,7 @@
                     </div>
                 </div>
                 <div id="rgClanView" style="display:none;">Loading clans...</div>
-                <div id="rgForgeView" style="display:none;max-height:520px;overflow-y:auto;overflow-x:hidden;"></div>
+                <div id="rgForgeView" style="display:none;max-height:min(70vh,640px);overflow-y:auto;overflow-x:hidden;"></div>
                 <div id="rgActionRow" style="margin-top:6px;display:flex;gap:4px;">
                     <button id="rgRename" class="rgBtn" style="flex:1;">✏️ Rename</button>
                     <button id="rgSub" class="rgBtn" style="flex:1;">📺 Sub</button>
@@ -10032,19 +10032,22 @@
     .rgnf-preview {
       background: radial-gradient(120% 140% at 50% 0%, #101a3a 0%, #070a16 70%);
       border: 1px solid var(--rgnf-line); border-radius: 12px; padding: 14px; text-align: center;
-      min-height: 56px; display: flex; align-items: center; justify-content: center;
+      min-height: 56px; max-height: min(42vh, 320px); overflow: auto;
+      display: flex; align-items: flex-start; justify-content: center;
       /* sticky at top of scrollable body; must be a direct panel child */
       position: sticky; top: 0; z-index: 5;
       box-shadow: 0 6px 8px -6px rgba(0,0,0,0.6);
       margin-bottom: 8px;
     }
+    .rgnf-preview:has(.rgnf-ascii) { justify-content: flex-start; }
     .rgnf-preview-name { font-size: 18px; font-weight: 400; word-break: break-word; }
-    .rgnf-preview-inner.rgnf-ascii { text-align: left; }
+    .rgnf-preview-inner.rgnf-ascii { text-align: left; width: 100%; }
     .rgnf-preview-inner.rgnf-ascii .rgnf-preview-name {
       white-space: pre; word-break: normal; font-family: ui-monospace, Menlo, Consolas, monospace;
     }
     .rgnf-name-input {
-      width: 100%; min-height: 42px; resize: vertical; box-sizing: border-box;
+      width: 100%; min-height: 42px; max-height: 220px; resize: vertical; box-sizing: border-box;
+      overflow: auto;
       font: 12px/1.3 ui-monospace, Menlo, Consolas, monospace; white-space: pre; tab-size: 4;
       background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
       border-radius: 8px; padding: 8px; color: inherit;
