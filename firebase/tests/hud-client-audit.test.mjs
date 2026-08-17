@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "21.3");
+  assert.equal(version, "21.4");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1079,12 +1079,15 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const artFitSizePct = extractHudFunction("artFitSizePct");
   const artLineHeightPct = extractHudFunction("artLineHeightPct");
   const artMspaceEm = extractHudFunction("artMspaceEm");
+  const brailleToAsciiArt = extractHudFunction("brailleToAsciiArt");
+  const isBrailleArtText = extractHudFunction("isBrailleArtText");
   const packAsciiArt = extractHudFunction("packAsciiArt", {
     preserveForgeNewlines,
     artLineStats,
     artFitSizePct,
     artLineHeightPct,
     artMspaceEm,
+    brailleToAsciiArt,
   });
   const editableTextFromRaw = extractHudFunction("editableTextFromRaw");
   const editableFieldsFromRaw = extractHudFunction("editableFieldsFromRaw", {
@@ -1109,6 +1112,14 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const packedFig = packAsciiArt(figlet + "\n" + figlet);
   assert.match(packedFig, /<size=\d+%>/);
   assert.match(packAsciiArt(" <tag> "), /\uFF1Ctag\uFF1E/);
+
+  const crew = "⠀⠀⣠⣤⣶⣦⣤⡀⠀\n⠀⣼⣿⠋⠀⠀⢻⣿⡄\n⣿⣿⣿⣿⣿⣿⣿⣿⣿";
+  assert.equal(isBrailleArtText(crew), true);
+  assert.equal(brailleToAsciiArt("⠀"), " ");
+  assert.equal(brailleToAsciiArt("⣿"), "#");
+  assert.equal(/[\u2800-\u28FF]/.test(brailleToAsciiArt(crew)), false);
+  assert.equal(/[\u2800-\u28FF]/.test(packAsciiArt(crew)), false);
+  assert.match(packAsciiArt(crew), /<mspace=/);
 });
 
 test("Name Forge remembers a Scored default and keeps clan tags off the name", () => {

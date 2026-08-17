@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      21.3
+// @version      21.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "21.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9190,6 +9190,31 @@
     return "0.6em";
   }
 
+  // Rocket Goal's font has no braille. Those cells become tofu boxes in-game.
+  function isBrailleArtText(text) {
+    const chars = [...String(text ?? "").replace(/<[^>]*>/g, "")]
+      .filter((ch) => ch !== "\n" && ch !== "\r" && ch !== "\t");
+    if (chars.length < 8) return false;
+    const braille = chars.filter((ch) => ch >= "\u2800" && ch <= "\u28FF").length;
+    return braille / chars.length >= 0.2;
+  }
+
+  function brailleToAsciiArt(text) {
+    return String(text ?? "").replace(/[\u2800-\u28FF]/g, (ch) => {
+      let bits = ch.codePointAt(0) - 0x2800;
+      let n = 0;
+      while (bits) {
+        n += bits & 1;
+        bits >>= 1;
+      }
+      if (n === 0) return " ";
+      if (n <= 2) return ".";
+      if (n <= 4) return ":";
+      if (n <= 6) return "+";
+      return "#";
+    });
+  }
+
   function preserveForgeNewlines(code) {
     return String(code ?? "")
       .replace(/\r\n/g, "\n")
@@ -9205,7 +9230,7 @@
   // Monospace + fit-to-nameplate. Plain art `<` `>` become fullwidth so TMP
   // does not eat the rest of a FIGlet / dot piece as tags.
   function packAsciiArt(text) {
-    const value = String(text ?? "");
+    const value = brailleToAsciiArt(String(text ?? ""));
     if (!value) return value;
     if (/<mspace=/i.test(value)) return preserveForgeNewlines(value);
     const normalized = value.replace(/\r\n/g, "\n").replace(/<br\s*\/?\s*>/gi, "\n");
@@ -9644,8 +9669,9 @@
     if (s.underline) { open += '<u>'; close = '</u>' + close; }
     if (s.strike) { open += '<s>'; close = '</s>' + close; }
 
+    const artName = brailleToAsciiArt(s.name);
     const nameCode = colorizeText(
-      s.name,
+      artName,
       s.colorMode,
       s.solidColor,
       s.stops,
@@ -9655,7 +9681,7 @@
     );
 
     let code = open + nameCode + close;
-    if (isAsciiArtText(s.name)) code = packAsciiArt(code);
+    if (isAsciiArtText(artName) || isAsciiArtText(s.name)) code = packAsciiArt(code);
 
     // title line, fully independent styling
     if (s.titleOn && s.titleText.trim().length > 0) {
@@ -9755,14 +9781,15 @@
     if (s.strike) decoParts.push('line-through');
     const decoCSS = decoParts.length ? decoParts.join(' ') : '';
 
-    const ascii = isAsciiArtText(s.name);
+    const previewName = brailleToAsciiArt(s.name);
+    const ascii = isAsciiArtText(previewName) || isAsciiArtText(s.name);
     if (ascii) {
       wrap.classList.add('rgnf-ascii');
       nameLine.style.whiteSpace = 'pre';
       nameLine.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
       nameLine.style.textAlign = 'left';
     }
-    const tokens = tokenize(s.name);
+    const tokens = tokenize(previewName);
     const paintable = tokens.filter(t => t.type === 'char' && !(s.skipSpaces && t.value === ' '));
     const n = paintable.length;
     let i = 0;
@@ -10544,8 +10571,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   function renderRawPreview(raw, s) {
-    if (s.scoredMode === 'hide') return renderRawTMP(raw);
-    return renderRawTMP(raw + scoredSuffix(s) + ' Scored!');
+    const shown = brailleToAsciiArt(raw);
+    if (s.scoredMode === 'hide') return renderRawTMP(shown);
+    return renderRawTMP(shown + scoredSuffix(s) + ' Scored!');
   }
 
   function captureForgeScroll(panel) {
@@ -10671,6 +10699,9 @@ _rgnfFab = fab; _rgnfPanel = panel;
       const { height, width } = artLineStats(src);
       const size = artFitSizePct(height, width);
       const bits = [];
+      if (isBrailleArtText(src)) {
+        bits.push("Game font has no braille — converted to # . : art.");
+      }
       if (size < 100) bits.push(`Scaled to ${size}% so the whole piece fits the nameplate.`);
       if (packedLen > 450) bits.push("Still long — the game may cut the bottom.");
       artHint.textContent = bits.join(" ");
