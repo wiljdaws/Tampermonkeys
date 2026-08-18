@@ -138,6 +138,18 @@ async function main() {
       token,
     });
     console.log("[publish-latest-version] wrote admin/blacklist.minVersion");
+    await firestoreRequest({
+      project: args.project,
+      path: "admin/gate?updateMask.fieldPaths=minVersion",
+      method: "PATCH",
+      body: {
+        fields: {
+          minVersion: { doubleValue: versionNum },
+        },
+      },
+      token,
+    });
+    console.log("[publish-latest-version] wrote admin/gate.minVersion");
   }
 }
 

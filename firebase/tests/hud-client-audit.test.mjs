@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "22.2");
+  assert.equal(version, "22.3");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -410,9 +410,10 @@ test("HUD tells unlisted players to ask Pal or Jesus on Discord", () => {
   assert.match(hudSource, /https:\/\/discord\.gg\/MDz7hsrh9m/);
   assert.match(hudSource, /function showNotAllowlistedUI/);
   assert.match(hudSource, /isAllowlistGatedLabel/);
-  assert.match(hudSource, /allowedUserIds/);
   const gate = hudFunctionSource("isUpdateRequired");
-  assert.match(gate, /if \(uid && \(!Array\.isArray\(allowed\)/);
+  assert.match(gate, /admin", "gate"/);
+  assert.match(gate, /notAllowlisted = true/);
+  assert.doesNotMatch(gate, /allowedUserIds/);
 });
 
 test("clan MMR sync skips Firestore when no event is active", () => {

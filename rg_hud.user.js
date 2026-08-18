@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.2
+// @version      22.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2398,9 +2398,9 @@
     }
 
     // ---------- Force-update gate ----------
-    // admin/blacklist has { minVersion }. rules reject sub-min writes anyway.
-    // Check once per session. Reads stay available, but every client mutation
-    // goes through atlasMutationAllowed.
+    // admin/gate has { minVersion, pauseWrites }. The pin book lives on
+    // admin/blacklist and is admin-only. Rules still reject sub-min writes
+    // from blacklist.minVersion. Check once per session.
 
     let updateRequiredChecked = false;
     let updateRequired = false;
@@ -2462,8 +2462,11 @@
     async function isUpdateRequired(fb) {
         if (updateRequiredChecked) return updateRequired || writesPaused;
         try {
-            // one read covers version + blacklist + the halt switch
-            const snap = await fb.getDoc(fb.doc(fb.db, "admin", "blacklist"));
+            // one read covers version + the halt switch. Pin book stays off
+            // this client. A permission-denied here means this uid is not
+            // on the allow list — show the invite bar, do not retry the
+            // pin doc.
+            const snap = await fb.getDoc(fb.doc(fb.db, "admin", "gate"));
             if (snap.exists()) {
                 const data = snap.data() || {};
                 if (data.pauseWrites === true) writesPaused = true;
@@ -2471,17 +2474,13 @@
                 if (typeof minV === "number" && SCRIPT_VERSION_NUM < minV) {
                     updateRequired = true;
                 }
-                const allowed = data.allowedUserIds;
-                const uid = firebaseAuthUid;
-                // No uid yet means auth is still retrying — do not flash
-                // the invite bar as if the player were rejected.
-                if (uid && (!Array.isArray(allowed) || !allowed.map(String).includes(uid))) {
-                    notAllowlisted = true;
-                }
             }
         } catch (e) {
-            // don't lock out on transient read error
-            dbg("isUpdateRequired read failed (non-fatal): " + getErrMsg(e));
+            if (firebaseAuthUid && isDeny(e)) {
+                notAllowlisted = true;
+            } else {
+                dbg("isUpdateRequired read failed (non-fatal): " + getErrMsg(e));
+            }
         }
         updateRequiredChecked = true;
         return updateRequired || writesPaused;
@@ -2491,7 +2490,7 @@
     // admin/latest_version is the current recommended release. If we're older
     // (and not already dismissed for this exact version), show a persistent
     // click-to-install banner. Non-blocking — the hard gate lives in
-    // admin/blacklist.minVersion.
+    // admin/gate.minVersion and admin/blacklist.minVersion (writes).
     let updateNudgeChecked = false;
     const DEFAULT_UPDATE_URL =
         "https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/rg_hud.user.js";
