@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.3
+// @version      22.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2863,6 +2863,7 @@
     function boardIdentityFromDocs(rows, rgPlayerId) {
         for (const row of rows || []) {
             if (!row || row.rgPlayerId !== rgPlayerId) continue;
+            if (row.playlist === "tombstone") continue;
             return {
                 displayName: boardNameWithoutClanTag(row.name).slice(0, 15),
                 sourceUserId: typeof row.sourceUserId === "string" ? row.sourceUserId : "",
@@ -2871,9 +2872,12 @@
         return { displayName: "", sourceUserId: "" };
     }
 
-    function shouldPublishLeaderboardRow(existingSourceUserId, firebaseUid) {
-        if (!existingSourceUserId) return true;
-        return existingSourceUserId === firebaseUid;
+    function shouldPublishLeaderboardRow(existingSourceUserIds, firebaseUid) {
+        const ids = Array.isArray(existingSourceUserIds)
+            ? existingSourceUserIds.filter(Boolean)
+            : (existingSourceUserIds ? [existingSourceUserIds] : []);
+        if (ids.includes(firebaseUid)) return true;
+        return ids.length === 0;
     }
 
     async function lookupDisplayNameFromBoard(fb, rgPlayerId) {
@@ -2881,8 +2885,7 @@
         try {
             const q = fb.query(
                 fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                fb.where("rgPlayerId", "==", rgPlayerId),
-                fb.limit(1)
+                fb.where("rgPlayerId", "==", rgPlayerId)
             );
             const snap = await fb.getDocs(q);
             return boardIdentityFromDocs(snap.docs.map((d) => d.data()), rgPlayerId).displayName;
@@ -3155,7 +3158,6 @@
             // next time and never retries
             if (!writeOk) return;
             lastSyncTime.set(data.Id, now);
-            lastSyncSnapshot.set(data.Id, snapshotKey);
             clearError();
         } catch (e) {
             console.error("[RG HUD] Leaderboard submission failed:", e);
@@ -3165,6 +3167,10 @@
         // don't publish partial state; leave cooldown open for a retry
         if (!writeOk) return;
         await syncToRealLeaderboard(fb, data, displayName);
+        // Cache the snapshot only after the public board write. A
+        // submissions-only success used to skip later retries when the
+        // board owner check bailed out.
+        lastSyncSnapshot.set(data.Id, snapshotKey);
         refreshRanks(fb, data, true);
         refreshClanViewIfOpen();
         applyTitle(); // clan-lead may have flipped since updateMomentum
@@ -4547,16 +4553,16 @@
         try {
             const q = fb.query(
                 fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                fb.where("rgPlayerId", "==", rgPlayerId),
-                fb.limit(1)
+                fb.where("rgPlayerId", "==", rgPlayerId)
             );
             const snap = await fb.getDocs(q);
-            const priorUid = boardIdentityFromDocs(
-                snap.docs.map((d) => d.data()),
-                rgPlayerId,
-            ).sourceUserId;
-            if (!shouldPublishLeaderboardRow(priorUid, sourceUserId)) {
-                dbg(`syncToRealLeaderboard skipped: ${rgPlayerId} already on the board as ${priorUid}`);
+            const priorUids = snap.docs
+                .map((d) => d.data())
+                .filter((row) => row && row.playlist !== "tombstone")
+                .map((row) => row.sourceUserId)
+                .filter(Boolean);
+            if (!shouldPublishLeaderboardRow(priorUids, sourceUserId)) {
+                dbg(`syncToRealLeaderboard skipped: ${rgPlayerId} already on the board as ${priorUids.join(",")}`);
                 return;
             }
         } catch (e) {

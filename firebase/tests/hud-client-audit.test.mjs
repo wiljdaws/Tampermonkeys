@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "22.3");
+  assert.equal(version, "22.4");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -331,6 +331,26 @@ test("board display names drop a clan tag prefix", () => {
     ),
     "",
   );
+  assert.equal(
+    boardIdentityFromDocs(
+      [
+        {
+          rgPlayerId: "cemzDSxfDgV0gvEilUGqzRFLp252",
+          playlist: "tombstone",
+          name: "OldTwin",
+          sourceUserId: "old-uid",
+        },
+        {
+          rgPlayerId: "cemzDSxfDgV0gvEilUGqzRFLp252",
+          playlist: "3v3",
+          name: "[KING] JesusDied4U",
+          sourceUserId: "new-uid",
+        },
+      ],
+      "cemzDSxfDgV0gvEilUGqzRFLp252",
+    ).sourceUserId,
+    "new-uid",
+  );
 });
 
 test("a new Firebase id does not publish a second row for the same in-game account", () => {
@@ -338,8 +358,18 @@ test("a new Firebase id does not publish a second row for the same in-game accou
   assert.equal(shouldPublishLeaderboardRow("", "new-uid"), true);
   assert.equal(shouldPublishLeaderboardRow("old-uid", "old-uid"), true);
   assert.equal(shouldPublishLeaderboardRow("old-uid", "new-uid"), false);
+  assert.equal(
+    shouldPublishLeaderboardRow(["old-uid", "new-uid"], "new-uid"),
+    true,
+  );
   const sync = hudFunctionSource("syncToRealLeaderboard");
   assert.match(sync, /shouldPublishLeaderboardRow\(/);
+  assert.doesNotMatch(sync, /limit\(1\)/);
+  assert.match(sync, /playlist !== "tombstone"/);
+  const submit = hudFunctionSource("submitToLeaderboardInner");
+  const boardCall = submit.indexOf("syncToRealLeaderboard(");
+  const snapshotSet = submit.indexOf("lastSyncSnapshot.set(");
+  assert.ok(boardCall >= 0 && snapshotSet > boardCall);
 });
 
 test("leaderboard submit reuses a stored or board name before prompting", () => {
