@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.4
+// @version      22.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -930,6 +930,8 @@
                 const bundle = {
                     version: SCRIPT_VERSION,
                     versionNum: SCRIPT_VERSION_NUM,
+                    firebaseId: firebaseAuthUid || "",
+                    deviceId: getDeviceId() || "",
                     device,
                     timestamp: new Date().toISOString(),
                     settings: settings,
@@ -971,7 +973,6 @@
                     log: _rgLogBuf.slice(-100),
                 };
                 const redactions = [
-                    getDeviceId(),
                     typeof navigator !== "undefined" ? navigator.userAgent : "",
                     lastKnownPlayerData?.Id,
                 ];
@@ -8288,12 +8289,20 @@
 
     // mirrors Name Forge palettes
     const CLAN_TAG_PALETTES = [
-        { key: 'fire',    label: '🔥 Fire',    stops: ['#FF4D00', '#FFB800', '#FF0000'] },
-        { key: 'ocean',   label: '🌊 Ocean',   stops: ['#00FFFF', '#00CFFF'] }, // exact [KING] shimmer: K,I,N,G sample to #00FFFF,#00EFFF,#00DFFF,#00CFFF
-        { key: 'rainbow', label: '🌈 Rainbow', stops: ['#FF0000', '#FFFF00', '#00FF00', '#00BFFF', '#8B00FF'] },
-        { key: 'sunset',  label: '🌇 Sunset',  stops: ['#FF6B6B', '#FFB347', '#8E44AD'] },
-        { key: 'toxic',   label: '☢️ Toxic',   stops: ['#39FF14', '#CCFF00', '#00FF9F'] },
-        { key: 'ice',     label: '❄️ Ice',     stops: ['#E0FFFF', '#7DD3FC', '#2563EB'] },
+        { key: 'fire',     label: '🔥 Fire',     stops: ['#FF4D00', '#FFB800', '#FF0000'] },
+        { key: 'ocean',    label: '🌊 Ocean',    stops: ['#00FFFF', '#00CFFF'] }, // exact [KING] shimmer: K,I,N,G sample to #00FFFF,#00EFFF,#00DFFF,#00CFFF
+        { key: 'rainbow',  label: '🌈 Rainbow',  stops: ['#FF0000', '#FFFF00', '#00FF00', '#00BFFF', '#8B00FF'] },
+        { key: 'sunset',   label: '🌇 Sunset',   stops: ['#FF6B6B', '#FFB347', '#8E44AD'] },
+        { key: 'toxic',    label: '☢️ Toxic',    stops: ['#39FF14', '#CCFF00', '#00FF9F'] },
+        { key: 'ice',      label: '❄️ Ice',      stops: ['#E0FFFF', '#7DD3FC', '#2563EB'] },
+        { key: 'crown',    label: '👑 Crown',    stops: ['#7A4E00', '#E6B422', '#FFF4C2', '#C9A227'] },
+        { key: 'blush',    label: '🌸 Blush',    stops: ['#FF4D8D', '#FFB6D9', '#C026D3'] },
+        { key: 'galaxy',   label: '🌌 Galaxy',   stops: ['#312E81', '#7C3AED', '#F472B6', '#38BDF8'] },
+        { key: 'emerald',  label: '🍀 Emerald',  stops: ['#064E3B', '#10B981', '#A7F3D0'] },
+        { key: 'crimson',  label: '🩸 Crimson',  stops: ['#7F1D1D', '#EF4444', '#FCA5A5'] },
+        { key: 'neon',     label: '⚡ Neon',     stops: ['#22D3EE', '#E879F9', '#F472B6'] },
+        { key: 'bronze',   label: '🪙 Bronze',   stops: ['#5C3317', '#CD7F32', '#F5D0A9'] },
+        { key: 'steel',    label: '🩶 Steel',    stops: ['#334155', '#94A3B8', '#F8FAFC'] },
     ];
 
     // palette stops if picked, else user-picked endpoints. null if not gradient.
@@ -9057,6 +9066,14 @@
     { label: '🌇 Sunset', stops: ['#FF6B6B', '#FFB347', '#8E44AD'] },
     { label: '☢️ Toxic', stops: ['#39FF14', '#CCFF00', '#00FF9F'] },
     { label: '❄️ Ice', stops: ['#E0FFFF', '#7DD3FC', '#2563EB'] },
+    { label: '👑 Crown', stops: ['#7A4E00', '#E6B422', '#FFF4C2', '#C9A227'] },
+    { label: '🌸 Blush', stops: ['#FF4D8D', '#FFB6D9', '#C026D3'] },
+    { label: '🌌 Galaxy', stops: ['#312E81', '#7C3AED', '#F472B6', '#38BDF8'] },
+    { label: '🍀 Emerald', stops: ['#064E3B', '#10B981', '#A7F3D0'] },
+    { label: '🩸 Crimson', stops: ['#7F1D1D', '#EF4444', '#FCA5A5'] },
+    { label: '⚡ Neon', stops: ['#22D3EE', '#E879F9', '#F472B6'] },
+    { label: '🪙 Bronze', stops: ['#5C3317', '#CD7F32', '#F5D0A9'] },
+    { label: '🩶 Steel', stops: ['#334155', '#94A3B8', '#F8FAFC'] },
   ];
   // sprite atlas from in-game screenshot (0-15, left to right)
   const SPRITES = [
@@ -9113,6 +9130,7 @@
     titleAlpha: 255,                  // 0-255 alpha on titleColor (solid only)
     // alpha on the name's solid color, dims trailing URL text etc
     solidAlpha: 255,
+    colorSpans: [],                   // selected-range paints; empty = whole name
     scoredMode: readScoredDefault() || 'default', // 'default' | 'hide' | 'tiny' | 'styled'
     scoredColor: '#22d3ee',
     scoredSizePct: 100,
@@ -9122,6 +9140,25 @@
   let state = loadJSON(stateKey(), null) || loadJSON(STATE_KEY_LEGACY, defaultState());
   // backfill any new fields if an old state was saved
   state = Object.assign(defaultState(), state);
+  if (!Array.isArray(state.colorSpans)) state.colorSpans = [];
+  let namePaintSel = { start: 0, end: 0 };
+  let previewZoom = 1;
+  let refreshForgePreview = () => {};
+
+  function clampPreviewZoom(value) {
+    const stepped = Math.round(Number(value) * 20) / 20;
+    return Math.max(0.4, Math.min(2.5, stepped));
+  }
+
+  function previewNameFontPx(s) {
+    const base = 18 * Math.min(Math.max(Number(s?.sizePct) || 100, 10), 300) / 100;
+    return Math.max(4, base * previewZoom);
+  }
+
+  function setPreviewZoom(next) {
+    previewZoom = clampPreviewZoom(next);
+    refreshForgePreview();
+  }
 
   // ---- Utilities ----
   // Tampermonkey storage survives a rocketgoal.io site-data wipe.
@@ -9251,9 +9288,11 @@
   }
 
   // 21.8 used = / ' as filter-safe stand-ins. Put + / : back for looks.
+  // Strip leftover filter-break markers from older Apply attempts.
   function restorePreferredArtChars(text) {
     return String(text ?? "")
       .replace(/<size=0>\.<\/size>/gi, "")
+      .replace(/<size=0>x<\/size>/gi, "")
       .replace(/\u200B/g, "")
       .replace(/(<[^>]*>)|[=']/g, (all, tag) => {
         if (tag) return tag;
@@ -9261,14 +9300,8 @@
       });
   }
 
-  // The nickname API strips TMP tags, then leets +→t and :→i, so "+:+"
-  // is blocked. Keep those marks; a zero-width space is invisible in TMP
-  // and breaks the run after tags are stripped.
   function gameSafeArtChars(text) {
-    const restored = restorePreferredArtChars(text);
-    return restored
-      .replace(/\+((?:<[^>]*>)*):/g, "+$1\u200B:")
-      .replace(/:((?:<[^>]*>)*)\+/g, ":$1\u200B+");
+    return restorePreferredArtChars(text);
   }
 
   function artPreviewText(text) {
@@ -9621,13 +9654,328 @@
     return rgbToHex({ r: lerp(a.r, b.r, t), g: lerp(a.g, b.g, t), b: lerp(a.b, b.b, t) });
   }
 
+  function normalizeColorSpans(spans, textLen) {
+    const len = Math.max(0, Math.trunc(Number(textLen) || 0));
+    return (Array.isArray(spans) ? spans : [])
+      .map((span) => ({
+        start: Math.max(0, Math.min(len, Math.trunc(Number(span?.start) || 0))),
+        end: Math.max(0, Math.min(len, Math.trunc(Number(span?.end) || 0))),
+        mode: ["none", "solid", "gradient"].includes(span?.mode) ? span.mode : "gradient",
+        solid: typeof span?.solid === "string" ? span.solid : "#22d3ee",
+        stops: Array.isArray(span?.stops) ? span.stops.filter((c) => typeof c === "string") : [],
+        solidAlpha: Number.isFinite(Number(span?.solidAlpha)) ? Number(span.solidAlpha) : 255,
+      }))
+      .filter((span) => span.end > span.start);
+  }
+
+  function colorStyleAt(index, spans, fallback) {
+    for (let i = (spans || []).length - 1; i >= 0; i -= 1) {
+      const span = spans[i];
+      if (index >= span.start && index < span.end) return span;
+    }
+    return fallback;
+  }
+
+  function splitByColorSpans(text, spans, fallback) {
+    const value = String(text ?? "");
+    const marks = normalizeColorSpans(spans, value.length);
+    if (!marks.length) return [{ text: value, style: fallback }];
+    const bounds = new Set([0, value.length]);
+    for (const mark of marks) {
+      bounds.add(mark.start);
+      bounds.add(mark.end);
+    }
+    const cuts = [...bounds].sort((a, b) => a - b);
+    const runs = [];
+    for (let i = 0; i < cuts.length - 1; i += 1) {
+      const start = cuts[i];
+      const end = cuts[i + 1];
+      if (end <= start) continue;
+      runs.push({
+        text: value.slice(start, end),
+        style: colorStyleAt(start, marks, fallback),
+      });
+    }
+    return runs;
+  }
+
+  function rememberNamePaintSel(el) {
+    if (!el) return;
+    const start = Number(el.selectionStart) || 0;
+    const end = Number(el.selectionEnd) || 0;
+    if (end > start) namePaintSel = { start, end };
+  }
+
+  function namePaintRange() {
+    const start = Math.min(namePaintSel.start, namePaintSel.end);
+    const end = Math.max(namePaintSel.start, namePaintSel.end);
+    const len = String(state.name || "").length;
+    const a = Math.max(0, Math.min(len, start));
+    const b = Math.max(0, Math.min(len, end));
+    if (b <= a) return null;
+    return { start: a, end: b };
+  }
+
+  function paintRangeGlyphCount(range) {
+    const slice = String(state.name || "").slice(range.start, range.end);
+    return [...slice].filter((ch) => ch !== " " && ch !== "\n" && ch !== "\t" && ch !== "\r").length;
+  }
+
+  function paintBarLabel() {
+    const range = namePaintRange();
+    if (!range) {
+      return "Drag on the preview to pick a slice. Then change Color. No highlight paints everything.";
+    }
+    const n = paintRangeGlyphCount(range);
+    return `Painting ${n} character${n === 1 ? "" : "s"} in the preview. Color changes apply to this highlight only.`;
+  }
+
+  function paintPreviewRoot(node) {
+    return node?.closest?.(".rgnf-preview-stack") || node;
+  }
+
+  function isPaintSpaceEl(el) {
+    if (!el || el.dataset.forgeStart != null) return false;
+    return /^\s+$/.test(el.textContent || "");
+  }
+
+  function paintPreviewSelection(root) {
+    const scope = paintPreviewRoot(root);
+    if (!scope) return;
+    const range = namePaintRange();
+    for (const el of scope.querySelectorAll("[data-forge-i]")) {
+      const i = Number(el.dataset.forgeI);
+      el.classList.toggle(
+        "rgnf-paint-on",
+        !!(range && i >= range.start && i < range.end && !isPaintSpaceEl(el)),
+      );
+    }
+    for (const el of scope.querySelectorAll("[data-forge-start]")) {
+      const a = Number(el.dataset.forgeStart);
+      const b = Number(el.dataset.forgeEnd);
+      el.classList.toggle("rgnf-paint-on", !!(range && a < range.end && b > range.start));
+    }
+    const label = scope.querySelector(".rgnf-paintbar-label");
+    if (label) label.textContent = paintBarLabel();
+  }
+
+  function forgeHitRange(el) {
+    const hit = el?.closest?.("[data-forge-i],[data-forge-start]");
+    if (!hit) return null;
+    if (hit.dataset.forgeI != null) {
+      const i = Number(hit.dataset.forgeI);
+      return { start: i, end: i + 1 };
+    }
+    return {
+      start: Number(hit.dataset.forgeStart),
+      end: Number(hit.dataset.forgeEnd),
+    };
+  }
+
+  function makePaintBar() {
+    const bar = document.createElement("div");
+    bar.className = "rgnf-paintbar";
+    const label = document.createElement("div");
+    label.className = "rgnf-paintbar-label";
+    label.textContent = paintBarLabel();
+    const zoom = document.createElement("div");
+    zoom.className = "rgnf-zoom";
+    const zoomOut = document.createElement("button");
+    zoomOut.className = "rgnf-chip";
+    zoomOut.type = "button";
+    zoomOut.textContent = "−";
+    zoomOut.title = "Zoom preview out. Does not change the in-game name size.";
+    zoomOut.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setPreviewZoom(previewZoom - 0.2);
+    });
+    const zoomLabel = document.createElement("button");
+    zoomLabel.className = "rgnf-chip rgnf-zoom-label";
+    zoomLabel.type = "button";
+    zoomLabel.textContent = `${Math.round(previewZoom * 100)}%`;
+    zoomLabel.title = "Reset preview zoom to 100%. Does not change the in-game name size.";
+    zoomLabel.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setPreviewZoom(1);
+    });
+    const zoomIn = document.createElement("button");
+    zoomIn.className = "rgnf-chip";
+    zoomIn.type = "button";
+    zoomIn.textContent = "+";
+    zoomIn.title = "Zoom preview in. Does not change the in-game name size.";
+    zoomIn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setPreviewZoom(previewZoom + 0.2);
+    });
+    zoom.appendChild(zoomOut);
+    zoom.appendChild(zoomLabel);
+    zoom.appendChild(zoomIn);
+    const clear = document.createElement("button");
+    clear.className = "rgnf-chip";
+    clear.type = "button";
+    clear.textContent = "Clear highlight";
+    clear.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      namePaintSel = { start: 0, end: 0 };
+      paintPreviewSelection(bar);
+    });
+    const actions = document.createElement("div");
+    actions.className = "rgnf-paintbar-actions";
+    actions.appendChild(zoom);
+    actions.appendChild(clear);
+    bar.appendChild(label);
+    bar.appendChild(actions);
+    return bar;
+  }
+
+  function wirePreviewPaint(root) {
+    let dragging = false;
+    let anchor = 0;
+    root.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      if (e.target?.closest?.(".rgnf-paintbar")) return;
+      const hit = forgeHitRange(e.target);
+      if (!hit) {
+        namePaintSel = { start: 0, end: 0 };
+        paintPreviewSelection(root);
+        return;
+      }
+      e.preventDefault();
+      dragging = true;
+      anchor = hit.start;
+      namePaintSel = { start: hit.start, end: hit.end };
+      try { root.setPointerCapture(e.pointerId); } catch (err) {}
+      paintPreviewSelection(root);
+    });
+    root.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const hit = forgeHitRange(under);
+      if (!hit) return;
+      namePaintSel = {
+        start: Math.min(anchor, hit.start),
+        end: Math.max(anchor + 1, hit.end),
+      };
+      paintPreviewSelection(root);
+    });
+    root.addEventListener("pointerup", () => { dragging = false; });
+    root.addEventListener("pointercancel", () => { dragging = false; });
+    root.addEventListener("wheel", (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setPreviewZoom(previewZoom + (e.deltaY > 0 ? -0.2 : 0.2));
+    }, { passive: false });
+  }
+
+  function cloneColorStyle(style) {
+    return {
+      mode: ["none", "solid", "gradient"].includes(style?.mode) ? style.mode : "gradient",
+      solid: typeof style?.solid === "string" ? style.solid : "#22d3ee",
+      stops: Array.isArray(style?.stops) ? style.stops.filter((c) => typeof c === "string") : [],
+      solidAlpha: Number.isFinite(Number(style?.solidAlpha)) ? Number(style.solidAlpha) : 255,
+    };
+  }
+
+  function snapshotNameColorStyle() {
+    return cloneColorStyle({
+      mode: state.colorMode,
+      solid: state.solidColor,
+      stops: state.stops,
+      solidAlpha: state.solidAlpha ?? 255,
+    });
+  }
+
+  function bakeUncoveredColorSpans(spans, len, style) {
+    const marks = normalizeColorSpans(spans, len);
+    const used = new Array(Math.max(0, len)).fill(false);
+    for (const mark of marks) {
+      for (let i = mark.start; i < mark.end; i += 1) used[i] = true;
+    }
+    const baked = marks.map((mark) => ({ ...mark, ...cloneColorStyle(mark) }));
+    const fill = cloneColorStyle(style);
+    let i = 0;
+    while (i < len) {
+      if (used[i]) { i += 1; continue; }
+      let j = i + 1;
+      while (j < len && !used[j]) j += 1;
+      baked.push({ start: i, end: j, ...cloneColorStyle(fill) });
+      i = j;
+    }
+    return baked;
+  }
+
+  function subtractColorRange(spans, start, end) {
+    const out = [];
+    for (const span of spans || []) {
+      if (span.end <= start || span.start >= end) {
+        out.push({ ...span, ...cloneColorStyle(span) });
+        continue;
+      }
+      if (span.start < start) {
+        out.push({ ...span, start: span.start, end: start, ...cloneColorStyle(span) });
+      }
+      if (span.end > end) {
+        out.push({ ...span, start: end, end: span.end, ...cloneColorStyle(span) });
+      }
+    }
+    return out;
+  }
+
+  function applySliceColor(spans, len, range, beforeStyle, afterStyle) {
+    const next = subtractColorRange(
+      bakeUncoveredColorSpans(spans, len, beforeStyle),
+      range.start,
+      range.end,
+    );
+    next.push({
+      start: range.start,
+      end: range.end,
+      ...cloneColorStyle(afterStyle),
+    });
+    return normalizeColorSpans(next, len);
+  }
+
+  function commitNameColor(mutator) {
+    const range = namePaintRange();
+    const before = snapshotNameColorStyle();
+    mutator?.();
+    if (range) {
+      state.colorSpans = applySliceColor(
+        state.colorSpans,
+        String(state.name || "").length,
+        range,
+        before,
+        snapshotNameColorStyle(),
+      );
+      state.rawCode = null;
+      return;
+    }
+    state.colorSpans = [];
+  }
+
+  // 6-as-g makes FA6 → fag. Fire oranges like #FFA600 trip the nickname API.
+  function nickSafeColor(hex) {
+    const raw = String(hex || "");
+    const m = raw.match(/^(#?)([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})?$/);
+    if (!m) return raw;
+    return `${m[1] || "#"}${m[2].toUpperCase().replace(/FA6/g, "FA7")}${m[3] || ""}`;
+  }
+
+  function sanitizeNicknameColors(code) {
+    return String(code ?? "").replace(/<#([0-9A-Fa-f]{6})>/g, (_, h) => `<${nickSafeColor("#" + h)}>`);
+  }
+
   // multi-stop gradient sample at t in [0,1]
   function gradientAt(stops, t) {
-    if (stops.length === 1) return stops[0].toUpperCase();
+    if (stops.length === 1) return nickSafeColor(stops[0].toUpperCase());
     const seg = 1 / (stops.length - 1);
     const idx = Math.min(Math.floor(t / seg), stops.length - 2);
     const localT = (t - idx * seg) / seg;
-    return lerpColor(stops[idx], stops[idx + 1], localT);
+    return nickSafeColor(lerpColor(stops[idx], stops[idx + 1], localT));
   }
 
   function alphaHex(n) {
@@ -9691,6 +10039,27 @@
     return out;
   }
 
+  function colorizeNamedArt(artName, s) {
+    const fallback = {
+      mode: s.colorMode,
+      solid: s.solidColor,
+      stops: s.stops,
+      solidAlpha: s.solidAlpha ?? 255,
+    };
+    const spans = String(s.name || "").length === String(artName || "").length
+      ? s.colorSpans
+      : [];
+    return splitByColorSpans(artName, spans, fallback).map((run) => colorizeText(
+      run.text,
+      run.style.mode,
+      run.style.solid,
+      run.style.stops,
+      s.skipSpaces,
+      s.waveOn ? s.waveAmp : 0,
+      run.style.solidAlpha ?? 255,
+    )).join("");
+  }
+
   // chars, but <sprite=N> tags stay as single tokens
   function tokenize(text) {
     const tokens = [];
@@ -9744,15 +10113,7 @@
     if (s.strike) { open += '<s>'; close = '</s>' + close; }
 
     const artName = restorePreferredArtChars(brailleToAsciiArt(s.name));
-    const nameCode = colorizeText(
-      artName,
-      s.colorMode,
-      s.solidColor,
-      s.stops,
-      s.skipSpaces,
-      s.waveOn ? s.waveAmp : 0,
-      s.solidAlpha ?? 255,
-    );
+    const nameCode = colorizeNamedArt(artName, s);
 
     let code = open + nameCode + close;
     if (isAsciiArtText(artName) || isAsciiArtText(s.name)) code = packAsciiArt(code);
@@ -9809,9 +10170,8 @@
     if (s.bold) styles.push('font-weight:700');
     if (s.italic) styles.push('font-style:italic');
     // per-letter decoration mirrors in-game TMP. applied per-span below via decoCSS.
-    // Cap preview font size — big <size=...> values push the editor
-    // off-screen otherwise. In-game render uses the raw value.
-    if (s.sizePct !== 100) styles.push(`font-size:${Math.max(8, 18 * Math.min(s.sizePct, 300) / 100)}px`);
+    // Preview-only zoom. Style Size still drives in-game <size=...>.
+    styles.push(`font-size:${previewNameFontPx(s)}px`);
     if (s.markOn) styles.push(`background:${s.markColor}${alphaHex(s.markAlpha)}`);
     nameLine.style.cssText = styles.join(';');
 
@@ -9864,10 +10224,18 @@
       nameLine.style.textAlign = 'left';
       nameLine.style.lineHeight = '1.1';
     }
-    const tokens = tokenize(previewName);
-    const paintable = tokens.filter(t => t.type === 'char' && !(s.skipSpaces && t.value === ' '));
-    const n = paintable.length;
+    const previewFallback = {
+      mode: s.colorMode,
+      solid: s.solidColor,
+      stops: s.stops,
+      solidAlpha: s.solidAlpha ?? 255,
+    };
+    const previewSpans = String(s.name || "").length === previewName.length
+      ? s.colorSpans
+      : [];
+    const previewRuns = splitByColorSpans(previewName, previewSpans, previewFallback);
     let i = 0;
+    let srcIndex = 0;
     const startNameLine = () => {
       const line = document.createElement('div');
       line.className = 'rgnf-preview-name';
@@ -9880,55 +10248,67 @@
       line.style.cssText = (line.style.cssText ? line.style.cssText + ';' : '') + styles.join(';');
       return line;
     };
-    for (const tok of tokens) {
-      if (tok.type === 'br') {
-        wrap.appendChild(nameLine);
-        nameLine = startNameLine();
-        continue;
-      }
-      const span = document.createElement('span');
-      if (tok.type === 'sprite') {
-        const num = Number(tok.value.match(/\d+/)[0]);
-        span.textContent = spriteEmoji(num);
-        span.title = tok.value;
-      } else {
-        span.textContent = tok.value;
-        if (tok.value !== ' ' || !s.skipSpaces) {
-          if (s.colorMode === 'solid') {
-            const aa = (s.solidAlpha ?? 255) < 255 ? alphaHex(s.solidAlpha) : '';
-            span.style.color = s.solidColor + aa;
+    for (const run of previewRuns) {
+      const tokens = tokenize(run.text);
+      const paintable = tokens.filter(t => t.type === 'char' && !(s.skipSpaces && t.value === ' '));
+      const n = paintable.length;
+      let runI = 0;
+      for (const tok of tokens) {
+        if (tok.type === 'br') {
+          wrap.appendChild(nameLine);
+          nameLine = startNameLine();
+          srcIndex += 1;
+          continue;
+        }
+        const span = document.createElement('span');
+        if (tok.type === 'sprite') {
+          const num = Number(tok.value.match(/\d+/)[0]);
+          span.textContent = spriteEmoji(num);
+          span.title = tok.value;
+          span.dataset.forgeStart = String(srcIndex);
+          span.dataset.forgeEnd = String(srcIndex + tok.value.length);
+          srcIndex += tok.value.length;
+        } else {
+          span.dataset.forgeI = String(srcIndex);
+          srcIndex += tok.value.length;
+          span.textContent = tok.value;
+          if (tok.value !== ' ' || !s.skipSpaces) {
+            if (run.style.mode === 'solid') {
+              const aa = (run.style.solidAlpha ?? 255) < 255 ? alphaHex(run.style.solidAlpha) : '';
+              span.style.color = run.style.solid + aa;
+            }
+            else if (run.style.mode === 'gradient' && n > 0 && tok.value !== ' ') {
+              const t = n === 1 ? 0 : runI / (n - 1);
+              span.style.color = gradientAt(run.style.stops, t);
+            }
           }
-          else if (s.colorMode === 'gradient' && n > 0 && tok.value !== ' ') {
-            const t = n === 1 ? 0 : i / (n - 1);
-            span.style.color = gradientAt(s.stops, t);
+          if (decoCSS && tok.value !== ' ') {
+            span.style.textDecorationLine = decoCSS;
+            span.style.textDecorationColor = span.style.color || 'currentColor';
+            span.style.textDecorationThickness = 'from-font';
+          }
+          if (tok.value !== ' ') {
+            if (s.waveOn) {
+              span.style.display = 'inline-block';
+              span.style.transform = `rotate(${(i % 2 === 0 ? -1 : 1) * s.waveAmp}deg)`;
+            }
+            runI++;
+            i++;
           }
         }
-        // per-span decoration, survives rotate + inherits glyph color
-        if (decoCSS && tok.value !== ' ') {
-          span.style.textDecorationLine = decoCSS;
-          span.style.textDecorationColor = span.style.color || 'currentColor';
-          span.style.textDecorationThickness = 'from-font';
+        if (!s.waveOn && s.rotateDeg !== 0) {
+          span.style.display = 'inline-block';
+          span.style.transform = `rotate(${s.rotateDeg}deg)`;
         }
-        if (tok.value !== ' ') {
-          if (s.waveOn) {
-            span.style.display = 'inline-block';
-            span.style.transform = `rotate(${(i % 2 === 0 ? -1 : 1) * s.waveAmp}deg)`;
-          }
-          i++;
-        }
+        nameLine.appendChild(span);
       }
-      if (!s.waveOn && s.rotateDeg !== 0) {
-        span.style.display = 'inline-block';
-        span.style.transform = `rotate(${s.rotateDeg}deg)`;
-      }
-      nameLine.appendChild(span);
     }
     wrap.appendChild(nameLine);
 
     if (s.titleOn && s.titleText.trim()) {
       const titleLine = document.createElement('div');
       titleLine.className = 'rgnf-preview-title';
-      titleLine.style.fontSize = `${Math.max(7, 18 * s.titleSizePct / 100)}px`;
+      titleLine.style.fontSize = `${Math.max(5, 18 * s.titleSizePct / 100 * previewZoom)}px`;
       if (s.titleSub) titleLine.style.verticalAlign = 'sub';
       if (s.titleBold) titleLine.style.fontWeight = '700';
       if (s.titleItalic) titleLine.style.fontStyle = 'italic';
@@ -9968,16 +10348,22 @@
     scored.textContent = ' Scored!';
     switch (s.scoredMode) {
       case 'hide': scored.style.display = 'none'; break;
-      case 'tiny': scored.style.fontSize = '6px'; scored.style.verticalAlign = 'sub'; break;
+      case 'tiny': scored.style.fontSize = `${Math.max(4, 6 * previewZoom)}px`; scored.style.verticalAlign = 'sub'; break;
       case 'styled':
         scored.style.color = s.scoredColor;
-        scored.style.fontSize = `${Math.max(6, 14 * s.scoredSizePct / 100)}px`;
+        scored.style.fontSize = `${Math.max(4, 14 * s.scoredSizePct / 100 * previewZoom)}px`;
         break;
       default: scored.style.color = '#cbd5e1'; break;
     }
     nameLine.appendChild(scored);
 
-    return wrap;
+    const stack = document.createElement('div');
+    stack.className = 'rgnf-preview-stack';
+    stack.appendChild(makePaintBar());
+    stack.appendChild(wrap);
+    wirePreviewPaint(wrap);
+    paintPreviewSelection(stack);
+    return stack;
   }
 
   // ------------------------------------------------------------------
@@ -10053,6 +10439,7 @@
     if (mismatch) {
       throw new Error('Auth token belongs to a different account (' + mismatch.slice(0, 8) + '…). Refresh the page and try again.');
     }
+    code = sanitizeNicknameColors(code);
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: {
@@ -10214,6 +10601,7 @@
       margin: 0 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
       color: var(--rgnf-muted); font-weight: 600;
     }
+    .rgnf-hint { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--rgnf-muted); }
     .rgnf-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
     .rgnf-row label { color: var(--rgnf-muted); min-width: 74px; }
     .rgnf-panel input[type=text], .rgnf-panel select {
@@ -10256,6 +10644,21 @@
       margin-bottom: 8px;
     }
     .rgnf-preview:has(.rgnf-ascii) { justify-content: flex-start; }
+    .rgnf-preview-stack { width: 100%; }
+    .rgnf-preview-inner { user-select: none; cursor: text; }
+    .rgnf-paintbar {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+      margin-bottom: 8px; text-align: left;
+    }
+    .rgnf-paintbar-label { color: var(--rgnf-muted); font-size: 11px; line-height: 1.35; flex: 1; }
+    .rgnf-paintbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .rgnf-zoom { display: flex; align-items: center; gap: 4px; }
+    .rgnf-zoom-label { min-width: 46px; text-align: center; }
+    .rgnf-paint-on {
+      background: color-mix(in srgb, #22d3ee 32%, transparent);
+      border-radius: 3px;
+      box-shadow: inset 0 0 0 1px #22d3eecc;
+    }
     .rgnf-preview-name { font-size: 18px; font-weight: 400; word-break: break-word; }
     .rgnf-preview-inner.rgnf-ascii { text-align: left; width: 100%; }
     .rgnf-preview-inner.rgnf-ascii .rgnf-preview-name {
@@ -10810,6 +11213,13 @@ _rgnfFab = fab; _rgnfPanel = panel;
       refreshArtHint(state.name, code.length);
       saveJSON(stateKey(), state);
     };
+    refreshForgePreview = () => {
+      const top = pv.scrollTop;
+      const left = pv.scrollLeft;
+      refreshPreview();
+      pv.scrollTop = top;
+      pv.scrollLeft = left;
+    };
     refreshPreview();
 
     // ---- Name ----
@@ -10821,6 +11231,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
       placeholder: 'Type your name, or paste ASCII art…',
       oninput: (e) => {
         const next = e.target.value;
+        if (next !== state.name) {
+          state.colorSpans = [];
+          namePaintSel = { start: 0, end: 0 };
+        }
         state.name = next;
         if (typeof state.rawCode === 'string') {
           const keepScored = state.scoredMode;
@@ -10835,11 +11249,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
       },
     });
     nameInput.value = state.name;
+    ["mouseup", "keyup", "select"].forEach((evt) => {
+      nameInput.addEventListener(evt, () => rememberNamePaintSel(nameInput));
+    });
     secName.appendChild(el('div', { class: 'rgnf-row' }, [
       nameInput,
       el('button', {
         class: 'rgnf-chip', text: '✕ Clear', title: 'Clear the name field',
-        onclick: () => { state.name = ''; nameInput.value = ''; refreshPreview(); nameInput.focus(); },
+        onclick: () => { state.name = ''; state.colorSpans = []; namePaintSel = { start: 0, end: 0 }; nameInput.value = ''; refreshPreview(); nameInput.focus(); },
       }),
     ]));
 
@@ -10871,12 +11288,18 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // ---- Color ----
     const secColor = el('div', { class: 'rgnf-sec' });
     secColor.appendChild(el('h4', { text: 'Color' }));
+    secColor.appendChild(el('p', {
+      class: 'rgnf-hint',
+      text: namePaintRange()
+        ? 'Painting the highlighted text only.'
+        : 'Drag on the sticky preview to pick a slice. Then change Color. No highlight paints everything.',
+    }));
     const modeRow = el('div', { class: 'rgnf-row' });
     ['none', 'solid', 'gradient'].forEach((m) => {
       modeRow.appendChild(el('button', {
         class: `rgnf-chip ${state.colorMode === m ? 'rgnf-on' : ''}`,
         text: m[0].toUpperCase() + m.slice(1),
-        onclick: () => { state.colorMode = m; render(panel); },
+        onclick: () => { commitNameColor(() => { state.colorMode = m; }); render(panel); },
       }));
     });
     secColor.appendChild(modeRow);
@@ -10884,10 +11307,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
     if (state.colorMode === 'solid') {
       secColor.appendChild(el('div', { class: 'rgnf-row' }, [
         el('label', { text: 'Color' }),
-        el('input', { type: 'color', value: state.solidColor, oninput: (e) => { state.solidColor = e.target.value; render(panel); } }),
+        el('input', { type: 'color', value: state.solidColor, oninput: (e) => { commitNameColor(() => { state.solidColor = e.target.value; }); render(panel); } }),
         el('label', { text: 'Opacity' }, [
           el('input', { type: 'range', min: 32, max: 255, value: state.solidAlpha ?? 255,
-            oninput: (e) => { state.solidAlpha = Number(e.target.value); refreshPreview(); },
+            oninput: (e) => { commitNameColor(() => { state.solidAlpha = Number(e.target.value); }); refreshPreview(); },
             style: 'width:80px;margin-left:6px;',
           }),
         ]),
@@ -10898,17 +11321,17 @@ _rgnfFab = fab; _rgnfPanel = panel;
       const stopsWrap = el('div', { class: 'rgnf-stops' });
       state.stops.forEach((c, idx) => {
         const stop = el('div', { class: 'rgnf-stop' }, [
-          el('input', { type: 'color', value: c, oninput: (e) => { state.stops[idx] = e.target.value; render(panel); } }),
+          el('input', { type: 'color', value: c, oninput: (e) => { commitNameColor(() => { state.stops[idx] = e.target.value; }); render(panel); } }),
         ]);
         if (state.stops.length > 2) {
-          stop.appendChild(el('button', { text: '✕', onclick: () => { state.stops.splice(idx, 1); render(panel); } }));
+          stop.appendChild(el('button', { text: '✕', onclick: () => { commitNameColor(() => { state.stops.splice(idx, 1); }); render(panel); } }));
         }
         stopsWrap.appendChild(stop);
       });
       if (state.stops.length < 5) {
         stopsWrap.appendChild(el('button', {
           class: 'rgnf-chip', text: '+ stop',
-          onclick: () => { state.stops.push(state.stops[state.stops.length - 1]); render(panel); },
+          onclick: () => { commitNameColor(() => { state.stops.push(state.stops[state.stops.length - 1]); }); render(panel); },
         }));
       }
       secColor.appendChild(stopsWrap);
@@ -10921,16 +11344,16 @@ _rgnfFab = fab; _rgnfPanel = panel;
       PALETTES.forEach((p) => {
         palRow.appendChild(el('button', {
           class: 'rgnf-chip', text: p.label, title: p.stops.join(' → '),
-          onclick: () => { state.stops = [...p.stops]; render(panel); },
+          onclick: () => { commitNameColor(() => { state.stops = [...p.stops]; }); render(panel); },
         }));
       });
       palRow.appendChild(el('button', {
         class: 'rgnf-chip', text: '⇄ Reverse', title: 'Flip gradient direction',
-        onclick: () => { state.stops.reverse(); render(panel); },
+        onclick: () => { commitNameColor(() => { state.stops.reverse(); }); render(panel); },
       }));
       palRow.appendChild(el('button', {
         class: 'rgnf-chip', text: '🎲 Random', title: 'Roll a random vivid gradient',
-        onclick: () => { state.stops = randomStops(); render(panel); },
+        onclick: () => { commitNameColor(() => { state.stops = randomStops(); }); render(panel); },
       }));
       secColor.appendChild(palRow);
 

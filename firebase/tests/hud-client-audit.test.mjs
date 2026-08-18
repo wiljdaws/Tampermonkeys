@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "22.4");
+  assert.equal(version, "22.5");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -779,7 +779,8 @@ test("support bundle redacts stable identifiers and full user agents", () => {
   );
   const debugSource = hudSource.slice(debugStart, debugEnd);
   assert.match(debugSource, /hudExists: !!q\("rgHUD"\)/);
-  assert.doesNotMatch(debugSource, /deviceId:\s*getDeviceId\(\)/);
+  assert.match(debugSource, /firebaseId:\s*firebaseAuthUid/);
+  assert.match(debugSource, /deviceId:\s*getDeviceId\(\)/);
   assert.doesNotMatch(debugSource, /userAgent:\s*/);
   assert.match(debugSource, /redactSupportText\(text, redactions\)/);
   assert.match(debugSource, /rgDump: _rgLogBuf\.slice\(\)/);
@@ -1108,6 +1109,73 @@ test("popup preferences cover roles, safe corners, and reduced motion", () => {
   );
 });
 
+test("Name Forge can paint a highlighted slice without recoloring the rest", () => {
+  const normalizeColorSpans = extractHudFunction("normalizeColorSpans");
+  const colorStyleAt = extractHudFunction("colorStyleAt");
+  const cloneColorStyle = extractHudFunction("cloneColorStyle");
+  const bakeUncoveredColorSpans = extractHudFunction("bakeUncoveredColorSpans", {
+    normalizeColorSpans,
+    cloneColorStyle,
+  });
+  const subtractColorRange = extractHudFunction("subtractColorRange", {
+    cloneColorStyle,
+  });
+  const applySliceColor = extractHudFunction("applySliceColor", {
+    bakeUncoveredColorSpans,
+    subtractColorRange,
+    cloneColorStyle,
+    normalizeColorSpans,
+  });
+  const splitByColorSpans = extractHudFunction("splitByColorSpans", {
+    normalizeColorSpans,
+    colorStyleAt,
+  });
+  const fallback = {
+    mode: "gradient",
+    solid: "#00ff00",
+    stops: ["#00ff00", "#0000ff"],
+    solidAlpha: 255,
+  };
+  const runs = splitByColorSpans("ABCDEF", [
+    { start: 2, end: 4, mode: "solid", solid: "#ff0000", stops: [] },
+  ], fallback);
+  assert.equal(runs.map((run) => run.text).join(""), "ABCDEF");
+  assert.equal(runs[0].style.mode, "gradient");
+  assert.equal(runs[1].text, "CD");
+  assert.equal(runs[1].style.solid, "#ff0000");
+  assert.equal(runs[2].style.mode, "gradient");
+  const laterWins = splitByColorSpans("ABCDEF", [
+    { start: 0, end: 6, mode: "solid", solid: "#111111", stops: [] },
+    { start: 2, end: 4, mode: "gradient", solid: "#222222", stops: ["#aaaaaa", "#bbbbbb"] },
+  ], fallback);
+  assert.equal(laterWins[1].style.mode, "gradient");
+  const before = {
+    mode: "gradient",
+    solid: "#111111",
+    stops: ["#ff8800", "#ff0000"],
+    solidAlpha: 255,
+  };
+  const after = {
+    mode: "solid",
+    solid: "#00ffff",
+    stops: ["#00ffff"],
+    solidAlpha: 255,
+  };
+  const sliced = applySliceColor([], 6, { start: 2, end: 4 }, before, after);
+  const slicedRuns = splitByColorSpans("ABCDEF", sliced, after);
+  assert.equal(slicedRuns[0].style.stops[0], "#ff8800");
+  assert.equal(slicedRuns[1].style.solid, "#00ffff");
+  assert.equal(slicedRuns[2].style.stops[0], "#ff8800");
+  assert.match(hudSource, /commitNameColor\(/);
+  assert.match(hudSource, /Painting the highlighted text only/);
+  assert.match(hudSource, /isPaintSpaceEl\(/);
+  assert.match(hudSource, /dataset\.forgeI/);
+  assert.match(hudSource, /rgnf-paintbar/);
+  assert.match(hudSource, /wirePreviewPaint\(/);
+  assert.match(hudSource, /function setPreviewZoom\(/);
+  assert.match(hudSource, /Does not change the in-game name size/);
+});
+
 test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const isAsciiArtText = extractHudFunction("isAsciiArtText");
   const preserveForgeNewlines = extractHudFunction("preserveForgeNewlines");
@@ -1169,13 +1237,24 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const packedCrew = packAsciiArt(crew);
   assert.match(packedCrew, /<mspace=0\.72em>/);
   assert.match(packedCrew, /<line-height=1\.12em>/);
-  assert.match(gameSafeArtChars("+:+"), /\+\u200B:/);
+  assert.equal(gameSafeArtChars("+:+"), "+:+");
   assert.equal(restorePreferredArtChars("==##''"), "++##::");
   assert.equal(restorePreferredArtChars("=##:"), "+##:");
-  const strippedSafe = gameSafeArtChars(".++#####++:+#:").replace(/<[^>]*>/g, "");
-  assert.equal(/\+:\+/.test(strippedSafe), false);
-  assert.match(strippedSafe, /[+:]/);
-  assert.match(packAsciiArt(".++#####++:+#:\n##"), /[+:]/);
+  assert.equal(
+    restorePreferredArtChars("+<size=0>x</size>:\u200B+"),
+    "+:+",
+  );
+  assert.match(packAsciiArt(".++#####++:+#:\n##"), /\+:/);
+  const nickSafeColor = extractHudFunction("nickSafeColor");
+  const sanitizeNicknameColors = extractHudFunction("sanitizeNicknameColors", {
+    nickSafeColor,
+  });
+  assert.equal(nickSafeColor("#FFA600"), "#FFA700");
+  assert.match(
+    sanitizeNicknameColors("<#FF8800>+<#FFA600>"),
+    /<#FFA700>/,
+  );
+  assert.equal(/FFA600/i.test(sanitizeNicknameColors("<#FFA600>")), false);
 });
 
 test("Name Forge remembers a Scored default and keeps clan tags off the name", () => {
