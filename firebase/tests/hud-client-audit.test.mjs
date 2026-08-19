@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "22.6");
+  assert.equal(version, "22.7");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -907,7 +907,7 @@ test("streak snipe selects the strongest tracked opponent after a win", () => {
   );
 });
 
-test("ranked popups match a roster by in-game id or Firebase uid", () => {
+test("ranked popups match roster logs on in-game id only", () => {
   const lookupInCache = extractHudFunction("lookupInCache");
   const cache = {
     modes: {
@@ -931,11 +931,13 @@ test("ranked popups match a roster by in-game id or Firebase uid", () => {
     lookupInCache(cache, "in-game-id", "Competitive3v3")?.name,
     "Xuuya",
   );
-  assert.equal(
-    lookupInCache(cache, "firebase-uid", "Competitive3v3")?.name,
-    "Xuuya",
-  );
+  assert.equal(lookupInCache(cache, "firebase-uid", "Competitive3v3"), null);
   assert.equal(lookupInCache(cache, "unknown", "Competitive3v3"), null);
+  assert.match(hudSource, /rgHudLbCache_v4/);
+  assert.equal(
+    /leaderboard aggregate missing rgPlayerId/.test(hudSource),
+    false,
+  );
 });
 
 test("ranked popups keep fixed defaults and show opponent streak badges", () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.6
+// @version      22.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3259,7 +3259,7 @@
     // near-real-time rank stuff is untouched.
 
     const RG_LB_CACHE_KEY_LEGACY = "rgHudLbCache_v1";
-    const RG_LB_CACHE_KEY_PREFIX = "rgHudLbCache_v3";
+    const RG_LB_CACHE_KEY_PREFIX = "rgHudLbCache_v4";
     const RG_LB_CONFIG_KEY = "rgHudRemoteConfig_v1";
     const RG_LB_CONFIG_TTL_MS = 60 * 60 * 1000;
     const RG_LB_MODES = ["Competitive1v1", "Competitive2v2", "Competitive3v3"];
@@ -3726,9 +3726,9 @@
         const entries = cache.modes[mode];
         if (!entries) return null;
         const needle = String(uid);
-        return entries.find(e =>
-            e.uid === needle || (e.rgPlayerId && e.rgPlayerId === needle)
-        ) || null;
+        // Roster logs only have the in-game id. Never match Firebase uid.
+        // Old rows stored that game id in uid; new rows put it on rgPlayerId.
+        return entries.find((e) => String(e.rgPlayerId || e.uid) === needle) || null;
     }
 
     function tierColorForRank(rank) {

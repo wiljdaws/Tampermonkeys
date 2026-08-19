@@ -80,7 +80,7 @@ const popupStackPositionStyle = extractHudFunction(
   { normalizePopupPreferences },
 );
 const leaderboardCacheKey = extractHudFunction("leaderboardCacheKey", {
-  RG_LB_CACHE_KEY_PREFIX: "rgHudLbCache_v3",
+  RG_LB_CACHE_KEY_PREFIX: "rgHudLbCache_v4",
 });
 
 const modes = [
