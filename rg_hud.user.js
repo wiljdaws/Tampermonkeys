@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.5
+// @version      22.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3259,7 +3259,7 @@
     // near-real-time rank stuff is untouched.
 
     const RG_LB_CACHE_KEY_LEGACY = "rgHudLbCache_v1";
-    const RG_LB_CACHE_KEY_PREFIX = "rgHudLbCache_v2";
+    const RG_LB_CACHE_KEY_PREFIX = "rgHudLbCache_v3";
     const RG_LB_CONFIG_KEY = "rgHudRemoteConfig_v1";
     const RG_LB_CONFIG_TTL_MS = 60 * 60 * 1000;
     const RG_LB_MODES = ["Competitive1v1", "Competitive2v2", "Competitive3v3"];
@@ -3553,10 +3553,12 @@
         for (let index = 0; index < rows.length; index += 1) {
             const row = rows[index] || {};
             const uid = String(row.uid || row.sourceUserId || "").trim();
+            const rgPlayerId = String(row.rgPlayerId || "").trim();
             const mmr = Number(row.mmr);
             if (!uid || !Number.isFinite(mmr)) continue;
             entries.push({
                 uid,
+                ...(rgPlayerId ? { rgPlayerId } : {}),
                 name: String(row.name || ""),
                 mmr,
                 rank: Number(row.rank) > 0 ? Number(row.rank) : entries.length + 1,
@@ -3601,7 +3603,14 @@
         snap.forEach(doc => {
             rank++;
             const d = doc.data();
-            entries.push({ uid: d.sourceUserId, name: d.name, mmr: d.mmr, rank });
+            const rgPlayerId = typeof d.rgPlayerId === "string" ? d.rgPlayerId.trim() : "";
+            entries.push({
+                uid: d.sourceUserId,
+                ...(rgPlayerId ? { rgPlayerId } : {}),
+                name: d.name,
+                mmr: d.mmr,
+                rank,
+            });
         });
         dbg(`leaderboard cache refreshed (${mode.replace("Competitive", "")}:${entries.length})`);
         return {
@@ -3716,7 +3725,10 @@
         if (!cache || !cache.modes || !uid) return null;
         const entries = cache.modes[mode];
         if (!entries) return null;
-        return entries.find(e => e.uid === uid) || null;
+        const needle = String(uid);
+        return entries.find(e =>
+            e.uid === needle || (e.rgPlayerId && e.rgPlayerId === needle)
+        ) || null;
     }
 
     function tierColorForRank(rank) {
@@ -9135,12 +9147,14 @@
     scoredColor: '#22d3ee',
     scoredSizePct: 100,
     rawCode: null,                    // when set: exact current in-game markup, used verbatim
+    align: readAlignDefault() || 'left',
   });
 
   let state = loadJSON(stateKey(), null) || loadJSON(STATE_KEY_LEGACY, defaultState());
   // backfill any new fields if an old state was saved
   state = Object.assign(defaultState(), state);
   if (!Array.isArray(state.colorSpans)) state.colorSpans = [];
+  state.align = normalizeForgeAlign(state.align);
   let namePaintSel = { start: 0, end: 0 };
   let previewZoom = 1;
   let refreshForgePreview = () => {};
@@ -9226,7 +9240,11 @@
       .replace(/<br\s*\/?\s*>/gi, "\n")
       .replace(/\r\n/g, "\n")
       .split("\n");
-    const visible = (line) => [...String(line).replace(/<[^>]*>/g, "")].length;
+    const visible = (line) => [...String(line)
+      .replace(/<color=#00000000>\.*<\/color>/gi, "")
+      .replace(/<#00000000>\./gi, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/[ \t]+$/g, "")].length;
     return {
       lines,
       height: lines.length,
@@ -9320,46 +9338,180 @@
     return `<mspace=0.6em>${value}</mspace>`;
   }
 
+  // Transparent `.` — the game font has that glyph. NBSP became tofu boxes.
+  const ART_WIDTH_PAD = "<#00000000>.";
+
+  function stripArtWidthPads(line) {
+    return String(line ?? "")
+      .replace(/<color=#00000000>\.*<\/color>/gi, "")
+      .replace(/<#00000000>\./gi, "")
+      .replace(/<\/?rgnf-align[^>]*>/gi, "")
+      .replace(/<space=[^>]*>/gi, "")
+      .replace(/\u00A0/g, " ");
+  }
+
+  function visibleArtWidth(line) {
+    return [...stripArtWidthPads(line).replace(/<[^>]*>/g, "").replace(/[ \t]+$/g, "")].length;
+  }
+
+  // Same column budget as artFitSizePct. Center/right keep <align=left>
+  // (so the last row stays put) and shift the whole block with a closed
+  // transparent indent the game font can actually draw.
+  function artBlockIndentCols(width, align) {
+    const side = normalizeForgeAlign(align);
+    const extra = Math.max(0, 20 - (Number(width) || 0));
+    if (side === "center") return Math.floor(extra / 2);
+    if (side === "right") return extra;
+    return 0;
+  }
+
+  function artIndentPad(cols) {
+    const n = Math.max(0, Number(cols) || 0);
+    if (!n) return "";
+    return `<color=#00000000>${".".repeat(n)}</color>`;
+  }
+
+  function indentArtBody(body, cols) {
+    const pad = artIndentPad(cols);
+    if (!pad) return String(body ?? "");
+    const parts = String(body ?? "").split(/(<br\s*\/?\s*>)/i);
+    return parts.map((part, i) => {
+      if (/^<br\s*\/?\s*>$/i.test(part)) return part;
+      if (!part && i === parts.length - 1) return part;
+      return pad + part;
+    }).join("");
+  }
+
+  function padArtLineToWidth(line, width, mspace) {
+    const value = stripArtWidthPads(line).replace(/[ \t]+$/g, "");
+    const visible = visibleArtWidth(value);
+    if (!Number(width) || visible >= width) return value;
+    const em = Number.parseFloat(String(mspace ?? "").replace(/em$/i, ""));
+    const cell = Number.isFinite(em) && em > 0 ? em : 0.72;
+    const pad = Math.round((width - visible) * cell * 100) / 100;
+    return `${value}<space=${pad}em>`;
+  }
+
+  function padArtBodyLines(body, width, mspace) {
+    const parts = String(body ?? "").split(/(<br\s*\/?\s*>)/i);
+    return parts.map((part, i) => {
+      if (/^<br\s*\/?\s*>$/i.test(part)) return part;
+      const lastEmpty = !part && i === parts.length - 1;
+      if (lastEmpty) return part;
+      return padArtLineToWidth(part, width, mspace);
+    }).join("");
+  }
+
+  // Nameplates clip the last glyph row. A trailing <br> leaves an empty
+  // line-box so the last visible row sits above the clip. Skip if one is
+  // already there so Apply / pack does not keep stacking blanks.
+  function padArtLastLine(markup, height) {
+    const value = String(markup ?? "");
+    if (!value || Number(height) < 2) return value;
+    if (/(<br\s*\/?\s*>|\n)\s*(<\/mspace>)?\s*$/i.test(value)) return value;
+    if (/<\/mspace>\s*$/i.test(value)) {
+      return value.replace(/<\/mspace>\s*$/i, "<br></mspace>");
+    }
+    return value + "<br>";
+  }
+
   // Monospace + fit-to-nameplate. Plain art `<` `>` become fullwidth so TMP
   // does not eat the rest of a FIGlet / dot piece as tags.
-  function packAsciiArt(text) {
-    const value = gameSafeArtChars(brailleToAsciiArt(String(text ?? "")));
-    if (!value) return value;
-    if (/<mspace=/i.test(value)) {
-      const mspace = artMspaceEm(value);
-      const brs = (value.match(/<br\s*\/?\s*>/gi) || []).length;
-      const lineHeight = artLineHeightEm(value, brs + 1);
-      let packed = value.replace(/<mspace=[^>]*>/gi, `<mspace=${mspace}>`);
-      if (lineHeight) {
-        packed = /<line-height=/i.test(packed)
-          ? packed.replace(/<line-height=[^>]*>/gi, `<line-height=${lineHeight}>`)
-          : `<line-height=${lineHeight}>${packed}`;
-      }
-      return preserveForgeNewlines(packed);
+  // Left-align so each row shares an edge the way the preview does. The
+  // nameplate centers the whole block; it must not center each line.
+  function normalizeForgeAlign(value) {
+    const v = String(value || "").toLowerCase();
+    return v === "center" || v === "right" ? v : "left";
+  }
+
+  function forgeAlignJustify(align) {
+    const v = normalizeForgeAlign(align);
+    if (v === "right") return "flex-end";
+    if (v === "center") return "center";
+    return "flex-start";
+  }
+
+  function alignFromRaw(raw) {
+    const value = String(raw ?? "");
+    const marked = value.match(/<rgnf-align=(left|center|right)>/i);
+    if (marked) return marked[1].toLowerCase();
+    const m = value.match(/<align\s*=\s*(left|center|right)>/i);
+    if (m) return m[1].toLowerCase();
+    return readAlignDefault() || "left";
+  }
+
+  function applyAlignToRaw(raw, align) {
+    const side = normalizeForgeAlign(align);
+    const value = String(raw ?? "");
+    if (/<align\s*=\s*(left|center|right)>/i.test(value)) {
+      return value.replace(/<align\s*=\s*(left|center|right)>/gi, `<align=${side}>`);
     }
-    const normalized = value.replace(/\r\n/g, "\n").replace(/<br\s*\/?\s*>/gi, "\n");
-    const lines = normalized.split("\n");
-    const hasTmp = /<(size|color|b|i|u|s|mark|sprite|sub|sup|\/|#)/i.test(normalized)
-      || /<#[0-9A-Fa-f]{3,8}>/.test(normalized);
-    const body = lines.map((line) => (
-      hasTmp ? line : line.replace(/</g, "\uFF1C").replace(/>/g, "\uFF1E")
-    )).join("<br>");
-    const stats = artLineStats(normalized);
-    const size = artFitSizePct(stats.height, stats.width);
-    const mspace = artMspaceEm(normalized);
-    const lineHeight = artLineHeightEm(normalized, stats.height);
-    // Size must wrap line-height. Percent line-height outside <size> uses the
-    // nameplate's huge default leading, which stretches 19 rows into a tower.
-    let out = `<mspace=${mspace}>${body}</mspace>`;
+    return `<align=${side}>${value}</align>`;
+  }
+
+  function wrapPackedArt(body, mspace, lineHeight, size, align) {
+    // The game lifts the last line of a name into a title slot (centered,
+    // default leading). An empty trailing <br> keeps the real last art row
+    // inside the mspace block. Art itself stays left-aligned so a short
+    // last row does not jump; center/right only indent the block.
+    const side = normalizeForgeAlign(align);
+    const padded = /<br\s*\/?\s*>\s*$/i.test(body) ? body : `${body}<br>`;
+    let out = `<align=left><mspace=${mspace}>${padded}</mspace></align>`;
+    if (side !== "left") out = `<rgnf-align=${side}>` + out;
     if (lineHeight) out = `<line-height=${lineHeight}>${out}`;
     if (size < 100) out = `<size=${size}%>${out}`;
     return out;
   }
 
+  function packAsciiArt(text, align) {
+    const side = normalizeForgeAlign(align);
+    const value = gameSafeArtChars(brailleToAsciiArt(stripArtWidthPads(String(text ?? ""))));
+    if (!value) return value;
+    if (/<mspace=/i.test(value)) {
+      const mspace = artMspaceEm(value);
+      const brs = (value.match(/<br\s*\/?\s*>/gi) || []).length;
+      const lineHeight = artLineHeightEm(value, brs + 1);
+      let packed = value
+        .replace(/<\/?rgnf-align[^>]*>/gi, "")
+        .replace(/<\/?align[^>]*>/gi, "")
+        .replace(/<mspace=[^>]*>/gi, `<mspace=${mspace}>`);
+      packed = preserveForgeNewlines(packed);
+      let inner = (packed.match(/<mspace=[^>]*>([\s\S]*?)<\/mspace>/i) || [])[1];
+      const sizeTag = packed.match(/<size=(\d+)%?>/i);
+      const size = sizeTag ? Number(sizeTag[1]) : 100;
+      if (inner == null) inner = packed;
+      if (side !== "left") {
+        const width = artLineStats(inner.replace(/<br\s*\/?\s*>/gi, "\n")).width;
+        inner = indentArtBody(inner, artBlockIndentCols(width, side));
+      }
+      return wrapPackedArt(inner, mspace, lineHeight, size, side);
+    }
+    const normalized = value.replace(/\r\n/g, "\n").replace(/<br\s*\/?\s*>/gi, "\n");
+    const lines = normalized.split("\n");
+    const hasTmp = /<(size|color|b|i|u|s|mark|sprite|sub|sup|\/|#)/i.test(normalized)
+      || /<#[0-9A-Fa-f]{3,8}>/.test(normalized);
+    const stats = artLineStats(normalized);
+    let body = lines.map((line) => {
+      const safe = hasTmp ? line : line.replace(/</g, "\uFF1C").replace(/>/g, "\uFF1E");
+      return safe;
+    }).join("<br>");
+    if (side !== "left") {
+      body = indentArtBody(body, artBlockIndentCols(stats.width, side));
+    }
+    const size = artFitSizePct(stats.height, stats.width);
+    const mspace = artMspaceEm(normalized);
+    const lineHeight = artLineHeightEm(normalized, stats.height);
+    return wrapPackedArt(body, mspace, lineHeight, size, side);
+  }
+
   function editableTextFromRaw(raw) {
     return String(raw ?? "")
+      .replace(/<color=#00000000>\.*<\/color>/gi, "")
+      .replace(/<#00000000>\./gi, "")
       .replace(/<br\s*\/?\s*>/gi, "\n")
       .replace(/<(?!sprite=\d+\s*>)[^>]*>/gi, "")
+      .replace(/\u00A0/g, " ")
+      .replace(/[ \t]+$/gm, "")
       .replace(/\r\n/g, "\n")
       .replace(/^\n+|\n+$/g, "");
   }
@@ -9383,6 +9535,23 @@
       titleOn: Boolean(titleText),
       titleText,
     };
+  }
+
+  function alignDefaultKey() {
+    return 'rgNameForge.alignDefault.v1.' + (_currentUserId || 'anon');
+  }
+
+  function readAlignDefault() {
+    try {
+      const v = loadJSON(alignDefaultKey(), null);
+      if (v === 'left' || v === 'center' || v === 'right') return v;
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function writeAlignDefault(align) {
+    const side = normalizeForgeAlign(align);
+    saveJSON(alignDefaultKey(), side);
   }
 
   function scoredDefaultKey() {
@@ -9473,6 +9642,7 @@
       titleUnderline: false,
       titleStrike: false,
       titleAlpha: 255,
+      align: alignFromRaw(scored.rawCode),
       scoredMode: scored.scoredMode,
       ...(scored.scoredSizePct ? { scoredSizePct: scored.scoredSizePct } : {}),
       ...(scored.scoredColor ? { scoredColor: scored.scoredColor } : {}),
@@ -9618,8 +9788,21 @@
 
   function loadStateSnapshot(snapshot) {
     state = Object.assign(defaultState(), snapshot || {});
+    namePaintSel = { start: 0, end: 0 };
     if (state.rawCode) setRawSnapshot(state.rawCode);
     else state.scoredMode = resolveScoredMode(state.scoredMode, readScoredDefault());
+  }
+
+  // Preset / recent / live-nickname loads must land in the sticky preview,
+  // not just the NAME box or the raw textarea.
+  function applyLoadedForgeName(source) {
+    if (typeof source === "string") {
+      setRawSnapshot(source);
+      namePaintSel = { start: 0, end: 0 };
+    } else {
+      loadStateSnapshot(source);
+    }
+    if (_rgnfPanel) render(_rgnfPanel);
   }
 
   function setRawSnapshot(raw) {
@@ -9939,22 +10122,176 @@
     return normalizeColorSpans(next, len);
   }
 
+  function expandPaintHex(hex) {
+    const m = String(hex || "").match(/^#([0-9A-Fa-f]{3,8})$/);
+    if (!m) return null;
+    let body = m[1];
+    if (body.length === 3 || body.length === 4) {
+      body = [...body].map((c) => c + c).join("");
+    }
+    const alpha = body.length >= 8 ? parseInt(body.slice(6, 8), 16) : 255;
+    return {
+      solid: nickSafeColor("#" + body.slice(0, 6).toUpperCase()),
+      solidAlpha: Number.isFinite(alpha) ? alpha : 255,
+    };
+  }
+
+  // Packed TMP (`<#7A4E08>.`) has no colorSpans. Paint needs those spans,
+  // so turn visible hex runs into slice marks aligned to state.name.
+  function colorSpansFromRawName(raw, name) {
+    const target = String(name ?? "");
+    const src = String(raw ?? "");
+    let color = null;
+    const colorStack = [];
+    let nameIndex = 0;
+    let i = 0;
+    const spans = [];
+    let runStart = -1;
+    let runColor = null;
+    let runAlpha = 255;
+
+    const flush = (end) => {
+      if (runStart >= 0 && end > runStart && runColor) {
+        spans.push({
+          start: runStart,
+          end,
+          mode: "solid",
+          solid: runColor,
+          stops: [runColor],
+          solidAlpha: runAlpha,
+        });
+      }
+      runStart = -1;
+      runColor = null;
+      runAlpha = 255;
+    };
+
+    const takeVisible = (len) => {
+      if (nameIndex >= target.length) return;
+      const parsed = color ? expandPaintHex(color) : null;
+      const hex = parsed?.solid || null;
+      const alpha = parsed?.solidAlpha ?? 255;
+      if (hex !== runColor || alpha !== runAlpha) {
+        flush(nameIndex);
+        if (hex) {
+          runStart = nameIndex;
+          runColor = hex;
+          runAlpha = alpha;
+        }
+      }
+      nameIndex += len;
+    };
+
+    while (i < src.length && nameIndex < target.length) {
+      const rest = src.slice(i);
+      let m;
+      if ((m = rest.match(/^<br\s*\/?\s*>/i)) || rest[0] === "\n") {
+        if (target[nameIndex] === "\n") takeVisible(1);
+        i += m ? m[0].length : 1;
+        continue;
+      }
+      if (rest[0] === "\r") { i += 1; continue; }
+      if ((m = rest.match(/^<color=#00000000>\.*<\/color>/i)) || (m = rest.match(/^<#00000000>\./))) {
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<(#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))>/))) {
+        color = m[1];
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<color\s*=\s*(["']?)(#[0-9A-Fa-f]{3,8})\1\s*>/i))) {
+        colorStack.push(color);
+        color = m[2];
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<\/color\s*>/i))) {
+        color = colorStack.length ? colorStack.pop() : null;
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<sprite=\d+\s*>/i))) {
+        const glen = target.startsWith("<sprite=", nameIndex)
+          ? Math.max(1, target.indexOf(">", nameIndex) - nameIndex + 1)
+          : 1;
+        takeVisible(glen);
+        i += m[0].length;
+        continue;
+      }
+      if (rest[0] === "<") {
+        const close = rest.indexOf(">");
+        if (close >= 0) { i += close + 1; continue; }
+      }
+      const ch = String.fromCodePoint(src.codePointAt(i));
+      // Pack padding (nbsp / extra end-of-line spaces) is not in state.name.
+      // Consuming name indices for those pads is what made a slice paint
+      // the whole piece.
+      if (ch === "\u00A0" || ch === " ") {
+        const at = target[nameIndex];
+        if (at === " " || at === "\u00A0") takeVisible(1);
+        i += ch.length;
+        continue;
+      }
+      takeVisible(ch.length);
+      i += ch.length;
+    }
+    flush(nameIndex);
+    return normalizeColorSpans(spans, target.length);
+  }
+
+  function ensureStateColorSpans() {
+    if ((state.colorSpans || []).length) return;
+    const src = typeof state.rawCode === "string"
+      ? state.rawCode
+      : (_lastRawNickname ? _stripTag(String(_lastRawNickname)) : "");
+    if (!src || !state.name) return;
+    const spans = colorSpansFromRawName(src, state.name);
+    if (spans.length) state.colorSpans = spans;
+  }
+
+  function absorbRawIntoPaintState() {
+    if (typeof state.rawCode !== "string") return;
+    const raw = state.rawCode;
+    const nameBefore = state.name;
+    const spansBefore = state.colorSpans;
+    syncEditableFieldsFromRaw(raw);
+    // Keep the name the highlight was measured against so slice indices
+    // still point at the same glyphs after leaving raw TMP.
+    if (nameBefore && String(state.name) !== String(nameBefore)) {
+      const sameArt = editableTextFromRaw(nameBefore) === editableTextFromRaw(state.name);
+      if (sameArt) state.name = nameBefore;
+    }
+    if (!(spansBefore || []).length) {
+      state.colorSpans = colorSpansFromRawName(raw, state.name);
+    } else {
+      state.colorSpans = spansBefore;
+    }
+    state.rawCode = null;
+  }
+
   function commitNameColor(mutator) {
     const range = namePaintRange();
     const before = snapshotNameColorStyle();
+    absorbRawIntoPaintState();
+    ensureStateColorSpans();
     mutator?.();
-    if (range) {
+    const len = String(state.name || "").length;
+    const start = Math.max(0, Math.min(len, range?.start ?? 0));
+    const end = Math.max(0, Math.min(len, range?.end ?? 0));
+    if (range && end > start) {
       state.colorSpans = applySliceColor(
         state.colorSpans,
-        String(state.name || "").length,
-        range,
+        len,
+        { start, end },
         before,
         snapshotNameColorStyle(),
       );
       state.rawCode = null;
       return;
     }
-    state.colorSpans = [];
+    // A lost highlight must not fall through to "paint everything".
+    if (!range) state.colorSpans = [];
   }
 
   // 6-as-g makes FA6 → fag. Fire oranges like #FFA600 trip the nickname API.
@@ -10040,24 +10377,40 @@
   }
 
   function colorizeNamedArt(artName, s) {
-    const fallback = {
+    // Preview draws uncolored glyphs in light text. The nameplate default
+    // is a solid accent, so "none" has to be an explicit white in-game.
+    const previewMatch = (style) => {
+      if (!style || style.mode === "none") {
+        return {
+          mode: "solid",
+          solid: "#FFFFFF",
+          stops: ["#FFFFFF"],
+          solidAlpha: 255,
+        };
+      }
+      return style;
+    };
+    const fallback = previewMatch({
       mode: s.colorMode,
       solid: s.solidColor,
       stops: s.stops,
       solidAlpha: s.solidAlpha ?? 255,
-    };
+    });
     const spans = String(s.name || "").length === String(artName || "").length
       ? s.colorSpans
       : [];
-    return splitByColorSpans(artName, spans, fallback).map((run) => colorizeText(
-      run.text,
-      run.style.mode,
-      run.style.solid,
-      run.style.stops,
-      s.skipSpaces,
-      s.waveOn ? s.waveAmp : 0,
-      run.style.solidAlpha ?? 255,
-    )).join("");
+    return splitByColorSpans(artName, spans, fallback).map((run) => {
+      const style = previewMatch(run.style);
+      return colorizeText(
+        run.text,
+        style.mode,
+        style.solid,
+        style.stops,
+        s.skipSpaces,
+        s.waveOn ? s.waveAmp : 0,
+        style.solidAlpha ?? 255,
+      );
+    }).join("");
   }
 
   // chars, but <sprite=N> tags stay as single tokens
@@ -10114,12 +10467,19 @@
 
     const artName = restorePreferredArtChars(brailleToAsciiArt(s.name));
     const nameCode = colorizeNamedArt(artName, s);
+    const packedArt = isAsciiArtText(artName) || isAsciiArtText(s.name);
+    const align = normalizeForgeAlign(s.align);
+    if (!packedArt) {
+      open += `<align=${align}>`;
+      close = `</align>${close}`;
+    }
 
     let code = open + nameCode + close;
-    if (isAsciiArtText(artName) || isAsciiArtText(s.name)) code = packAsciiArt(code);
+    if (packedArt) code = packAsciiArt(code, align);
 
-    // title line, fully independent styling
-    if (s.titleOn && s.titleText.trim().length > 0) {
+    // title line, fully independent styling. Art already owns every row;
+    // appending a title would put that last row back in the nameplate slot.
+    if (!packedArt && s.titleOn && s.titleText.trim().length > 0) {
       let t = s.titleText;
       const titleColor = resolveTitleColorStyle(s);
       if (titleColor.mode === 'solid') {
@@ -10150,7 +10510,7 @@
   function effectiveForgeCode(s) {
     if (typeof s.rawCode === 'string') {
       const art = isAsciiArtText(s.rawCode) || isAsciiArtText(s.name);
-      const raw = art ? packAsciiArt(s.rawCode) : preserveForgeNewlines(s.rawCode);
+      const raw = art ? packAsciiArt(s.rawCode, s.align) : preserveForgeNewlines(s.rawCode);
       return raw + scoredSuffix(s);
     }
     return buildCode(s);
@@ -10223,6 +10583,8 @@
       nameLine.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
       nameLine.style.textAlign = 'left';
       nameLine.style.lineHeight = '1.1';
+    } else {
+      nameLine.style.textAlign = normalizeForgeAlign(s.align);
     }
     const previewFallback = {
       mode: s.colorMode,
@@ -10230,6 +10592,7 @@
       stops: s.stops,
       solidAlpha: s.solidAlpha ?? 255,
     };
+    if (s === state) ensureStateColorSpans();
     const previewSpans = String(s.name || "").length === previewName.length
       ? s.colorSpans
       : [];
@@ -10643,12 +11006,17 @@
       box-shadow: 0 6px 8px -6px rgba(0,0,0,0.6);
       margin-bottom: 8px;
     }
-    .rgnf-preview:has(.rgnf-ascii) { justify-content: flex-start; }
+    .rgnf-preview.rgnf-align-left { justify-content: flex-start; }
+    .rgnf-preview.rgnf-align-center { justify-content: center; }
+    .rgnf-preview.rgnf-align-right { justify-content: flex-end; }
     .rgnf-preview-stack { width: 100%; }
     .rgnf-preview-inner { user-select: none; cursor: text; }
     .rgnf-paintbar {
       display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
       margin-bottom: 8px; text-align: left;
+      position: sticky; top: 0; z-index: 2;
+      background: linear-gradient(180deg, #101a3a 70%, transparent);
+      padding-bottom: 4px;
     }
     .rgnf-paintbar-label { color: var(--rgnf-muted); font-size: 11px; line-height: 1.35; flex: 1; }
     .rgnf-paintbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -10660,7 +11028,8 @@
       box-shadow: inset 0 0 0 1px #22d3eecc;
     }
     .rgnf-preview-name { font-size: 18px; font-weight: 400; word-break: break-word; }
-    .rgnf-preview-inner.rgnf-ascii { text-align: left; width: 100%; }
+    .rgnf-preview-inner.rgnf-ascii { text-align: left; width: max-content; min-width: max-content; }
+    .rgnf-preview-inner.rgnf-ascii > div,
     .rgnf-preview-inner.rgnf-ascii .rgnf-preview-name {
       white-space: pre; word-break: normal; font-family: ui-monospace, Menlo, Consolas, monospace;
     }
@@ -10957,9 +11326,52 @@ _rgnfFab = fab; _rgnfPanel = panel;
     setTimeout(() => ov.remove(), 2550);
   }
 
-  function renderRawTMP(raw) {
+  function renderRawTMP(raw, opts = {}) {
     const root = document.createElement('div');
-    root.style.lineHeight = '1.35';
+    root.className = 'rgnf-preview-inner';
+    const art = isAsciiArtText(raw);
+    const previewPx = Math.max(10, Math.round(18 * (previewZoom || 1)));
+    const paintName = opts.paintName != null ? String(opts.paintName) : "";
+    const paintFrom = Number(opts.paintFrom) || 0;
+    const paintTo = opts.paintTo != null ? Number(opts.paintTo) : (paintName ? raw.length : -1);
+    let nameCursor = 0;
+    const inPaintRegion = (index) => paintName && index >= paintFrom && index < paintTo;
+    const tagPaintChar = (el, index, ch) => {
+      if (!inPaintRegion(index) || nameCursor >= paintName.length) return;
+      if ((ch === " " || ch === "\u00A0")
+          && paintName[nameCursor] !== " "
+          && paintName[nameCursor] !== "\u00A0") {
+        return;
+      }
+      if (paintName.startsWith("<sprite=", nameCursor)) {
+        const close = paintName.indexOf(">", nameCursor);
+        const end = close >= 0 ? close + 1 : nameCursor + 1;
+        el.dataset.forgeStart = String(nameCursor);
+        el.dataset.forgeEnd = String(end);
+        nameCursor = end;
+        return;
+      }
+      const len = String.fromCodePoint(paintName.codePointAt(nameCursor)).length;
+      el.dataset.forgeI = String(nameCursor);
+      nameCursor += len;
+    };
+    const tagPaintBreak = (index) => {
+      if (!inPaintRegion(index) || nameCursor >= paintName.length) return;
+      if (paintName[nameCursor] === "\n") nameCursor += 1;
+    };
+    let mspaceEm = null;
+    if (art) {
+      root.classList.add('rgnf-ascii');
+      root.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
+      root.style.whiteSpace = 'pre';
+      root.style.minWidth = 'max-content';
+      root.style.width = 'max-content';
+      root.style.textAlign = 'left';
+      root.style.fontSize = previewPx + 'px';
+      root.style.lineHeight = '1.12';
+    } else {
+      root.style.lineHeight = '1.35';
+    }
     const st = {
       color: null,
       colorStack: [],
@@ -10971,7 +11383,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
       rotate: 0,
       mark: null,
     };
-    let line = document.createElement('div');
+    const startLine = () => {
+      const next = document.createElement('div');
+      if (art) {
+        next.style.whiteSpace = 'pre';
+        next.style.fontFamily = 'ui-monospace, Menlo, Consolas, monospace';
+      }
+      return next;
+    };
+    let line = startLine();
     root.appendChild(line);
     let i = 0;
     const spriteEmoji = n => (SPRITES.find(x => x.n === n) || {}).e || '❔';
@@ -10979,12 +11399,25 @@ _rgnfFab = fab; _rgnfPanel = panel;
       const rest = raw.slice(i);
       let m;
       if ((m = rest.match(/^<br\s*\/?\s*>/i)) || rest[0] === '\n') {
-        line = document.createElement('div');
+        tagPaintBreak(i);
+        line = startLine();
         root.appendChild(line);
         i += m ? m[0].length : 1;
         continue;
       }
       if (rest[0] === '\r') { i += 1; continue; }
+      if ((m = rest.match(/^<#00000000>\./))) {
+        const pad = document.createElement('span');
+        pad.textContent = '.';
+        pad.style.color = 'transparent';
+        if (art && mspaceEm) {
+          pad.style.display = 'inline-block';
+          pad.style.width = mspaceEm + 'em';
+        }
+        line.appendChild(pad);
+        i += m[0].length;
+        continue;
+      }
       // TMP accepts 3/4/6/8-char hex shortcuts; match all so the preview lines
       // up with what the game actually renders (was 6/8 only).
       if ((m = rest.match(/^<(#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}))>/))) { st.color = m[1]; i += m[0].length; continue; }
@@ -11007,9 +11440,32 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if ((m = rest.match(/^<\/sub>/i))) { st.sub = false; i += m[0].length; continue; }
       if ((m = rest.match(/^<sup>/i)))   { st.sup = true; st.sub = false; i += m[0].length; continue; }
       if ((m = rest.match(/^<\/sup>/i))) { st.sup = false; i += m[0].length; continue; }
+      if ((m = rest.match(/^<space=([\d.]+)em>/i))) {
+        const pad = document.createElement('span');
+        pad.style.display = 'inline-block';
+        pad.style.width = m[1] + 'em';
+        pad.style.height = '1em';
+        line.appendChild(pad);
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<mspace=([\d.]+)em>/i))) {
+        mspaceEm = Number(m[1]);
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<\/mspace>/i))) { i += m[0].length; continue; }
+      if ((m = rest.match(/^<line-height=([\d.]+)(?:em|%)?>/i))) {
+        if (art) root.style.lineHeight = /em/i.test(m[0]) ? String(m[1]) : '1.12';
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<\/line-height>/i))) { i += m[0].length; continue; }
       if ((m = rest.match(/^<size=(\d+)%?>/i))) {
         // Cap preview at 300% so a stray <size=9999> doesn't push
         // the editor off-screen. In-game render is untouched.
+        // Art ignores this for layout — <size=32%> as 7px plus flex wrap
+        // is what made the sticky preview go tall and skinny.
         const parsedSize = Number(m[1]);
         st.sizePct = Math.min(Number.isFinite(parsedSize) ? parsedSize : 100, 300);
         i += m[0].length;
@@ -11022,6 +11478,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if ((m = rest.match(/^<sprite=(\d+)>/i))) {
         const sp = document.createElement('span');
         sp.textContent = spriteEmoji(Number(m[1]));
+        tagPaintChar(sp, i, m[0]);
         line.appendChild(sp); i += m[0].length; continue;
       }
       if ((m = rest.match(/^<[^>]*>/))) { i += m[0].length; continue; } // unknown tag
@@ -11040,9 +11497,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if (st.sizePct <= 0) {
         span.style.display = 'none';
       } else {
-        span.style.fontSize = Math.max(7, size) + 'px';
+        span.style.fontSize = (art ? previewPx : Math.max(7, size)) + 'px';
+        if (art && mspaceEm) {
+          span.style.display = 'inline-block';
+          span.style.width = mspaceEm + 'em';
+          span.style.textAlign = 'center';
+        }
         if (st.rotate) { span.style.display = 'inline-block'; span.style.transform = 'rotate(' + st.rotate + 'deg)'; }
       }
+      tagPaintChar(span, i, ch);
       line.appendChild(span);
       i++;
     }
@@ -11050,9 +11513,25 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   function renderRawPreview(raw, s) {
-    const shown = artPreviewText(raw);
-    if (s.scoredMode === 'hide') return renderRawTMP(shown);
-    return renderRawTMP(shown + scoredSuffix(s) + ' Scored!');
+    const pfx = _prefix();
+    const body = typeof s?.rawCode === "string" ? s.rawCode : String(raw ?? "");
+    const shownPfx = artPreviewText(pfx);
+    const shownBody = artPreviewText(body);
+    const shownTail = s?.scoredMode === "hide" ? "" : scoredSuffix(s) + " Scored!";
+    const inner = renderRawTMP(shownPfx + shownBody + shownTail, {
+      paintName: s?.name,
+      paintFrom: shownPfx.length,
+      paintTo: shownPfx.length + shownBody.length,
+    });
+    // Width 100% stack keeps the flex preview from collapsing to one
+    // character (min-content of per-glyph spans) and going tall/skinny.
+    const stack = document.createElement("div");
+    stack.className = "rgnf-preview-stack";
+    stack.appendChild(makePaintBar());
+    stack.appendChild(inner);
+    wirePreviewPaint(inner);
+    paintPreviewSelection(stack);
+    return stack;
   }
 
   function captureForgeScroll(panel) {
@@ -11102,8 +11581,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             || t.closest('.rgnf-presets-sec') || t.closest('.rgnf-imposter-sec')
             || t.closest('.rgnf-scored-sec') || t.closest('.rgnf-raw-text-safe')
             || t.closest('.rgnf-head')) return;
-        syncEditableFieldsFromRaw(state.rawCode);
-        state.rawCode = null;
+        absorbRawIntoPaintState();
         saveJSON(stateKey(), state);
         const bar = panel.querySelector('.rgnf-modebar');
         if (bar) bar.remove();
@@ -11115,8 +11593,16 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // ---- preview + code ----
     // preview goes directly on the panel so sticky's parent is the full
     // scrollable body. header/code/meta stay in secPreview and scroll.
-    const pv = el('div', { class: 'rgnf-preview' });
-    pv.appendChild(renderPreview(state));
+    const previewArt = isAsciiArtText(state.rawCode || "") || isAsciiArtText(state.name);
+    const pv = el('div', {
+      class: `rgnf-preview rgnf-align-${previewArt ? "left" : normalizeForgeAlign(state.align)}`,
+    });
+    pv.style.justifyContent = previewArt ? "flex-start" : forgeAlignJustify(state.align);
+    if (state.rawCode) {
+      pv.appendChild(renderRawPreview(_prefix() + state.rawCode, state));
+    } else {
+      pv.appendChild(renderPreview(state));
+    }
     panel.appendChild(pv);
 
     const secPreview = el('div', { class: 'rgnf-sec rgnf-preview-sec' });
@@ -11379,6 +11865,27 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }));
     });
     secStyle.appendChild(styleRow);
+
+    const alignRow = el('div', { class: 'rgnf-row' });
+    [['left', 'Left'], ['center', 'Center'], ['right', 'Right']].forEach(([value, label]) => {
+      alignRow.appendChild(el('button', {
+        class: `rgnf-chip ${normalizeForgeAlign(state.align) === value ? 'rgnf-on' : ''}`,
+        text: label,
+        title: `Align the name ${value} on the nameplate`,
+        onclick: () => {
+          state.align = value;
+          writeAlignDefault(value);
+          if (typeof state.rawCode === 'string') {
+            const art = isAsciiArtText(state.rawCode) || isAsciiArtText(state.name);
+            state.rawCode = art
+              ? packAsciiArt(state.rawCode, value)
+              : applyAlignToRaw(state.rawCode, value);
+          }
+          render(panel);
+        },
+      }));
+    });
+    secStyle.appendChild(alignRow);
 
     secStyle.appendChild(sliderRow(panel, 'Size', 'sizePct', 10, 500, '%'));
     secStyle.appendChild(sliderRow(panel, 'Rotate', 'rotateDeg', -45, 45, '°'));
@@ -11713,8 +12220,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
             class: 'rgnf-chip',
             text: 'Load',
             onclick: () => {
-              loadStateSnapshot(p.state);
-              render(panel);
+              applyLoadedForgeName(p.state);
             },
           }));
           row.appendChild(el('button', {
@@ -11867,8 +12373,21 @@ _rgnfFab = fab; _rgnfPanel = panel;
         const recentPreview = el('span', { title: h.code });
         recentPreview.style.cssText = 'flex:1;overflow:hidden;max-height:44px;white-space:normal;';
         recentPreview.appendChild(renderRawTMP(h.code));
+        const recentCode = () => {
+          let code = _stripTag(h.rawCode || h.code);
+          const pfx = _prefix();
+          if (pfx && code.startsWith(pfx)) code = code.slice(pfx.length);
+          return code;
+        };
+        recentPreview.style.cursor = 'pointer';
+        recentPreview.title = (h.code || '') + ' — click to load in preview';
+        recentPreview.onclick = () => applyLoadedForgeName(recentCode());
         histWrap.appendChild(el('div', { class: 'rgnf-preset' }, [
           recentPreview,
+          el('button', {
+            class: 'rgnf-chip', text: 'Load', title: 'Show this name in the preview',
+            onclick: () => applyLoadedForgeName(recentCode()),
+          }),
           el('button', {
             class: 'rgnf-chip', text: '💾', title: 'Save this as a permanent preset',
             onclick: () => {
@@ -12123,22 +12642,26 @@ _rgnfFab = fab; _rgnfPanel = panel;
           // must run BEFORE the same-account early return. verification fires
           // on every boot, not just account switches (inner latch makes repeat calls cheap).
           verifyPendingSteal(rawNickname);
-          if (prevId === userId) return;
-          const perUser = loadJSON(stateKey(), null);
-          if (perUser) {
-            loadStateSnapshot(perUser);
-          } else {
-            // fresh seed: the whole current in-game name as a raw snapshot.
-            // first styling edit clears it and rebuilds from state.name.
-            state = defaultState();
-            const raw = String(rawNickname || "").trim();
-            if (raw) {
-              setRawSnapshot(raw);
+          if (prevId !== userId) {
+            const perUser = loadJSON(stateKey(), null);
+            if (perUser) {
+              loadStateSnapshot(perUser);
+            } else if (rawNickname) {
+              // First time on this account: show the live nameplate.
+              // Later opens keep the saved draft (including highlight / paint).
+              state = defaultState();
+              setRawSnapshot(_stripTag(String(rawNickname)));
+              namePaintSel = { start: 0, end: 0 };
+              saveJSON(stateKey(), state);
             } else {
-              state.name = String(displayName || "").trim();
+              state = defaultState();
+              if (displayName) state.name = String(displayName).trim();
+              saveJSON(stateKey(), state);
             }
-            saveJSON(stateKey(), state);
           }
+          // Same account: do not overwrite with the live nameplate. That
+          // flipped the editor into raw TMP and dropped highlight / paint
+          // after a game. ↺ and applyLoadedForgeName still load on demand.
 
           // render unconditionally. panel DOM exists from page load, and sync
           // runs before mountIn on first open — gating on _mountedIn would

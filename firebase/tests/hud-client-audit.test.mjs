@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "22.5");
+  assert.equal(version, "22.6");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -907,6 +907,37 @@ test("streak snipe selects the strongest tracked opponent after a win", () => {
   );
 });
 
+test("ranked popups match a roster by in-game id or Firebase uid", () => {
+  const lookupInCache = extractHudFunction("lookupInCache");
+  const cache = {
+    modes: {
+      Competitive3v3: [
+        { uid: "legacy-in-game", name: "Johnny Football", mmr: 9000, rank: 4 },
+        {
+          uid: "firebase-uid",
+          rgPlayerId: "in-game-id",
+          name: "Xuuya",
+          mmr: 10193,
+          rank: 1,
+        },
+      ],
+    },
+  };
+  assert.equal(
+    lookupInCache(cache, "legacy-in-game", "Competitive3v3")?.name,
+    "Johnny Football",
+  );
+  assert.equal(
+    lookupInCache(cache, "in-game-id", "Competitive3v3")?.name,
+    "Xuuya",
+  );
+  assert.equal(
+    lookupInCache(cache, "firebase-uid", "Competitive3v3")?.name,
+    "Xuuya",
+  );
+  assert.equal(lookupInCache(cache, "unknown", "Competitive3v3"), null);
+});
+
 test("ranked popups keep fixed defaults and show opponent streak badges", () => {
   assert.match(
     hudSource,
@@ -1174,6 +1205,26 @@ test("Name Forge can paint a highlighted slice without recoloring the rest", () 
   assert.match(hudSource, /wirePreviewPaint\(/);
   assert.match(hudSource, /function setPreviewZoom\(/);
   assert.match(hudSource, /Does not change the in-game name size/);
+  assert.match(hudFunctionSource("renderRawPreview"), /makePaintBar\(/);
+  assert.match(hudFunctionSource("renderRawPreview"), /wirePreviewPaint\(/);
+  assert.match(hudFunctionSource("renderRawTMP"), /dataset\.forgeI/);
+  const nickSafeColor = extractHudFunction("nickSafeColor");
+  const expandPaintHex = extractHudFunction("expandPaintHex", { nickSafeColor });
+  const colorSpansFromRawName = extractHudFunction("colorSpansFromRawName", {
+    expandPaintHex,
+    normalizeColorSpans,
+  });
+  const fromRaw = colorSpansFromRawName("<#7A4E08>.<#835703>+", ".+");
+  assert.equal(fromRaw.length, 2);
+  assert.equal(fromRaw[0].solid, "#7A4E08");
+  assert.equal(fromRaw[0].start, 0);
+  assert.equal(fromRaw[0].end, 1);
+  assert.equal(fromRaw[1].solid, "#835703");
+  const fromPadded = colorSpansFromRawName("<#7A4E08>.<#835703>+\u00A0\u00A0", ".+");
+  assert.equal(fromPadded.length, 2);
+  assert.equal(fromPadded[1].end, 2);
+  assert.match(hudFunctionSource("commitNameColor"), /const range = namePaintRange/);
+  assert.match(hudFunctionSource("commitNameColor"), /A lost highlight must not/);
 });
 
 test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
@@ -1190,6 +1241,18 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
     restorePreferredArtChars,
   });
   const isBrailleArtText = extractHudFunction("isBrailleArtText");
+  const stripArtWidthPads = extractHudFunction("stripArtWidthPads");
+  const visibleArtWidth = extractHudFunction("visibleArtWidth", { stripArtWidthPads });
+  const padArtLineToWidth = extractHudFunction("padArtLineToWidth", {
+    stripArtWidthPads,
+    visibleArtWidth,
+  });
+  const padArtBodyLines = extractHudFunction("padArtBodyLines", { padArtLineToWidth });
+  const normalizeForgeAlign = extractHudFunction("normalizeForgeAlign");
+  const artBlockIndentCols = extractHudFunction("artBlockIndentCols", { normalizeForgeAlign });
+  const artIndentPad = extractHudFunction("artIndentPad");
+  const indentArtBody = extractHudFunction("indentArtBody", { artIndentPad });
+  const wrapPackedArt = extractHudFunction("wrapPackedArt", { normalizeForgeAlign });
   const packAsciiArt = extractHudFunction("packAsciiArt", {
     preserveForgeNewlines,
     artLineStats,
@@ -1199,6 +1262,14 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
     artLineHeightEm,
     brailleToAsciiArt,
     gameSafeArtChars,
+    stripArtWidthPads,
+    wrapPackedArt,
+    normalizeForgeAlign,
+    padArtLineToWidth,
+    padArtBodyLines,
+    artBlockIndentCols,
+    artIndentPad,
+    indentArtBody,
   });
   const editableTextFromRaw = extractHudFunction("editableTextFromRaw");
   const editableFieldsFromRaw = extractHudFunction("editableFieldsFromRaw", {
@@ -1217,8 +1288,13 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
   const packedDots = packAsciiArt("●●●●●\n●   ●");
   assert.match(packedDots, /<mspace=0\.72em>/);
   assert.match(packedDots, /<line-height=1\.12em>/);
+  assert.match(packedDots, /<align=left>/);
   assert.match(packedDots, /●●●●●<br>●   ●/);
+  assert.match(packedDots, /●   ●<br><\/mspace><\/align>/);
+  assert.equal(/\u00A0/.test(packedDots), false);
+  assert.equal(/<#00000000>/.test(packedDots), false);
   assert.match(packedDots, /^<line-height=/);
+  assert.equal(packAsciiArt(packedDots), packedDots);
 
   const figlet = "  ____\n / __/\n/ /__ \n\\___/ ";
   assert.equal(isAsciiArtText(figlet), true);
@@ -1245,6 +1321,45 @@ test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
     "+:+",
   );
   assert.match(packAsciiArt(".++#####++:+#:\n##"), /\+:/);
+  const packedShort = packAsciiArt(".++#####++:+#:\n##");
+  assert.match(packedShort, /<align=left>/);
+  assert.match(packedShort, /##<br><\/mspace><\/align>/);
+  assert.equal(/<space=/.test(packedShort), false);
+  assert.equal(/<#00000000>/.test(packedShort), false);
+  assert.equal(editableTextFromRaw("##" + "<#00000000>.".repeat(12) + "<br>"), "##");
+  assert.equal(packAsciiArt("a\u00A0\u00A0b\nc").includes("\u00A0"), false);
+  assert.equal(normalizeForgeAlign("RIGHT"), "right");
+  const packedCenter = packAsciiArt(".++#####++:+#:\n##", "center");
+  assert.match(packedCenter, /<rgnf-align=center>/);
+  assert.match(packedCenter, /<align=left>/);
+  assert.match(packedCenter, /<color=#00000000>\.\.\.<\/color>\.\+\+#####\+\+:\+#:/);
+  assert.match(packedCenter, /<color=#00000000>\.\.\.<\/color>##<br><\/mspace><\/align>/);
+  assert.equal(/<align=center>/.test(packedCenter), false);
+  assert.equal(/<space=/.test(packedCenter), false);
+  assert.equal(packAsciiArt(packedCenter, "center"), packedCenter);
+  const packedRight = packAsciiArt(".++#####++:+#:\n##", "right");
+  assert.match(packedRight, /<rgnf-align=right>/);
+  assert.match(packedRight, /<align=left>/);
+  assert.match(packedRight, /<color=#00000000>\.\.\.\.\.\.<\/color>##<br><\/mspace><\/align>/);
+  assert.match(hudSource, /\['left', 'Left'\], \['center', 'Center'\], \['right', 'Right'\]/);
+  assert.match(hudSource, /Align the name/);
+  assert.match(hudSource, /rgNameForge\.alignDefault\.v1/);
+  assert.match(hudSource, /align: readAlignDefault\(\) \|\| 'left'/);
+  assert.match(hudFunctionSource("alignFromRaw"), /readAlignDefault/);
+  assert.match(hudSource, /writeAlignDefault\(value\)/);
+  const alignFromRawPref = extractHudFunction("alignFromRaw", {
+    readAlignDefault: () => "center",
+  });
+  assert.equal(alignFromRawPref("hello"), "center");
+  assert.equal(alignFromRawPref("<align=right>hello</align>"), "right");
+  const alignFromRawFresh = extractHudFunction("alignFromRaw", {
+    readAlignDefault: () => null,
+  });
+  assert.equal(alignFromRawFresh("hello"), "left");
+  assert.equal(
+    alignFromRawFresh("<rgnf-align=center><align=left>x</align>"),
+    "center",
+  );
   const nickSafeColor = extractHudFunction("nickSafeColor");
   const sanitizeNicknameColors = extractHudFunction("sanitizeNicknameColors", {
     nickSafeColor,
@@ -1288,6 +1403,15 @@ test("Name Forge remembers a Scored default and keeps clan tags off the name", (
   assert.match(hudSource, /setTagStripper/);
   assert.match(hudSource, /_stripTag\(effectiveForgeCode\(state\)\)/);
   assert.match(hudFunctionSource("setRawSnapshot"), /_stripTag\(restorePreferredArtChars\(raw\)\)/);
+  assert.match(hudFunctionSource("applyLoadedForgeName"), /setRawSnapshot/);
+  assert.match(hudFunctionSource("applyLoadedForgeName"), /loadStateSnapshot/);
+  assert.match(hudFunctionSource("applyLoadedForgeName"), /render\(_rgnfPanel\)/);
+  assert.match(hudSource, /text: 'Load', title: 'Show this name in the preview'/);
+  assert.match(hudSource, /setRawSnapshot\(_stripTag\(String\(rawNickname\)\)\)/);
+  assert.match(hudSource, /do not overwrite with the live nameplate/);
+  assert.match(hudFunctionSource("renderRawTMP"), /rgnf-ascii/);
+  assert.match(hudFunctionSource("renderRawTMP"), /max-content/);
+  assert.match(hudFunctionSource("renderRawPreview"), /rgnf-preview-stack/);
 });
 
 test("Name Forge presets survive an origin localStorage wipe via Tampermonkey storage", () => {

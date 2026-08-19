@@ -325,17 +325,20 @@ export function compactLeaderboardRow(raw, rank) {
   const name = String(raw?.name || "").trim();
   const mmr = Number(raw?.mmr);
   if (!uid || !Number.isFinite(mmr)) return null;
+  const rgPlayerId = String(raw?.rgPlayerId || "").trim();
   return {
     uid,
     name: name.slice(0, 120),
     mmr: Math.round(mmr),
     rank: Number(rank),
+    ...(rgPlayerId ? { rgPlayerId } : {}),
   };
 }
 
 export function sourceHashForRows(rows) {
   const payload = rows.map(row => [
     row.uid,
+    row.rgPlayerId || "",
     row.name,
     row.mmr,
     row.rank,

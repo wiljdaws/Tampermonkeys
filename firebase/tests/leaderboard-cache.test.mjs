@@ -90,6 +90,24 @@ test("compact rows drop streak fields and hash only ranking payload", () => {
     sourceHashForRows([row]),
     sourceHashForRows([{ ...row, currentStreak: 99 }]),
   );
+  const firebaseOnly = compactLeaderboardRow({
+    sourceUserId: "firebase-uid",
+    name: "Xuuya",
+    mmr: 10193,
+  }, 1);
+  const withGameId = compactLeaderboardRow({
+    sourceUserId: "firebase-uid",
+    rgPlayerId: "in-game-id",
+    name: "Xuuya",
+    mmr: 10193,
+  }, 1);
+  assert.equal(withGameId.uid, "firebase-uid");
+  assert.equal(withGameId.rgPlayerId, "in-game-id");
+  assert.equal(firebaseOnly.rgPlayerId, undefined);
+  assert.notEqual(
+    sourceHashForRows([firebaseOnly]),
+    sourceHashForRows([withGameId]),
+  );
 });
 
 test("planCacheWrite skips unchanged sourceHash and guards size", () => {
