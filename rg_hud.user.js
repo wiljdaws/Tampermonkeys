@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.7
+// @version      22.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -640,13 +640,12 @@
                         <div class="rgSettingRow" style="flex-wrap:wrap;gap:6px;">
                             <span title="Send this to Pal or JesusDied4U if you need to be added to the board">Firebase id</span>
                             <code id="rgSetAuthUid" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:#8E9BC2;">signing in…</code>
-                            <button type="button" id="rgSetCopyUid" class="rgBtn" style="padding:2px 8px;">Copy</button>
                         </div>
                         <div class="rgSettingRow" style="flex-wrap:wrap;gap:6px;">
                             <span title="Tied to your Firebase id. Writes from another device are denied.">Device id</span>
                             <code id="rgSetDeviceId" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:#8E9BC2;"></code>
-                            <button type="button" id="rgSetCopyDevice" class="rgBtn" style="padding:2px 8px;">Copy</button>
                         </div>
+                        <button type="button" id="rgSetCopyIds" class="rgBtn" style="width:100%;margin-top:4px;">Copy ids</button>
                         <button id="rgSetReset" class="rgBtn" style="width:100%;margin-top:4px;">Reset to defaults</button>
                         <button id="rgSetCopyDebug" class="rgBtn" style="width:100%;margin-top:4px;">⬇ Download debug bundle</button>
                     </div>
@@ -855,29 +854,23 @@
         bindGlow(setOpacity, "glowOpacity", el => parseFloat(el.value));
         bindGlow(setColor1, "glowColor1", el => el.value);
         bindGlow(setColor2, "glowColor2", el => el.value);
-        const copyUid = document.getElementById("rgSetCopyUid");
-        const copyDevice = document.getElementById("rgSetCopyDevice");
+        const copyIds = document.getElementById("rgSetCopyIds");
         paintAuthUid();
-        if (copyUid) {
-            copyUid.onclick = async () => {
-                if (!firebaseAuthUid) return;
-                try {
-                    await navigator.clipboard.writeText(firebaseAuthUid);
-                    showTempFeedback(copyUid, "Copied", 1600, "Copy");
-                } catch (e) {
-                    showTempFeedback(copyUid, "Fail", 1600, "Copy");
+        if (copyIds) {
+            copyIds.onclick = async () => {
+                if (!firebaseAuthUid) {
+                    showToast("Wait until Firebase id finishes signing in.");
+                    return;
                 }
-            };
-        }
-        if (copyDevice) {
-            copyDevice.onclick = async () => {
                 const deviceId = getDeviceId();
                 if (!deviceId) return;
                 try {
-                    await navigator.clipboard.writeText(deviceId);
-                    showTempFeedback(copyDevice, "Copied", 1600, "Copy");
+                    await navigator.clipboard.writeText(
+                        `Firebase ID: ${firebaseAuthUid}\nDevice ID: ${deviceId}`
+                    );
+                    showTempFeedback(copyIds, "Copied", 1600, "Copy ids");
                 } catch (e) {
-                    showTempFeedback(copyDevice, "Fail", 1600, "Copy");
+                    showTempFeedback(copyIds, "Fail", 1600, "Copy ids");
                 }
             };
         }
@@ -2006,6 +1999,9 @@
         };
         hudSessionDenies.push(record);
         if (hudSessionDenies.length > HUD_DENY_RECORD_MAX) hudSessionDenies.shift();
+        // Browser console only — do not write a Firestore security
+        // collection from the HUD. An attacker would skip or flood it.
+        console.warn(`[RG HUD][security] ${JSON.stringify(record)}`);
     }
     function bucketLabel(raw) {
         // Firestore doc paths carry slashes and ids that would explode the
@@ -2886,7 +2882,8 @@
         try {
             const q = fb.query(
                 fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                fb.where("rgPlayerId", "==", rgPlayerId)
+                fb.where("rgPlayerId", "==", rgPlayerId),
+                fb.limit(8)
             );
             const snap = await fb.getDocs(q);
             return boardIdentityFromDocs(snap.docs.map((d) => d.data()), rgPlayerId).displayName;
@@ -2902,7 +2899,8 @@
         try {
             const q = fb.query(
                 fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                fb.where("name", "==", name)
+                fb.where("name", "==", name),
+                fb.limit(8)
             );
             const snap = await fb.getDocs(q);
             return isNameTakenByOthers(
@@ -4566,7 +4564,8 @@
         try {
             const q = fb.query(
                 fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                fb.where("rgPlayerId", "==", rgPlayerId)
+                fb.where("rgPlayerId", "==", rgPlayerId),
+                fb.limit(8)
             );
             const snap = await fb.getDocs(q);
             const priorUids = snap.docs
@@ -7564,18 +7563,21 @@
         }
         const sourceUserId = firebaseAuthUid;
         const rgPlayerId = myUserId();
+        const clanId = String(notice?.clanId || myClan?.id || "").trim();
+        const payload = {
+            ...notice,
+            sourceUserId,
+            rgPlayerId,
+            deviceId: getDeviceId(),
+            scriptVersion: SCRIPT_VERSION,
+            versionNum: SCRIPT_VERSION_NUM,
+        };
+        if (clanId) payload.clanId = clanId;
         return atlasSetDoc(
             fb,
             "clan notice",
             fb.doc(fb.db, "clan_notices", userId),
-            {
-                ...notice,
-                sourceUserId,
-                rgPlayerId,
-                deviceId: getDeviceId(),
-                scriptVersion: SCRIPT_VERSION,
-                versionNum: SCRIPT_VERSION_NUM,
-            }
+            payload
         );
     }
 
@@ -7742,8 +7744,7 @@
     }
 
     // ---------- Role management ----------
-    // leader > coleader > elder > member. multiple coleaders/elders allowed.
-    // gating is client-side (honor system) — server rules don't enforce it.
+    // leader > coleader > elder > member. Rules also check officer on writes.
 
     const ROLE_RANK = { leader: 3, coleader: 2, elder: 1, member: 0 };
 

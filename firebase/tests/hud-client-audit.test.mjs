@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "22.7");
+  assert.equal(version, "22.8");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -100,6 +100,7 @@ test("deny logger attaches client-side reasons (19.5+)", () => {
   assert.match(hudSource, /function describeLeaderboardReasons\(/);
   assert.match(hudSource, /function describeScriptSubmissionReasons\(/);
   assert.match(hudSource, /function describeMatchSnapshotReasons\(/);
+  assert.match(hudSource, /\[RG HUD\]\[security\]/);
 });
 
 const resolveAtlasFirebaseApp = extractHudFunction("resolveAtlasFirebaseApp", {
