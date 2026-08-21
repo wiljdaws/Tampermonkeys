@@ -7,8 +7,8 @@ compatibility_date = "2026-08-21"
 FIREBASE_PROJECT_ID = "rgleaderboard"
 FIREBASE_PROJECT_NUMBER = "247848634543"
 FIREBASE_APP_ID = "1:247848634543:web:6a7e506d60544d46cc6c5a"
-ALLOWLIST_DOC_PATH = "admin/allowlist"
-ALLOWLIST_FIELD = "uids"
+ALLOWLIST_DOC_PATH = "admin/blacklist"
+ALLOWLIST_FIELD = "allowedUserIds"
 CORS_ORIGIN = "https://rocketgoal.io"
 
 # Secrets are set out-of-band with:

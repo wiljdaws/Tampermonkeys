@@ -207,9 +207,19 @@ async function isAllowlisted(uid, env) {
   }
   const doc = await resp.json();
   const field = doc.fields?.[env.ALLOWLIST_FIELD];
-  const uids = new Set(
-    (field?.arrayValue?.values || []).map((v) => v.stringValue).filter(Boolean),
-  );
+  // Accept either a map (keys are uids, e.g. admin/blacklist.allowedUserIds)
+  // or a plain string array. Falls back to empty set if the field's shape
+  // isn't one we recognize.
+  let uids;
+  if (field?.mapValue?.fields) {
+    uids = new Set(Object.keys(field.mapValue.fields));
+  } else if (field?.arrayValue?.values) {
+    uids = new Set(
+      field.arrayValue.values.map((v) => v.stringValue).filter(Boolean),
+    );
+  } else {
+    uids = new Set();
+  }
   cache.allowlist = { uids, expiresAt: now + 300 };
   return uids.has(uid);
 }
