@@ -81,8 +81,8 @@ async function importSigningKey(env) {
   return cache.signingKey;
 }
 
-async function signJwt(claims, key) {
-  const header = { alg: "RS256", typ: "JWT" };
+async function signJwt(claims, key, extraHeader) {
+  const header = { alg: "RS256", typ: "JWT", ...(extraHeader || {}) };
   const input = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(
     JSON.stringify(claims),
   )}`;
@@ -233,9 +233,9 @@ async function mintAppCheckToken(uid, env) {
   const now = Math.floor(Date.now() / 1000);
   const sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
   const key = await importSigningKey(env);
-  // Match Firebase Admin SDK's customToken exactly. The app_id claim is
-  // snake_case and is required — without it exchangeCustomToken rejects
-  // with "App attestation failed."
+  // Match Firebase Admin SDK's customToken exactly. app_id is snake_case
+  // and required; kid in the header points at the specific service-account
+  // key used to sign, which Firebase uses to look up the public cert.
   const customToken = await signJwt(
     {
       iss: sa.client_email,
@@ -243,9 +243,10 @@ async function mintAppCheckToken(uid, env) {
       app_id: env.FIREBASE_APP_ID,
       aud: APPCHECK_AUD,
       iat: now,
-      exp: now + 300,
+      exp: now + 3600,
     },
     key,
+    { kid: sa.private_key_id },
   );
   const accessToken = await getAccessToken(env);
   // exchangeCustomToken uses projectId (e.g. "rgleaderboard"), not the
