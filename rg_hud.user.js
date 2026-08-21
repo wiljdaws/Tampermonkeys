@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      23.2
+// @version      23.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2283,34 +2283,44 @@
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
             signInAnonymouslyFn = signInAnonymously;
 
-            // App Check in Monitor mode. reCAPTCHA v3 site key for
-            // "rg-leaderboard", public. Site must have rocketgoal.io in its
-            // Domains list or tokens won't mint on the game page.
-            const { initializeAppCheck, ReCaptchaV3Provider, getToken: getAppCheckToken } =
+            // App Check via Cloudflare Worker. reCAPTCHA v3 doesn't survive
+            // the Unity/userscript context on rocketgoal.io, so the Worker
+            // signs App Check tokens for allowlisted anonymous uids instead.
+            const { initializeAppCheck, CustomProvider } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js");
-            const APP_CHECK_SITE_KEY = "6LetM38tAAAAADvHq4SYd05r_DGK2AWJo8M3ZmJK";
+            const APP_CHECK_WORKER_URL = "https://atlas-appcheck.therootedengineer.workers.dev/mint";
 
             const app = resolveAtlasFirebaseApp(getApps(), FIREBASE_CONFIG, initializeApp);
             try {
-                dbg("AppCheck: initializing reCAPTCHA v3 provider (host=" + location.hostname + ")");
-                const appCheck = initializeAppCheck(app, {
-                    provider: new ReCaptchaV3Provider(APP_CHECK_SITE_KEY),
+                dbg("AppCheck: registering CustomProvider (Worker=" + APP_CHECK_WORKER_URL + ")");
+                initializeAppCheck(app, {
+                    provider: new CustomProvider({
+                        getToken: async () => {
+                            const auth = atlasFirebaseAuth;
+                            const user = auth && auth.currentUser;
+                            if (!user) throw new Error("no auth user yet");
+                            const idToken = await user.getIdToken();
+                            const resp = await fetch(APP_CHECK_WORKER_URL, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ uid: user.uid, idToken }),
+                            });
+                            if (!resp.ok) {
+                                const errText = await resp.text().catch(() => "");
+                                const msg = "Worker " + resp.status + ": " + errText;
+                                dbg("AppCheck: token fetch REJECTED — " + msg);
+                                throw new Error(msg);
+                            }
+                            const data = await resp.json();
+                            dbg("AppCheck: token minted via Worker (len=" + (data.token?.length || 0) + ")");
+                            return { token: data.token, expireTimeMillis: data.expireTimeMillis };
+                        },
+                    }),
                     isTokenAutoRefreshEnabled: true,
                 });
-                dbg("AppCheck: init returned, requesting first token…");
-                getAppCheckToken(appCheck).then(
-                    (result) => {
-                        const tokLen = result?.token?.length || 0;
-                        if (tokLen > 0) {
-                            dbg("AppCheck: token minted (len=" + tokLen + ")");
-                        } else {
-                            dbg("AppCheck: token fetch returned empty result — verify rocketgoal.io is in reCAPTCHA Domains and the site key matches");
-                        }
-                    },
-                    (err) => dbg("AppCheck: token fetch REJECTED — " + getErrMsg(err) + " (check reCAPTCHA Domains list, site key, and Firebase App Check secret key)"),
-                );
+                dbg("AppCheck: CustomProvider registered");
             } catch (err) {
-                dbg("AppCheck: init THREW — " + getErrMsg(err) + " (App Check module import failed or duplicate init)");
+                dbg("AppCheck: init THREW — " + getErrMsg(err));
             }
             const db = getFirestore(app);
             // Sign in before handing firestoreReady out; writes without
