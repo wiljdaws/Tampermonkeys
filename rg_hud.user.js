@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.8
+// @version      22.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2166,6 +2166,7 @@
         try {
             await ensureAnonymousAuth(atlasFirebaseAuth);
             updateRequiredChecked = false;
+            notAllowlisted = false;
             if (firestoreReady) await isUpdateRequired(firestoreReady);
             if (notAllowlisted) showNotAllowlistedUI();
         } catch (authErr) {
@@ -2464,6 +2465,8 @@
             // on the allow list — show the invite bar, do not retry the
             // pin doc.
             const snap = await fb.getDoc(fb.doc(fb.db, "admin", "gate"));
+            // read went through, so the uid is on the allowlist now
+            notAllowlisted = false;
             if (snap.exists()) {
                 const data = snap.data() || {};
                 if (data.pauseWrites === true) writesPaused = true;
