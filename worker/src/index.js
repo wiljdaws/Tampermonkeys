@@ -246,8 +246,10 @@ async function mintAppCheckToken(uid, env) {
     key,
   );
   const accessToken = await getAccessToken(env);
+  // Firebase Admin SDK uses v1beta for exchangeCustomToken — v1 returns
+  // "App attestation failed" for reasons that aren't well-documented.
   const url =
-    `https://firebaseappcheck.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_NUMBER}` +
+    `https://firebaseappcheck.googleapis.com/v1beta/projects/${env.FIREBASE_PROJECT_NUMBER}` +
     `/apps/${env.FIREBASE_APP_ID}:exchangeCustomToken`;
   const resp = await fetch(url, {
     method: "POST",
