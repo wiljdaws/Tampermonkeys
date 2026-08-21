@@ -141,16 +141,16 @@ jobs:
             --state-dir "$GITHUB_WORKSPACE/site-repo/state" \
             $FORCE_FULL_FLAG
 
-      # Tournament tab now reads Firestore directly (small collection,
-      # low-volume, admin-only writes). Publisher step disabled so we
-      # don't spend reads generating a JSON nothing consumes.
-      # - name: Build tournament JSON
-      #   working-directory: firebase
-      #   continue-on-error: true
-      #   run: |
-      #     npm run publish:tournament-json -- \
-      #       --project "$PROJECT" \
-      #       --output-dir "$GITHUB_WORKSPACE/out"
+      # Signed-out visitors can't read tournament_leaderboard directly
+      # (admin-only rules), so publish a public JSON snapshot alongside
+      # the other playlists. ~100 reads per run, no CDC needed.
+      - name: Build tournament JSON
+        working-directory: firebase
+        continue-on-error: true
+        run: |
+          npm run publish:tournament-json -- \
+            --project "$PROJECT" \
+            --output-dir "$GITHUB_WORKSPACE/out"
 
       - name: Warn if we held new high-MMR rows
         run: |
@@ -165,7 +165,7 @@ jobs:
       - name: Copy JSON blobs into site repo
         run: |
           mkdir -p "$GITHUB_WORKSPACE/site-repo/leaderboard"
-          for f in 1v1 2v2 3v3 wins; do
+          for f in 1v1 2v2 3v3 wins tournament; do
             if [ -f "$GITHUB_WORKSPACE/out/$f.json" ]; then
               cp "$GITHUB_WORKSPACE/out/$f.json" "$GITHUB_WORKSPACE/site-repo/leaderboard/"
             fi
