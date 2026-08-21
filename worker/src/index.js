@@ -233,12 +233,14 @@ async function mintAppCheckToken(uid, env) {
   const now = Math.floor(Date.now() / 1000);
   const sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
   const key = await importSigningKey(env);
-  // Match the exact shape Firebase Admin SDK signs — extra claims cause
-  // exchangeCustomToken to reject with "App attestation failed."
+  // Match Firebase Admin SDK's customToken exactly. The app_id claim is
+  // snake_case and is required — without it exchangeCustomToken rejects
+  // with "App attestation failed."
   const customToken = await signJwt(
     {
       iss: sa.client_email,
       sub: sa.client_email,
+      app_id: env.FIREBASE_APP_ID,
       aud: APPCHECK_AUD,
       iat: now,
       exp: now + 300,
