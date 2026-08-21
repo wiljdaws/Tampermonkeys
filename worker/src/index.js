@@ -20,7 +20,10 @@
 //   CORS_ORIGIN               allowed browser origin, e.g. "https://rocketgoal.io"
 
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const OAUTH_SCOPE = "https://www.googleapis.com/auth/firebase";
+// cloud-platform covers Firestore REST reads (allowlist lookup) and the
+// Firebase App Check API (exchangeCustomToken). A narrower "firebase" scope
+// isn't enough for direct Firestore REST calls.
+const OAUTH_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 const FIREBASE_JWK_URL =
   "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const APPCHECK_AUD =
