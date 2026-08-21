@@ -203,7 +203,10 @@ async function isAllowlisted(uid, env) {
     `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}` +
     `/databases/(default)/documents/${docPath}`;
   const resp = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "X-Goog-User-Project": env.FIREBASE_PROJECT_ID,
+    },
   });
   if (!resp.ok) {
     throw new Error(`allowlist read failed: ${resp.status}`);
@@ -257,6 +260,7 @@ async function mintAppCheckToken(uid, env) {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
+      "X-Goog-User-Project": env.FIREBASE_PROJECT_ID,
     },
     body: JSON.stringify({ customToken }),
   });
