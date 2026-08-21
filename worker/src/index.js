@@ -250,17 +250,17 @@ async function mintAppCheckToken(uid, env) {
     key,
   );
   const accessToken = await getAccessToken(env);
-  // exchangeCustomToken uses projectId (e.g. "rgleaderboard"), not the
-  // numeric project number. v1beta path matches Firebase Admin SDK.
+  // Match firebase-admin exactly: v1 path, projectId (not number), and
+  // NO X-Goog-User-Project header (adding it makes Firebase reject with
+  // "App attestation failed" for reasons that aren't documented).
   const url =
-    `https://firebaseappcheck.googleapis.com/v1beta/projects/${env.FIREBASE_PROJECT_ID}` +
+    `https://firebaseappcheck.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}` +
     `/apps/${env.FIREBASE_APP_ID}:exchangeCustomToken`;
   const resp = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      "X-Goog-User-Project": env.FIREBASE_PROJECT_ID,
+      "Content-Type": "application/json;charset=utf-8",
     },
     body: JSON.stringify({ customToken }),
   });
