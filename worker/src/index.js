@@ -22,7 +22,7 @@
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const OAUTH_SCOPE = "https://www.googleapis.com/auth/firebase";
 const FIREBASE_JWK_URL =
-  "https://www.googleapis.com/service_accounts/v1/jwk/[email protected]";
+  "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const APPCHECK_AUD =
   "https://firebaseappcheck.googleapis.com/google.firebase.appcheck.v1.TokenExchangeService";
 
