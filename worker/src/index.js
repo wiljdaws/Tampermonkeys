@@ -233,20 +233,18 @@ async function mintAppCheckToken(uid, env) {
   const now = Math.floor(Date.now() / 1000);
   const sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
   const key = await importSigningKey(env);
-  // Match Firebase Admin SDK's customToken exactly. app_id is snake_case
-  // and required; kid in the header points at the specific service-account
-  // key used to sign, which Firebase uses to look up the public cert.
+  // Match Firebase Admin SDK's customToken exactly: header is just alg/typ
+  // (no kid), body is iss/sub/app_id/aud/exp/iat in that order.
   const customToken = await signJwt(
     {
       iss: sa.client_email,
       sub: sa.client_email,
       app_id: env.FIREBASE_APP_ID,
       aud: APPCHECK_AUD,
-      iat: now,
       exp: now + 3600,
+      iat: now,
     },
     key,
-    { kid: sa.private_key_id },
   );
   const accessToken = await getAccessToken(env);
   // exchangeCustomToken uses projectId (e.g. "rgleaderboard"), not the
@@ -311,11 +309,10 @@ export default {
             sub: sa.client_email,
             app_id: env.FIREBASE_APP_ID,
             aud: APPCHECK_AUD,
-            iat: now,
             exp: now + 3600,
+            iat: now,
           },
           key,
-          { kid: sa.private_key_id },
         );
         return json(
           {
