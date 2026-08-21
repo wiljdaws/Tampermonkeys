@@ -257,7 +257,7 @@ async function mintAppCheckToken(uid, env) {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ customToken, ttl: "3600s" }),
+    body: JSON.stringify({ customToken }),
   });
   if (!resp.ok) {
     throw new Error(
