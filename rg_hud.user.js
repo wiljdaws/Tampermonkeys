@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      22.9
+// @version      23.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "22.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2283,7 +2283,22 @@
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
             signInAnonymouslyFn = signInAnonymously;
 
+            // App Check in Monitor mode. reCAPTCHA v3 site key for
+            // "rg-leaderboard", public. Site must have rocketgoal.io in its
+            // Domains list or tokens won't mint on the game page.
+            const { initializeAppCheck, ReCaptchaV3Provider } =
+                await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js");
+            const APP_CHECK_SITE_KEY = "6LetM38tAAAAADvHq4SYd05r_DGK2AWJo8M3ZmJK";
+
             const app = resolveAtlasFirebaseApp(getApps(), FIREBASE_CONFIG, initializeApp);
+            try {
+                initializeAppCheck(app, {
+                    provider: new ReCaptchaV3Provider(APP_CHECK_SITE_KEY),
+                    isTokenAutoRefreshEnabled: true,
+                });
+            } catch (err) {
+                dbg("appcheck init failed (non-fatal): " + getErrMsg(err));
+            }
             const db = getFirestore(app);
             // Sign in before handing firestoreReady out; writes without
             // an auth.uid stamp get denied.
