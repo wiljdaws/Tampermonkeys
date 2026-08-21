@@ -298,6 +298,40 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders(env) });
     }
     const url = new URL(request.url);
+    // Debug: returns the customToken JWT we'd sign for a fake uid so we can
+    // decode and compare against what Admin SDK would produce.
+    if (request.method === "GET" && url.pathname === "/debug-token") {
+      try {
+        const sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
+        const key = await importSigningKey(env);
+        const now = Math.floor(Date.now() / 1000);
+        const customToken = await signJwt(
+          {
+            iss: sa.client_email,
+            sub: sa.client_email,
+            app_id: env.FIREBASE_APP_ID,
+            aud: APPCHECK_AUD,
+            iat: now,
+            exp: now + 3600,
+          },
+          key,
+          { kid: sa.private_key_id },
+        );
+        return json(
+          {
+            customToken,
+            client_email: sa.client_email,
+            private_key_id: sa.private_key_id,
+            project_id: sa.project_id,
+            app_id: env.FIREBASE_APP_ID,
+          },
+          200,
+          env,
+        );
+      } catch (err) {
+        return json({ error: String(err?.message || err) }, 500, env);
+      }
+    }
     if (request.method !== "POST" || url.pathname !== "/mint") {
       return json({ error: "not found" }, 404, env);
     }
