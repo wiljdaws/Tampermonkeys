@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      23.3
+// @version      23.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2286,14 +2286,15 @@
             // App Check via Cloudflare Worker. reCAPTCHA v3 doesn't survive
             // the Unity/userscript context on rocketgoal.io, so the Worker
             // signs App Check tokens for allowlisted anonymous uids instead.
-            const { initializeAppCheck, CustomProvider } =
+            const { initializeAppCheck, CustomProvider, getToken: getAppCheckToken } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js");
             const APP_CHECK_WORKER_URL = "https://atlas-appcheck.therootedengineer.workers.dev/mint";
 
             const app = resolveAtlasFirebaseApp(getApps(), FIREBASE_CONFIG, initializeApp);
+            let atlasAppCheckHandle = null;
             try {
                 dbg("AppCheck: registering CustomProvider (Worker=" + APP_CHECK_WORKER_URL + ")");
-                initializeAppCheck(app, {
+                atlasAppCheckHandle = initializeAppCheck(app, {
                     provider: new CustomProvider({
                         getToken: async () => {
                             const auth = atlasFirebaseAuth;
@@ -2346,6 +2347,19 @@
                 dbg("initFirebase: signInAnonymously failed: " + firebaseAuthError);
             }
             paintAuthUid();
+            // Force an App Check token fetch now that anon auth is settled,
+            // so the debug bundle records success/fail without waiting on
+            // the lazy Firestore-triggered path.
+            if (atlasAppCheckHandle) {
+                getAppCheckToken(atlasAppCheckHandle).then(
+                    (result) => {
+                        const tokLen = result?.token?.length || 0;
+                        if (tokLen > 0) dbg("AppCheck: initial fetch ok (len=" + tokLen + ")");
+                        else dbg("AppCheck: initial fetch returned empty");
+                    },
+                    (err) => dbg("AppCheck: initial fetch failed — " + getErrMsg(err)),
+                );
+            }
             const denySubject = () => {
                 const uid = currentUidForDeny();
                 return uid ? `uid=${uid}` : "";
