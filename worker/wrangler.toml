@@ -1,0 +1,16 @@
+name = "atlas-appcheck"
+main = "src/index.js"
+compatibility_date = "2026-08-21"
+
+# Public vars. Not secrets — safe to commit.
+[vars]
+FIREBASE_PROJECT_ID = "rgleaderboard"
+FIREBASE_PROJECT_NUMBER = "247848634543"
+FIREBASE_APP_ID = "1:247848634543:web:6a7e506d60544d46cc6c5a"
+ALLOWLIST_DOC_PATH = "admin/allowlist"
+ALLOWLIST_FIELD = "uids"
+CORS_ORIGIN = "https://rocketgoal.io"
+
+# Secrets are set out-of-band with:
+#   wrangler secret put FIREBASE_SERVICE_ACCOUNT
+# and paste the full service account JSON when prompted.
