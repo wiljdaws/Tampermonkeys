@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      23.0
+// @version      23.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -2286,16 +2286,23 @@
             // App Check in Monitor mode. reCAPTCHA v3 site key for
             // "rg-leaderboard", public. Site must have rocketgoal.io in its
             // Domains list or tokens won't mint on the game page.
-            const { initializeAppCheck, ReCaptchaV3Provider } =
+            const { initializeAppCheck, ReCaptchaV3Provider, getToken: getAppCheckToken } =
                 await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js");
             const APP_CHECK_SITE_KEY = "6LetM38tAAAAADvHq4SYd05r_DGK2AWJo8M3ZmJK";
 
             const app = resolveAtlasFirebaseApp(getApps(), FIREBASE_CONFIG, initializeApp);
             try {
-                initializeAppCheck(app, {
+                const appCheck = initializeAppCheck(app, {
                     provider: new ReCaptchaV3Provider(APP_CHECK_SITE_KEY),
                     isTokenAutoRefreshEnabled: true,
                 });
+                // Force an early token fetch so reCAPTCHA / secret-key errors
+                // land in the debug bundle instead of the App Check SDK's
+                // silent internal logger.
+                getAppCheckToken(appCheck).then(
+                    (tok) => dbg("appcheck ok (" + (tok?.token ? "token minted" : "no token") + ")"),
+                    (err) => dbg("appcheck token fetch failed: " + getErrMsg(err)),
+                );
             } catch (err) {
                 dbg("appcheck init failed (non-fatal): " + getErrMsg(err));
             }
