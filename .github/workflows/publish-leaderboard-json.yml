@@ -143,14 +143,18 @@ jobs:
 
       # Signed-out visitors can't read tournament_leaderboard directly
       # (admin-only rules), so publish a public JSON snapshot alongside
-      # the other playlists. ~100 reads per run, no CDC needed.
+      # the other playlists. CDC on lastWriteAt keeps idle runs at 1 read.
       - name: Build tournament JSON
         working-directory: firebase
         continue-on-error: true
+        env:
+          FORCE_FULL_FLAG: ${{ steps.cdc_mode.outputs.force_full == 'true' && '--force-full' || '' }}
         run: |
           npm run publish:tournament-json -- \
             --project "$PROJECT" \
-            --output-dir "$GITHUB_WORKSPACE/out"
+            --output-dir "$GITHUB_WORKSPACE/out" \
+            --state-dir "$GITHUB_WORKSPACE/site-repo/state" \
+            $FORCE_FULL_FLAG
 
       - name: Warn if we held new high-MMR rows
         run: |
@@ -161,6 +165,21 @@ jobs:
               cat "$GITHUB_WORKSPACE/out/held.json"
             fi
           fi
+          if [ -f "$GITHUB_WORKSPACE/out/security-events.jsonl" ]; then
+            echo "::notice::security-events.jsonl"
+            cat "$GITHUB_WORKSPACE/out/security-events.jsonl"
+          fi
+
+      - name: Upload security artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-events
+          path: |
+            out/held.json
+            out/security-events.jsonl
+          if-no-files-found: ignore
+          retention-days: 90
 
       - name: Copy JSON blobs into site repo
         run: |

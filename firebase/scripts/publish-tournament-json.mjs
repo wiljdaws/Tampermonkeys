@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -57,6 +57,34 @@ async function apiJson(url, { method = "GET", token, project, body } = {}) {
     throw new Error(`Firestore request failed (${response.status}): ${message}`);
   }
   return parsed;
+}
+
+// One-read probe: the most-recently-written row's lastWriteAt. Used to decide
+// whether the full LIMIT 100 scan is worth spending reads on this run.
+async function queryLatestWriteAt(token, project) {
+  const body = await apiJson(`${documentsBase(project)}:runQuery`, {
+    method: "POST",
+    token,
+    project,
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: COLLECTION }],
+        orderBy: [
+          { field: { fieldPath: "lastWriteAt" }, direction: "DESCENDING" },
+        ],
+        limit: 1,
+      },
+    }),
+  });
+  for (const entry of body || []) {
+    if (!entry?.document) continue;
+    const decoded = decodeFirestoreDocument(entry.document);
+    // decodeFirestoreDocument returns timestamps as { __firestoreType, value }
+    const raw = decoded.fields?.lastWriteAt;
+    if (raw?.value) return raw.value;
+    if (typeof raw === "string") return raw;
+  }
+  return null;
 }
 
 async function queryTournamentRows(token, project) {
@@ -135,9 +163,13 @@ async function main() {
   const args = process.argv.slice(2);
   let project = "rgleaderboard";
   let outputDir = null;
+  let stateDir = null;
+  let forceFull = false;
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === "--project" && args[i + 1]) { project = args[i + 1]; i += 1; }
     else if (args[i] === "--output-dir" && args[i + 1]) { outputDir = args[i + 1]; i += 1; }
+    else if (args[i] === "--state-dir" && args[i + 1]) { stateDir = args[i + 1]; i += 1; }
+    else if (args[i] === "--force-full") { forceFull = true; }
   }
   if (!outputDir) {
     console.error("--output-dir <path> is required");
@@ -145,19 +177,55 @@ async function main() {
   }
 
   const token = await getGcloudAccessToken();
+
+  // CDC: read one doc first. If maxWriteAt matches last publish, skip the
+  // full scan and save 12 reads/run. Idle runs cost 1 read instead of 12.
+  const statePath = stateDir ? join(stateDir, "tournament.json") : null;
+  let priorMaxWriteAt = null;
+  if (statePath && !forceFull) {
+    try {
+      const text = await readFile(statePath, "utf8");
+      priorMaxWriteAt = JSON.parse(text)?.maxWriteAt ?? null;
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
+  }
+
+  let probeReads = 0;
+  if (priorMaxWriteAt) {
+    const currentMax = await queryLatestWriteAt(token, project);
+    probeReads = 1;
+    if (currentMax && currentMax === priorMaxWriteAt) {
+      console.log(`[publish-tournament-json] no changes since ${priorMaxWriteAt}, skipped full scan`);
+      await incrementPipelineReads({
+        token, project, label: "publish-tournament-json", reads: probeReads,
+      });
+      return;
+    }
+  }
+
   const rows = await queryTournamentRows(token, project);
   const doc = buildTournamentJson(rows);
   await mkdir(outputDir, { recursive: true });
   const outPath = join(outputDir, "tournament.json");
   await writeFile(outPath, JSON.stringify(doc), "utf8");
   console.log(`[publish-tournament-json] wrote ${outPath} (${doc.rowCount} rows)`);
-  // Bump the daily pipeline read counter so the admin dashboard can see
-  // how much this cron contributes to the day's total.
+
+  if (statePath) {
+    await mkdir(stateDir, { recursive: true });
+    const nextMax = rows
+      .map((row) => row?.lastWriteAt?.value || (typeof row?.lastWriteAt === "string" ? row.lastWriteAt : null))
+      .filter(Boolean)
+      .sort()
+      .pop() || null;
+    if (nextMax) {
+      await writeFile(statePath, JSON.stringify({ maxWriteAt: nextMax }), "utf8");
+    }
+  }
+
   await incrementPipelineReads({
-    token,
-    project,
-    label: "publish-tournament-json",
-    reads: rows.length,
+    token, project, label: "publish-tournament-json",
+    reads: rows.length + probeReads,
   });
 }
 
