@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.2
+// @version      24.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9237,6 +9237,7 @@
     titleUnderline: false,
     titleStrike: false,
     titleAlpha: 255,                  // 0-255 alpha on titleColor (solid only)
+    titleGapLines: 1,                 // blank lines inserted between name/art and title
     // alpha on the name's solid color, dims trailing URL text etc
     solidAlpha: 255,
     colorSpans: [],                   // selected-range paints; empty = whole name
@@ -10597,6 +10598,8 @@
       if (s.titleUnderline) { tOpen += '<u>'; tClose = '</u>' + tClose; }
       if (s.titleStrike) { tOpen += '<s>'; tClose = '</s>' + tClose; }
       const titleLine = tOpen + t + tClose;
+      const gapCount = Math.max(0, Math.min(10, Number(s.titleGapLines) || 0));
+      const gapBrs = '<br>'.repeat(gapCount);
       if (packedArt) {
         // Center the title on the art's own width, then position that block
         // wherever the art sits. Left-aligned art => title centered in the
@@ -10618,14 +10621,14 @@
         const anchor = '</mspace>';
         const idx = code.lastIndexOf(anchor);
         if (idx >= 0) {
-          code = code.slice(0, idx) + paddedTitle + '<br>' + code.slice(idx);
+          code = code.slice(0, idx) + gapBrs + paddedTitle + '<br>' + code.slice(idx);
         } else {
-          code += '<br>' + paddedTitle;
+          code += '<br>' + gapBrs + paddedTitle;
         }
       } else {
         // Non-art path: the surrounding <align> from the name wraps the
         // title too, so it inherits automatically.
-        code += '<br>' + titleLine;
+        code += '<br>' + gapBrs + titleLine;
       }
     }
 
@@ -10802,6 +10805,8 @@
       titleLine.style.fontSize = `${Math.max(5, 18 * s.titleSizePct / 100 * previewZoom)}px`;
       titleLine.style.textAlign = normalizeForgeAlign(s.align);
       titleLine.style.width = '100%';
+      const previewGap = Math.max(0, Math.min(10, Number(s.titleGapLines) || 0));
+      if (previewGap > 0) titleLine.style.marginTop = `${previewGap * 1.1}em`;
       if (s.titleSub) titleLine.style.verticalAlign = 'sub';
       if (s.titleBold) titleLine.style.fontWeight = '700';
       if (s.titleItalic) titleLine.style.fontStyle = 'italic';
@@ -12145,6 +12150,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         ]));
       }
       secTitle.appendChild(sliderRow(panel, 'Size', 'titleSizePct', 10, 500, '%'));
+      secTitle.appendChild(sliderRow(panel, 'Gap', 'titleGapLines', 0, 5, ' ln'));
       const tStyle = el('div', { class: 'rgnf-row' });
       const tToggle = (key, label) => el('button', {
         class: `rgnf-chip ${state[key] ? 'rgnf-on' : ''}`, text: label,
