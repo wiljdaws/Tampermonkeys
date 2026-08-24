@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      23.5
+// @version      23.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3605,6 +3605,9 @@
         const entries = [];
         for (let index = 0; index < rows.length; index += 1) {
             const row = rows[index] || {};
+            // Defense-in-depth: the aggregate builder already filters deleted
+            // rows, but skip them here too so a bad publish can't leak them.
+            if (row.deleted === true) continue;
             const uid = String(row.uid || row.sourceUserId || "").trim();
             const rgPlayerId = String(row.rgPlayerId || "").trim();
             const mmr = Number(row.mmr);
@@ -3644,30 +3647,33 @@
     }
 
     async function fetchLeaderboardCacheDirect(fb, mode, playlist) {
+        // Overfetch so we can drop soft-deleted rows client-side and still
+        // end up with RG_LB_TOP_N live entries. The site's published JSON
+        // does the same filter, so the popup ranks match the leaderboard.
         const q = fb.query(
             fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
             fb.where("playlist", "==", playlist),
             fb.orderBy("mmr", "desc"),
-            fb.limit(RG_LB_TOP_N),
+            fb.limit(Math.max(RG_LB_TOP_N + 25, Math.ceil(RG_LB_TOP_N * 1.2))),
         );
         const snap = await fb.getDocs(q);
         const entries = [];
-        let rank = 0;
         snap.forEach(doc => {
-            rank++;
             const d = doc.data();
+            if (d.deleted === true) return;
             const rgPlayerId = typeof d.rgPlayerId === "string" ? d.rgPlayerId.trim() : "";
             entries.push({
                 uid: d.sourceUserId,
                 ...(rgPlayerId ? { rgPlayerId } : {}),
                 name: d.name,
                 mmr: d.mmr,
-                rank,
             });
         });
-        dbg(`leaderboard cache refreshed (${mode.replace("Competitive", "")}:${entries.length})`);
+        // Assign ranks after filtering so popup #s match the site's JSON.
+        const capped = entries.slice(0, RG_LB_TOP_N).map((e, i) => ({ ...e, rank: i + 1 }));
+        dbg(`leaderboard cache refreshed (${mode.replace("Competitive", "")}:${capped.length})`);
         return {
-            modes: { [mode]: entries },
+            modes: { [mode]: capped },
             fetchedAt: Date.now(),
             source: "query",
         };
