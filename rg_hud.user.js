@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      23.7
+// @version      23.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -10585,10 +10585,13 @@
       if (s.titleUnderline) { tOpen += '<u>'; tClose = '</u>' + tClose; }
       if (s.titleStrike) { tOpen += '<s>'; tClose = '</s>' + tClose; }
       const tAlign = normalizeForgeAlign(s.titleAlign || 'center');
-      // Wrap the title in its own align tag so it doesn't inherit the
-      // name/art alignment. Skip only when default center is fine.
+      // TMP <align> is sticky-block; wrap only when overriding the game's
+      // default centered title slot. Center = emit nothing so we don't
+      // fight the game's own layout.
       let titleLine = tOpen + t + tClose;
-      titleLine = `<align=${tAlign}>` + titleLine + `</align>`;
+      if (tAlign === 'left' || tAlign === 'right') {
+        titleLine = `<align=${tAlign}>${titleLine}</align>`;
+      }
       code += '<br>' + titleLine;
     }
 
@@ -10763,6 +10766,8 @@
       const titleLine = document.createElement('div');
       titleLine.className = 'rgnf-preview-title';
       titleLine.style.fontSize = `${Math.max(5, 18 * s.titleSizePct / 100 * previewZoom)}px`;
+      titleLine.style.textAlign = normalizeForgeAlign(s.titleAlign || 'center');
+      titleLine.style.width = '100%';
       if (s.titleSub) titleLine.style.verticalAlign = 'sub';
       if (s.titleBold) titleLine.style.fontWeight = '700';
       if (s.titleItalic) titleLine.style.fontStyle = 'italic';
