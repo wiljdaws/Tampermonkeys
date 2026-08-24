@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.5
+// @version      24.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9265,6 +9265,21 @@
     titleStrike: false,
     titleAlpha: 255,                  // 0-255 alpha on titleColor (solid only)
     titleGapLines: 1,                 // blank lines inserted between name/art and title
+    // Subtitle mirrors title but sits below it; independent styling.
+    subtitleOn: false,
+    subtitleText: '',
+    subtitleColorMode: 'inherit',     // 'inherit' | 'solid' | 'gradient'
+    subtitleColor: '#94a3b8',
+    subtitleSizePct: 55,
+    subtitleSub: true,
+    subtitleStops: ['#ff8fb1', '#a78bfa'],
+    subtitlePaletteKey: null,
+    subtitleBold: false,
+    subtitleItalic: false,
+    subtitleUnderline: false,
+    subtitleStrike: false,
+    subtitleAlpha: 255,
+    subtitleGapLines: 0,              // blank lines between title and subtitle
     // alpha on the name's solid color, dims trailing URL text etc
     solidAlpha: 255,
     colorSpans: [],                   // selected-range paints; empty = whole name
@@ -10578,6 +10593,61 @@
     };
   }
 
+  function resolveSubtitleColorStyle(s) {
+    if (s.subtitleColorMode === 'inherit') {
+      return {
+        mode: s.colorMode,
+        solid: s.solidColor,
+        stops: s.stops,
+        alpha: s.colorMode === 'solid' ? (s.solidAlpha ?? 255) : 255,
+      };
+    }
+    return {
+      mode: s.subtitleColorMode,
+      solid: s.subtitleColor,
+      stops: s.subtitleStops,
+      alpha: s.subtitleAlpha ?? 255,
+    };
+  }
+
+  // Compose either title or subtitle: color processing, style tags, optional
+  // clan-tag prefix. Returns { line, visibleWidth } or null if nothing to render.
+  function composeExtraLine(s, kind) {
+    const isTitle = kind === 'title';
+    const textKey = isTitle ? 'titleText' : 'subtitleText';
+    const text = String(s[textKey] || '');
+    if (!text.trim()) return null;
+    const style = isTitle ? resolveTitleColorStyle(s) : resolveSubtitleColorStyle(s);
+    const sizeKey = isTitle ? 'titleSizePct' : 'subtitleSizePct';
+    const subKey = isTitle ? 'titleSub' : 'subtitleSub';
+    const boldKey = isTitle ? 'titleBold' : 'subtitleBold';
+    const italicKey = isTitle ? 'titleItalic' : 'subtitleItalic';
+    const underlineKey = isTitle ? 'titleUnderline' : 'subtitleUnderline';
+    const strikeKey = isTitle ? 'titleStrike' : 'subtitleStrike';
+    const prefix = isTitle ? _prefix('title') : '';
+    let t = text;
+    if (style.mode === 'solid') {
+      const aa = style.alpha < 255 ? alphaHex(style.alpha) : '';
+      t = `<${style.solid.toUpperCase()}${aa}>` + t;
+    } else if (style.mode === 'gradient') {
+      t = colorizeText(t, 'gradient', style.solid, style.stops, s.skipSpaces);
+      const aaG = style.alpha < 255 ? alphaHex(style.alpha) : '';
+      if (aaG) t = t.replace(/<(#[0-9A-Fa-f]{6})>/g, `<$1${aaG}>`);
+    }
+    if (prefix) t = prefix + ' ' + t;
+    let open = '', close = '';
+    if (s[sizeKey] !== 100) open += `<size=${s[sizeKey]}%>`;
+    if (s[subKey]) { open += '<sub>'; close = '</sub>' + close; }
+    if (s[boldKey]) { open += '<b>'; close = '</b>' + close; }
+    if (s[italicKey]) { open += '<i>'; close = '</i>' + close; }
+    if (s[underlineKey]) { open += '<u>'; close = '</u>' + close; }
+    if (s[strikeKey]) { open += '<s>'; close = '</s>' + close; }
+    const line = open + t + close;
+    const prefixVisible = prefix ? visibleArtWidth(prefix) + 1 : 0;
+    const visibleWidth = [...text].length + prefixVisible;
+    return { line, visibleWidth };
+  }
+
   function buildCode(s) {
     let open = '';
     let close = '';
@@ -10602,73 +10672,52 @@
     let code = open + nameCode + close;
     if (packedArt) code = packAsciiArt(code, align);
 
-    // title line, fully independent styling. packAsciiArt already emits a
-    // trailing <br> so the art's real last row stays inside the mspace
-    // block; the title becomes the game's title slot cleanly on top of it.
-    if (s.titleOn && s.titleText.trim().length > 0) {
-      // Grab the clan tag markup if the user chose "before title" position.
-      // Apply it AFTER the title's own color processing so colorizeText
-      // doesn't try to gradient over the tag's TMP color tags (that produced
-      // the "raw <#RRGGBB> shows up as literal text" bug).
-      const titlePrefix = _prefix("title");
-      let t = s.titleText;
-      const titleColor = resolveTitleColorStyle(s);
-      if (titleColor.mode === 'solid') {
-        const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
-        t = `<${titleColor.solid.toUpperCase()}${aa}>` + t;
-      } else if (titleColor.mode === 'gradient') {
-        t = colorizeText(t, 'gradient', titleColor.solid, titleColor.stops, s.skipSpaces);
-        // append alpha byte to every <#RRGGBB> so gradients can be transparent too
-        const aaG = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
-        if (aaG) t = t.replace(/<(#[0-9A-Fa-f]{6})>/g, `<$1${aaG}>`);
-      }
-      // Prepend the already-styled clan tag so its own colors/bold survive
-      // untouched. Space between tag and title matches how "[TAG] Name"
-      // usually reads.
-      if (titlePrefix) t = titlePrefix + " " + t;
-      let tOpen = '', tClose = '';
-      if (s.titleSizePct !== 100) tOpen += `<size=${s.titleSizePct}%>`;
-      if (s.titleSub) { tOpen += '<sub>'; tClose = '</sub>' + tClose; }
-      if (s.titleBold) { tOpen += '<b>'; tClose = '</b>' + tClose; }
-      if (s.titleItalic) { tOpen += '<i>'; tClose = '</i>' + tClose; }
-      if (s.titleUnderline) { tOpen += '<u>'; tClose = '</u>' + tClose; }
-      if (s.titleStrike) { tOpen += '<s>'; tClose = '</s>' + tClose; }
-      const titleLine = tOpen + t + tClose;
-      const gapCount = Math.max(0, Math.min(10, Number(s.titleGapLines) || 0));
-      const gapBrs = '<br>'.repeat(gapCount);
+    // Build title and subtitle blocks. Both share the same alignment as the
+    // name/art (packAsciiArt already emits a trailing <br> so injecting the
+    // title lines inside the mspace block keeps them left/center/right in
+    // step with the art). Subtitle lives below title with its own gap.
+    const composed = [];
+    if (s.titleOn) {
+      const t = composeExtraLine(s, 'title');
+      if (t) composed.push({
+        line: t.line, visibleWidth: t.visibleWidth,
+        gap: Math.max(0, Math.min(10, Number(s.titleGapLines) || 0)),
+      });
+    }
+    if (s.subtitleOn) {
+      const st = composeExtraLine(s, 'subtitle');
+      if (st) composed.push({
+        line: st.line, visibleWidth: st.visibleWidth,
+        gap: Math.max(0, Math.min(10, Number(s.subtitleGapLines) || 0)),
+      });
+    }
+
+    if (composed.length) {
       if (packedArt) {
-        // Center the title on the art's own width, then position that block
-        // wherever the art sits. Left-aligned art => title centered in the
-        // left column; center art => title centered under a centered block;
-        // right art => title centered inside the right column. Title always
-        // reads as "belonging to" the name above it.
+        // Extract the art's own visible width so we can center each extra
+        // line horizontally within it. Compute artAlignIndent once so the
+        // block-position matches the art's alignment.
         const artInnerMatch = code.match(/<mspace=[^>]*>([\s\S]*?)<\/mspace>/i);
         const artBody = artInnerMatch ? artInnerMatch[1] : '';
         const artWidth = artLineStats(artBody.replace(/<br\s*\/?\s*>/gi, '\n')).width;
-        // titleWidth includes any prepended clan tag markup so centering
-        // stays visually correct when the tag is positioned before the title.
-        const titleVisibleText = String(s.titleText || '');
-        const prefixVisible = titlePrefix ? visibleArtWidth(titlePrefix) + 1 : 0; // +1 for the space
-        const titleWidth = [...titleVisibleText].length + prefixVisible;
-        const centerOffset = Math.max(0, Math.floor((artWidth - titleWidth) / 2));
         const artAlignIndent = artBlockIndentCols(artWidth, align);
-        const totalIndent = artAlignIndent + centerOffset;
-        const paddedTitle = totalIndent > 0
-          ? artIndentPad(totalIndent) + titleLine
-          : titleLine;
-        // Inject inside the packed <mspace>...</mspace> block so it shares
-        // the art's <align> scope and its monospace grid.
+        let payload = '';
+        for (const c of composed) {
+          const centerOffset = Math.max(0, Math.floor((artWidth - c.visibleWidth) / 2));
+          const totalIndent = artAlignIndent + centerOffset;
+          const padded = totalIndent > 0
+            ? artIndentPad(totalIndent) + c.line
+            : c.line;
+          payload += '<br>'.repeat(c.gap) + padded + '<br>';
+        }
         const anchor = '</mspace>';
         const idx = code.lastIndexOf(anchor);
-        if (idx >= 0) {
-          code = code.slice(0, idx) + gapBrs + paddedTitle + '<br>' + code.slice(idx);
-        } else {
-          code += '<br>' + gapBrs + paddedTitle;
-        }
+        if (idx >= 0) code = code.slice(0, idx) + payload + code.slice(idx);
+        else code += payload;
       } else {
-        // Non-art path: the surrounding <align> from the name wraps the
-        // title too, so it inherits automatically.
-        code += '<br>' + gapBrs + titleLine;
+        // Non-art path: outer <align> from the name wraps both title and
+        // subtitle so they inherit the name's alignment automatically.
+        for (const c of composed) code += '<br>' + '<br>'.repeat(c.gap) + c.line;
       }
     }
 
@@ -10878,6 +10927,46 @@
         titleLine.textContent = s.titleText;
       }
       wrap.appendChild(titleLine);
+    }
+
+    if (s.subtitleOn && s.subtitleText.trim()) {
+      const subLine = document.createElement('div');
+      subLine.className = 'rgnf-preview-title';
+      subLine.style.fontSize = `${Math.max(5, 18 * s.subtitleSizePct / 100 * previewZoom)}px`;
+      subLine.style.textAlign = normalizeForgeAlign(s.align);
+      subLine.style.width = '100%';
+      const previewSubGap = Math.max(0, Math.min(10, Number(s.subtitleGapLines) || 0));
+      if (previewSubGap > 0) subLine.style.marginTop = `${previewSubGap * 1.1}em`;
+      if (s.subtitleSub) subLine.style.verticalAlign = 'sub';
+      if (s.subtitleBold) subLine.style.fontWeight = '700';
+      if (s.subtitleItalic) subLine.style.fontStyle = 'italic';
+      const subDeco = [];
+      if (s.subtitleUnderline) subDeco.push('underline');
+      if (s.subtitleStrike) subDeco.push('line-through');
+      if (subDeco.length) subLine.style.textDecorationLine = subDeco.join(' ');
+      const subColor = resolveSubtitleColorStyle(s);
+      if (subColor.mode === 'solid') {
+        subLine.textContent = s.subtitleText;
+        const aa = subColor.alpha < 255 ? alphaHex(subColor.alpha) : '';
+        subLine.style.color = subColor.solid + aa;
+      } else if (subColor.mode === 'gradient') {
+        const chars = [...s.subtitleText];
+        const paint = chars.filter(c => c !== ' ').length;
+        const aa = subColor.alpha < 255 ? alphaHex(subColor.alpha) : '';
+        let j = 0;
+        for (const c of chars) {
+          const sp = document.createElement('span');
+          sp.textContent = c;
+          if (c !== ' ') {
+            sp.style.color = gradientAt(subColor.stops, paint === 1 ? 0 : j / (paint - 1)) + aa;
+            j++;
+          }
+          subLine.appendChild(sp);
+        }
+      } else {
+        subLine.textContent = s.subtitleText;
+      }
+      wrap.appendChild(subLine);
     }
 
     // fake "Scored!" suffix
@@ -12204,6 +12293,107 @@ _rgnfFab = fab; _rgnfPanel = panel;
       secTitle.appendChild(tStyle);
     }
     panel.appendChild(secTitle);
+
+    // ---- Subtitle ----
+    // Mirrors Title but sits below it with its own gap. Same styling controls.
+    const secSub = el('div', { class: 'rgnf-sec' });
+    secSub.appendChild(el('h4', { text: 'Subtitle (line under title)' }));
+    const stRow = el('div', { class: 'rgnf-row' });
+    stRow.appendChild(el('button', {
+      class: `rgnf-chip ${state.subtitleOn ? 'rgnf-on' : ''}`, text: state.subtitleOn ? 'On' : 'Off',
+      onclick: () => { state.subtitleOn = !state.subtitleOn; render(panel); },
+    }));
+    secSub.appendChild(stRow);
+    if (state.subtitleOn) {
+      secSub.appendChild(el('div', { class: 'rgnf-row' }, [
+        el('input', {
+          class: 'rgnf-raw-text-safe',
+          type: 'text',
+          placeholder: 'e.g. season 2 finals',
+          value: state.subtitleText,
+          oninput: (e) => { state.subtitleText = e.target.value; refreshPreview(); },
+        }),
+      ]));
+      const stm = el('div', { class: 'rgnf-row' });
+      [['inherit', 'Inherit'], ['solid', 'Solid'], ['gradient', 'Gradient']].forEach(([v, label]) => {
+        stm.appendChild(el('button', {
+          class: `rgnf-chip ${state.subtitleColorMode === v ? 'rgnf-on' : ''}`, text: label,
+          onclick: () => { state.subtitleColorMode = v; render(panel); },
+        }));
+      });
+      secSub.appendChild(stm);
+      if (state.subtitleColorMode === 'solid') {
+        secSub.appendChild(el('div', { class: 'rgnf-row' }, [
+          el('input', { type: 'color', value: state.subtitleColor, oninput: (e) => { state.subtitleColor = e.target.value; refreshPreview(); } }),
+        ]));
+      }
+      if (state.subtitleColorMode === 'gradient') {
+        const palRow = el('div', { class: 'rgnf-row' });
+        PALETTES.forEach(p => {
+          palRow.appendChild(el('button', {
+            class: `rgnf-chip ${state.subtitlePaletteKey === p.label ? 'rgnf-on' : ''}`, text: p.label,
+            onclick: () => {
+              state.subtitlePaletteKey = p.label;
+              state.subtitleStops = [...p.stops];
+              refreshPreview();
+              render(panel);
+            },
+          }));
+        });
+        secSub.appendChild(palRow);
+        const sStops = el('div', { class: 'rgnf-row' });
+        state.subtitleStops.forEach((c, idx) => {
+          const stop = el('div', { class: 'rgnf-stop' }, [
+            el('input', { type: 'color', value: c, oninput: (e) => {
+              state.subtitleStops[idx] = e.target.value;
+              state.subtitlePaletteKey = null;
+              refreshPreview();
+              const bar = document.getElementById('rgnfSubtitleGradBar');
+              if (bar) bar.style.background = `linear-gradient(90deg, ${state.subtitleStops.join(',')})`;
+            } }),
+          ]);
+          if (state.subtitleStops.length > 2) {
+            stop.appendChild(el('button', { text: '✕', onclick: () => { state.subtitleStops.splice(idx, 1); state.subtitlePaletteKey = null; render(panel); } }));
+          }
+          sStops.appendChild(stop);
+        });
+        if (state.subtitleStops.length < 5) {
+          sStops.appendChild(el('button', {
+            class: 'rgnf-chip', text: '+ stop',
+            onclick: () => { state.subtitleStops.push(state.subtitleStops[state.subtitleStops.length - 1]); state.subtitlePaletteKey = null; render(panel); },
+          }));
+        }
+        secSub.appendChild(sStops);
+        const bar = el('div', { class: 'rgnf-gradbar' });
+        bar.id = 'rgnfSubtitleGradBar';
+        bar.style.background = `linear-gradient(90deg, ${state.subtitleStops.join(',')})`;
+        secSub.appendChild(bar);
+      }
+      if (state.subtitleColorMode !== 'inherit') {
+        secSub.appendChild(el('div', { class: 'rgnf-row' }, [
+          el('label', { text: 'Opacity' }, [
+            el('input', { type: 'range', min: 32, max: 255, value: state.subtitleAlpha ?? 255,
+              oninput: (e) => { state.subtitleAlpha = Number(e.target.value); refreshPreview(); },
+              style: 'width:140px;margin-left:6px;',
+            }),
+          ]),
+        ]));
+      }
+      secSub.appendChild(sliderRow(panel, 'Size', 'subtitleSizePct', 10, 500, '%'));
+      secSub.appendChild(sliderRow(panel, 'Gap', 'subtitleGapLines', 0, 5, ' ln'));
+      const stStyle = el('div', { class: 'rgnf-row' });
+      const stToggle = (key, label) => el('button', {
+        class: `rgnf-chip ${state[key] ? 'rgnf-on' : ''}`, text: label,
+        onclick: () => { state[key] = !state[key]; refreshPreview(); render(panel); },
+      });
+      stStyle.appendChild(stToggle('subtitleBold', 'B'));
+      stStyle.appendChild(stToggle('subtitleItalic', 'I'));
+      stStyle.appendChild(stToggle('subtitleUnderline', 'U'));
+      stStyle.appendChild(stToggle('subtitleStrike', 'S'));
+      stStyle.appendChild(stToggle('subtitleSub', '<sub>'));
+      secSub.appendChild(stStyle);
+    }
+    panel.appendChild(secSub);
 
     // ---- Scored! ----
     const secScored = el('div', { class: 'rgnf-sec rgnf-scored-sec' });
