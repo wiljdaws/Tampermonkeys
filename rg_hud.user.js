@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.8
+// @version      24.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.8";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.9";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5228,23 +5228,29 @@
                 // Try the leaderboard_cache aggregate first — it's already
                 // identity-deduped (Virtualzzs's two docs collapse to one)
                 // and carries a pre-computed rank per row, matching what
-                // the site shows. One read per playlist and no composite
-                // index needed. Only falls back to count queries if the
-                // player isn't in the top ~100 published by the aggregate.
+                // the site shows. One read per playlist. Only trust it when
+                // it's under an hour old, otherwise fall back to the raw
+                // count so the badge doesn't lag a stale build's mmr.
+                const AGG_FRESH_MS = 60 * 60 * 1000; // 1h
                 let rank = null;
                 try {
                     const aggSnap = await fb.getDoc(
                         fb.doc(fb.db, LEADERBOARD_CACHE_COLLECTION, playlist)
                     );
                     if (aggSnap.exists()) {
-                        const rows = aggSnap.data()?.rows || [];
-                        const uid = firebaseAuthUid || "";
-                        const rgId = data?.Id || "";
-                        const me = rows.find((r) =>
-                            (uid && (r.uid === uid || r.sourceUserId === uid))
-                            || (rgId && r.rgPlayerId === rgId)
-                        );
-                        if (me && typeof me.rank === "number") rank = me.rank;
+                        const aggData = aggSnap.data() || {};
+                        const builtAt = Date.parse(aggData.builtAt || "") || Number(aggData.builtAt) || 0;
+                        const aggFresh = builtAt && (Date.now() - builtAt) < AGG_FRESH_MS;
+                        if (aggFresh) {
+                            const rows = aggData.rows || [];
+                            const uid = firebaseAuthUid || "";
+                            const rgId = data?.Id || "";
+                            const me = rows.find((r) =>
+                                (uid && (r.uid === uid || r.sourceUserId === uid))
+                                || (rgId && r.rgPlayerId === rgId)
+                            );
+                            if (me && typeof me.rank === "number") rank = me.rank;
+                        }
                     }
                 } catch (e) {
                     dbg(`refreshRanks: aggregate lookup failed for ${playlist} (non-fatal)`);
