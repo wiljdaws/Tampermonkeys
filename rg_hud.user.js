@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.7
+// @version      24.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.8";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5225,33 +5225,57 @@
                 const isFresh = Date.now() - queriedAt < RANK_QUERY_MAX_AGE_MS;
                 if (isFresh && lastRankedMMR.get(playlist) === mmr) continue;
 
-                const q = fb.query(
-                    fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                    fb.where("playlist", "==", playlist),
-                    fb.where("mmr", ">", mmr)
-                );
-                const snapshot = await fb.getCountFromServer(q);
-
-                // Subtract soft-deleted rows above us so the badge matches
-                // the site (which filters deleted:true out of its JSON).
-                // != true can't be used here because most rows don't have
-                // the deleted field at all, and Firestore excludes missing
-                // fields from != queries.
-                let deletedAbove = 0;
+                // Try the leaderboard_cache aggregate first — it's already
+                // identity-deduped (Virtualzzs's two docs collapse to one)
+                // and carries a pre-computed rank per row, matching what
+                // the site shows. One read per playlist and no composite
+                // index needed. Only falls back to count queries if the
+                // player isn't in the top ~100 published by the aggregate.
+                let rank = null;
                 try {
-                    const deletedQ = fb.query(
-                        fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
-                        fb.where("playlist", "==", playlist),
-                        fb.where("mmr", ">", mmr),
-                        fb.where("deleted", "==", true)
+                    const aggSnap = await fb.getDoc(
+                        fb.doc(fb.db, LEADERBOARD_CACHE_COLLECTION, playlist)
                     );
-                    const deletedSnap = await fb.getCountFromServer(deletedQ);
-                    deletedAbove = deletedSnap.data().count;
+                    if (aggSnap.exists()) {
+                        const rows = aggSnap.data()?.rows || [];
+                        const uid = firebaseAuthUid || "";
+                        const rgId = data?.Id || "";
+                        const me = rows.find((r) =>
+                            (uid && (r.uid === uid || r.sourceUserId === uid))
+                            || (rgId && r.rgPlayerId === rgId)
+                        );
+                        if (me && typeof me.rank === "number") rank = me.rank;
+                    }
                 } catch (e) {
-                    dbg(`refreshRanks: deleted-count lookup failed for ${playlist} (index?): ` + getErrMsg(e));
+                    dbg(`refreshRanks: aggregate lookup failed for ${playlist} (non-fatal)`);
                 }
 
-                const rank = Math.max(1, snapshot.data().count - deletedAbove + 1);
+                // Fallback: below top-100 users don't appear in the aggregate,
+                // so approximate their rank with the raw-count-minus-deleted
+                // path. It won't be identity-deduped, but rank drift of ±1-3
+                // at low placement rarely matters visually.
+                if (rank == null) {
+                    const q = fb.query(
+                        fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                        fb.where("playlist", "==", playlist),
+                        fb.where("mmr", ">", mmr)
+                    );
+                    const snapshot = await fb.getCountFromServer(q);
+                    let deletedAbove = 0;
+                    try {
+                        const deletedQ = fb.query(
+                            fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                            fb.where("playlist", "==", playlist),
+                            fb.where("mmr", ">", mmr),
+                            fb.where("deleted", "==", true)
+                        );
+                        const deletedSnap = await fb.getCountFromServer(deletedQ);
+                        deletedAbove = deletedSnap.data().count;
+                    } catch (e) {
+                        dbg(`refreshRanks: deleted-count lookup failed for ${playlist} (index?): ` + getErrMsg(e));
+                    }
+                    rank = Math.max(1, snapshot.data().count - deletedAbove + 1);
+                }
                 cachedRanks.set(playlist, rank);
                 lastRankedMMR.set(playlist, mmr);
                 lastRankedAt.set(playlist, Date.now());
