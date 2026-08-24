@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      23.9
+// @version      24.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -10583,11 +10583,26 @@
       if (s.titleItalic) { tOpen += '<i>'; tClose = '</i>' + tClose; }
       if (s.titleUnderline) { tOpen += '<u>'; tClose = '</u>' + tClose; }
       if (s.titleStrike) { tOpen += '<s>'; tClose = '</s>' + tClose; }
-      // Title inherits the name's alignment via the surrounding <align>
-      // context (or the game's default centered title slot when packed art
-      // is on). Emitting a separate title <align> tag didn't stick in the
-      // TMP nameplate renderer, so we just let it flow.
-      code += '<br>' + tOpen + t + tClose;
+      const titleLine = tOpen + t + tClose;
+      if (packedArt) {
+        // Inject the title INSIDE the packed <mspace>...</mspace> block so
+        // it inherits the same <align> scope as the art. Otherwise the
+        // game's TMP nameplate renderer treats a naked trailing line as the
+        // "title slot" and forces it to center regardless of any tag. The
+        // trade-off: title renders in the same monospace font as the art,
+        // which reads fine with ASCII/braille headers.
+        const anchor = '</mspace>';
+        const idx = code.lastIndexOf(anchor);
+        if (idx >= 0) {
+          code = code.slice(0, idx) + titleLine + '<br>' + code.slice(idx);
+        } else {
+          code += '<br>' + titleLine;
+        }
+      } else {
+        // Non-art path: the surrounding <align> from the name wraps the
+        // title too, so it inherits automatically.
+        code += '<br>' + titleLine;
+      }
     }
 
     // trailing tags style whatever "Scored!" text the game appends.
