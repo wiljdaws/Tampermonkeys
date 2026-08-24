@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.3
+// @version      24.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.3";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.4";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -781,6 +781,7 @@
             forgeView.style.display = "block";
             actionRow.style.display = "none"; // hide leaderboard/sub in forge
             if (RGNF.setPrefixProvider) RGNF.setPrefixProvider(getClanTagPrefix);
+    if (RGNF.setPrefixTargetProvider) RGNF.setPrefixTargetProvider(clanTagPositionPref);
             if (RGNF.setTagStripper) RGNF.setTagStripper(stripLeadingClanTagMarkup);
             // tag prefix needs myClan; a prior failed reload used to wipe it
             loadClanData().then(() => { if (RGNF.refresh) RGNF.refresh(); }).catch(() => {});
@@ -6934,6 +6935,15 @@
             html += '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;">'
                 + '<input type="checkbox" id="rgUseTag"' + (useClanTagPref() ? " checked" : "") + '>'
                 + ' Prepend clan tag to my in-game name</label>';
+            html += '<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:6px;padding-left:20px;opacity:.85;">'
+                + '<span>Position:</span>'
+                + '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;">'
+                + '<input type="radio" name="rgTagPos" id="rgTagPosName" value="name"' + (clanTagPositionPref() === "name" ? " checked" : "") + '>'
+                + ' Before name</label>'
+                + '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;">'
+                + '<input type="radio" name="rgTagPos" id="rgTagPosTitle" value="title"' + (clanTagPositionPref() === "title" ? " checked" : "") + '>'
+                + ' Before title</label>'
+                + '</div>';
         }
 
         body.innerHTML = html;
@@ -7085,6 +7095,16 @@
                 showToast(useTagCb.checked
                     ? "Tag armed! Open 🎨 Name Forge and hit Apply to update your name."
                     : "Tag prefix off -- hit Apply in 🎨 Name Forge to update your name.");
+                if (typeof RGNF !== "undefined" && RGNF.refresh) RGNF.refresh();
+            };
+        }
+        // position radio handlers
+        for (const id of ["rgTagPosName", "rgTagPosTitle"]) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            el.onchange = () => {
+                if (!el.checked) return;
+                setClanTagPositionPref(el.value);
                 if (typeof RGNF !== "undefined" && RGNF.refresh) RGNF.refresh();
             };
         }
@@ -8372,12 +8392,19 @@
     // doc doesn't balloon. getClanTagPrefix() returns TMP markup for Apply.
 
     const CLAN_TAG_OPTIN_KEY = "rgHudUseClanTag";
+    const CLAN_TAG_POSITION_KEY = "rgHudClanTagPosition"; // "name" | "title"
 
     function useClanTagPref() {
         try { return localStorage.getItem(CLAN_TAG_OPTIN_KEY) === "1"; } catch { return false; }
     }
     function setUseClanTagPref(on) {
         try { localStorage.setItem(CLAN_TAG_OPTIN_KEY, on ? "1" : "0"); } catch {}
+    }
+    function clanTagPositionPref() {
+        try { return localStorage.getItem(CLAN_TAG_POSITION_KEY) === "title" ? "title" : "name"; } catch { return "name"; }
+    }
+    function setClanTagPositionPref(pos) {
+        try { localStorage.setItem(CLAN_TAG_POSITION_KEY, pos === "title" ? "title" : "name"); } catch {}
     }
 
     function _interpHex(a, b, t) {
@@ -10579,7 +10606,11 @@
     // trailing <br> so the art's real last row stays inside the mspace
     // block; the title becomes the game's title slot cleanly on top of it.
     if (s.titleOn && s.titleText.trim().length > 0) {
-      let t = s.titleText;
+      // If the user picked "before title" as clan tag position, prepend the
+      // clan tag markup here so it sits inside the title (respecting size,
+      // color, and alignment of the title block).
+      const titlePrefix = _prefix("title");
+      let t = (titlePrefix ? titlePrefix + " " : "") + s.titleText;
       const titleColor = resolveTitleColorStyle(s);
       if (titleColor.mode === 'solid') {
         const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
@@ -10609,7 +10640,11 @@
         const artInnerMatch = code.match(/<mspace=[^>]*>([\s\S]*?)<\/mspace>/i);
         const artBody = artInnerMatch ? artInnerMatch[1] : '';
         const artWidth = artLineStats(artBody.replace(/<br\s*\/?\s*>/gi, '\n')).width;
-        const titleWidth = [...String(s.titleText || '')].length;
+        // titleWidth includes any prepended clan tag markup so centering
+        // stays visually correct when the tag is positioned before the title.
+        const titleVisibleText = String(s.titleText || '');
+        const prefixVisible = titlePrefix ? visibleArtWidth(titlePrefix) + 1 : 0; // +1 for the space
+        const titleWidth = [...titleVisibleText].length + prefixVisible;
         const centerOffset = Math.max(0, Math.floor((artWidth - titleWidth) / 2));
         const artAlignIndent = artBlockIndentCols(artWidth, align);
         const totalIndent = artAlignIndent + centerOffset;
@@ -12751,7 +12786,22 @@ _rgnfFab = fab; _rgnfPanel = panel;
       let _mountedIn = null;
       // HUD sets this to getClanTagPrefix so Forge stays clan-agnostic
       let _prefixProvider = null;
-      function _prefix() { try { return _prefixProvider ? _prefixProvider() : ""; } catch { return ""; } }
+      // HUD sets this to a function returning "name" | "title" so the tag
+      // can attach to either. Defaults to "name" for backward compat.
+      let _prefixTargetProvider = null;
+      function _prefixTargetFor() {
+        try { return _prefixTargetProvider ? _prefixTargetProvider() : "name"; }
+        catch { return "name"; }
+      }
+      function _prefix(target) {
+        // Called with no arg = "name" position (all legacy call sites). If the
+        // user picked "title" as tag position, name-targeted callers get "" so
+        // the tag isn't double-prepended; the composer inserts it into the
+        // title instead via _prefix("title").
+        const wanted = target || "name";
+        if (_prefixTargetFor() !== wanted) return "";
+        try { return _prefixProvider ? _prefixProvider() : ""; } catch { return ""; }
+      }
       let _tagStripper = null;
       function _stripTag(raw) {
         try { return _tagStripper ? _tagStripper(raw) : String(raw ?? ""); }
@@ -12762,6 +12812,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       function _roster() { try { return _rosterProvider ? _rosterProvider() : []; } catch { return []; } }
       return {
         setPrefixProvider(fn) { _prefixProvider = fn; },
+        setPrefixTargetProvider(fn) { _prefixTargetProvider = fn; },
         setTagStripper(fn) { _tagStripper = fn; },
         setRosterProvider(fn) { _rosterProvider = fn; },
         // HUD calls this from /login response too, not just Forge open.
@@ -12826,6 +12877,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       };
     })();
     if (RGNF.setPrefixProvider) RGNF.setPrefixProvider(getClanTagPrefix);
+    if (RGNF.setPrefixTargetProvider) RGNF.setPrefixTargetProvider(clanTagPositionPref);
     if (RGNF.setTagStripper) RGNF.setTagStripper(stripLeadingClanTagMarkup);
 
 })();
