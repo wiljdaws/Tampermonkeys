@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      23.4
+// @version      23.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5212,12 +5212,33 @@
                     fb.where("mmr", ">", mmr)
                 );
                 const snapshot = await fb.getCountFromServer(q);
-                const rank = snapshot.data().count + 1;
+
+                // Subtract soft-deleted rows above us so the badge matches
+                // the site (which filters deleted:true out of its JSON).
+                // != true can't be used here because most rows don't have
+                // the deleted field at all, and Firestore excludes missing
+                // fields from != queries.
+                let deletedAbove = 0;
+                try {
+                    const deletedQ = fb.query(
+                        fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
+                        fb.where("playlist", "==", playlist),
+                        fb.where("mmr", ">", mmr),
+                        fb.where("deleted", "==", true)
+                    );
+                    const deletedSnap = await fb.getCountFromServer(deletedQ);
+                    deletedAbove = deletedSnap.data().count;
+                } catch (e) {
+                    dbg(`refreshRanks: deleted-count lookup failed for ${playlist} (index?): ` + getErrMsg(e));
+                }
+
+                const rank = Math.max(1, snapshot.data().count - deletedAbove + 1);
                 cachedRanks.set(playlist, rank);
                 lastRankedMMR.set(playlist, mmr);
 
                 // gap to next rank up: lowest-MMR entry still above us.
-                // skipped when already #1.
+                // skipped when already #1. Fetch a small batch so we can
+                // skip past any soft-deleted rows client-side.
                 if (rank > 1) {
                     try {
                         const nextQ = fb.query(
@@ -5225,11 +5246,12 @@
                             fb.where("playlist", "==", playlist),
                             fb.where("mmr", ">", mmr),
                             fb.orderBy("mmr", "asc"),
-                            fb.limit(1)
+                            fb.limit(5)
                         );
                         const nextSnap = await fb.getDocs(nextQ);
-                        if (!nextSnap.empty) {
-                            const nextMmr = nextSnap.docs[0].data().mmr;
+                        const firstLive = nextSnap.docs.find(d => d.data().deleted !== true);
+                        if (firstLive) {
+                            const nextMmr = firstLive.data().mmr;
                             cachedMmrToNext.set(playlist, Math.max(0, nextMmr - mmr + 1));
                         }
                     } catch (e) {
