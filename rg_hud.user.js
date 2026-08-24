@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      23.6
+// @version      23.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "23.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -9224,6 +9224,7 @@
     titleUnderline: false,
     titleStrike: false,
     titleAlpha: 255,                  // 0-255 alpha on titleColor (solid only)
+    titleAlign: 'center',             // 'left' | 'center' | 'right' — game default is center
     // alpha on the name's solid color, dims trailing URL text etc
     solidAlpha: 255,
     colorSpans: [],                   // selected-range paints; empty = whole name
@@ -10561,9 +10562,10 @@
     let code = open + nameCode + close;
     if (packedArt) code = packAsciiArt(code, align);
 
-    // title line, fully independent styling. Art already owns every row;
-    // appending a title would put that last row back in the nameplate slot.
-    if (!packedArt && s.titleOn && s.titleText.trim().length > 0) {
+    // title line, fully independent styling. packAsciiArt already emits a
+    // trailing <br> so the art's real last row stays inside the mspace
+    // block; the title becomes the game's title slot cleanly on top of it.
+    if (s.titleOn && s.titleText.trim().length > 0) {
       let t = s.titleText;
       const titleColor = resolveTitleColorStyle(s);
       if (titleColor.mode === 'solid') {
@@ -10582,7 +10584,12 @@
       if (s.titleItalic) { tOpen += '<i>'; tClose = '</i>' + tClose; }
       if (s.titleUnderline) { tOpen += '<u>'; tClose = '</u>' + tClose; }
       if (s.titleStrike) { tOpen += '<s>'; tClose = '</s>' + tClose; }
-      code += '<br>' + tOpen + t + tClose;
+      const tAlign = normalizeForgeAlign(s.titleAlign || 'center');
+      // Wrap the title in its own align tag so it doesn't inherit the
+      // name/art alignment. Skip only when default center is fine.
+      let titleLine = tOpen + t + tClose;
+      titleLine = `<align=${tAlign}>` + titleLine + `</align>`;
+      code += '<br>' + titleLine;
     }
 
     // trailing tags style whatever "Scored!" text the game appends.
@@ -12110,6 +12117,20 @@ _rgnfFab = fab; _rgnfPanel = panel;
       tStyle.appendChild(tToggle('titleStrike', 'S'));
       tStyle.appendChild(tToggle('titleSub', '<sub>'));
       secTitle.appendChild(tStyle);
+      // alignment chips — game defaults the title slot to center, so the
+      // control lets you override it left or right without disturbing the
+      // name/art's own alignment.
+      const tAlignRow = el('div', { class: 'rgnf-row' });
+      tAlignRow.appendChild(el('label', { text: 'Align', style: 'margin-right:6px;opacity:.7;font-size:11px;' }));
+      [['left', '⟵'], ['center', '⟷'], ['right', '⟶']].forEach(([v, glyph]) => {
+        tAlignRow.appendChild(el('button', {
+          class: `rgnf-chip ${(state.titleAlign || 'center') === v ? 'rgnf-on' : ''}`,
+          text: glyph,
+          title: `Title align: ${v}`,
+          onclick: () => { state.titleAlign = v; refreshPreview(); render(panel); },
+        }));
+      });
+      secTitle.appendChild(tAlignRow);
     }
     panel.appendChild(secTitle);
 
