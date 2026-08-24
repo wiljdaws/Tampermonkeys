@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.1
+// @version      24.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -10598,18 +10598,29 @@
       if (s.titleStrike) { tOpen += '<s>'; tClose = '</s>' + tClose; }
       const titleLine = tOpen + t + tClose;
       if (packedArt) {
-        // Inject the title INSIDE the packed <mspace>...</mspace> block so
-        // it inherits the same <align> scope as the art. Otherwise the
-        // game's TMP nameplate renderer treats a naked trailing line as the
-        // "title slot" and forces it to center regardless of any tag. The
-        // trade-off: title renders in the same monospace font as the art,
-        // which reads fine with ASCII/braille headers.
+        // Center the title on the art's own width, then position that block
+        // wherever the art sits. Left-aligned art => title centered in the
+        // left column; center art => title centered under a centered block;
+        // right art => title centered inside the right column. Title always
+        // reads as "belonging to" the name above it.
+        const artInnerMatch = code.match(/<mspace=[^>]*>([\s\S]*?)<\/mspace>/i);
+        const artBody = artInnerMatch ? artInnerMatch[1] : '';
+        const artWidth = artLineStats(artBody.replace(/<br\s*\/?\s*>/gi, '\n')).width;
+        const titleWidth = [...String(s.titleText || '')].length;
+        const centerOffset = Math.max(0, Math.floor((artWidth - titleWidth) / 2));
+        const artAlignIndent = artBlockIndentCols(artWidth, align);
+        const totalIndent = artAlignIndent + centerOffset;
+        const paddedTitle = totalIndent > 0
+          ? artIndentPad(totalIndent) + titleLine
+          : titleLine;
+        // Inject inside the packed <mspace>...</mspace> block so it shares
+        // the art's <align> scope and its monospace grid.
         const anchor = '</mspace>';
         const idx = code.lastIndexOf(anchor);
         if (idx >= 0) {
-          code = code.slice(0, idx) + titleLine + '<br>' + code.slice(idx);
+          code = code.slice(0, idx) + paddedTitle + '<br>' + code.slice(idx);
         } else {
-          code += '<br>' + titleLine;
+          code += '<br>' + paddedTitle;
         }
       } else {
         // Non-art path: the surrounding <align> from the name wraps the
