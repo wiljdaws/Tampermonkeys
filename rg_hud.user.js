@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.0
+// @version      24.1
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.0";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.1";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5140,6 +5140,11 @@
 
     let ranksFetchedThisSession = false;
     const lastRankedMMR = new Map(); // playlist -> mmr at last query
+    const lastRankedAt = new Map();  // playlist -> ms timestamp of last query
+    // MMR-unchanged skip only trusts a cache younger than this. Rank drifts
+    // when other players play, not just when your own MMR moves — so a
+    // stale mode (like 3v3 for a mostly-1v1 player) still gets refreshed.
+    const RANK_QUERY_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6h
 
     // Cache the last-known rank+MMR per account in localStorage so a HUD reload
     // doesn't force a fresh Firestore fetch. Your rank only meaningfully moves
@@ -5160,6 +5165,7 @@
                 if (typeof entry?.rank === "number") cachedRanks.set(playlist, entry.rank);
                 if (typeof entry?.mmr === "number") lastRankedMMR.set(playlist, entry.mmr);
                 if (typeof entry?.gap === "number") cachedMmrToNext.set(playlist, entry.gap);
+                if (typeof entry?.queriedAt === "number") lastRankedAt.set(playlist, entry.queriedAt);
             }
             return true;
         } catch { return false; }
@@ -5174,6 +5180,7 @@
                     rank,
                     mmr: lastRankedMMR.get(playlist),
                     gap: cachedMmrToNext.get(playlist),
+                    queriedAt: lastRankedAt.get(playlist),
                 };
             }
             localStorage.setItem(rankCacheKey(uid), JSON.stringify({ ranks, savedAt: Date.now() }));
@@ -5185,6 +5192,7 @@
         cachedMmrToNext.clear();
         prevRanks.clear();
         lastRankedMMR.clear();
+        lastRankedAt.clear();
         ranksFetchedThisSession = false;
     }
 
@@ -5207,10 +5215,14 @@
                 const mmr = data.ModesGlicko?.[mode]?.displayRating;
                 if (typeof mmr !== "number") continue;
 
-                // skip modes whose MMR hasn't moved since last query. usually
-                // skips 2 of 3 modes on a match-triggered refresh, saves ~4
-                // reads/match. hydrated cache extends this across sessions.
-                if (lastRankedMMR.get(playlist) === mmr) continue;
+                // Skip only when MMR is unchanged AND the cache is fresh
+                // enough. Freshness matters because rank can shift when
+                // other players move even if yours doesn't. A player who
+                // rarely touches this mode (Daemo in 3v3 e.g.) has a very
+                // old cached rank and needs the re-query.
+                const queriedAt = lastRankedAt.get(playlist) || 0;
+                const isFresh = Date.now() - queriedAt < RANK_QUERY_MAX_AGE_MS;
+                if (isFresh && lastRankedMMR.get(playlist) === mmr) continue;
 
                 const q = fb.query(
                     fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
@@ -5241,6 +5253,7 @@
                 const rank = Math.max(1, snapshot.data().count - deletedAbove + 1);
                 cachedRanks.set(playlist, rank);
                 lastRankedMMR.set(playlist, mmr);
+                lastRankedAt.set(playlist, Date.now());
 
                 // gap to next rank up: lowest-MMR entry still above us.
                 // skipped when already #1. Fetch a small batch so we can
