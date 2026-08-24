@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.4
+// @version      24.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -10606,11 +10606,12 @@
     // trailing <br> so the art's real last row stays inside the mspace
     // block; the title becomes the game's title slot cleanly on top of it.
     if (s.titleOn && s.titleText.trim().length > 0) {
-      // If the user picked "before title" as clan tag position, prepend the
-      // clan tag markup here so it sits inside the title (respecting size,
-      // color, and alignment of the title block).
+      // Grab the clan tag markup if the user chose "before title" position.
+      // Apply it AFTER the title's own color processing so colorizeText
+      // doesn't try to gradient over the tag's TMP color tags (that produced
+      // the "raw <#RRGGBB> shows up as literal text" bug).
       const titlePrefix = _prefix("title");
-      let t = (titlePrefix ? titlePrefix + " " : "") + s.titleText;
+      let t = s.titleText;
       const titleColor = resolveTitleColorStyle(s);
       if (titleColor.mode === 'solid') {
         const aa = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
@@ -10621,6 +10622,10 @@
         const aaG = titleColor.alpha < 255 ? alphaHex(titleColor.alpha) : '';
         if (aaG) t = t.replace(/<(#[0-9A-Fa-f]{6})>/g, `<$1${aaG}>`);
       }
+      // Prepend the already-styled clan tag so its own colors/bold survive
+      // untouched. Space between tag and title matches how "[TAG] Name"
+      // usually reads.
+      if (titlePrefix) t = titlePrefix + " " + t;
       let tOpen = '', tClose = '';
       if (s.titleSizePct !== 100) tOpen += `<size=${s.titleSizePct}%>`;
       if (s.titleSub) { tOpen += '<sub>'; tClose = '</sub>' + tClose; }
