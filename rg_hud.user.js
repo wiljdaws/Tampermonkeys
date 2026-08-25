@@ -1714,6 +1714,83 @@
             </div>
             ${clashMiniBarHtml()}
         `;
+
+        // Render ATLAS Enterprise Suite™ widgets after stats
+        try {
+            const existingEnterprise = document.getElementById("rgEnterpriseSuite");
+            if (existingEnterprise) existingEnterprise.remove();
+            const existingScoring = document.getElementById("rgScoringWidget");
+            if (existingScoring) existingScoring.remove();
+            const rgBody = document.getElementById("rgBody");
+            if (rgBody) {
+                // Score widget
+                const scoreWidget = document.createElement("div");
+                scoreWidget.id = "rgScoringWidget";
+                rgBody.appendChild(scoreWidget);
+                _renderScoringWidget(scoreWidget);
+                // Enterprise suite tabs
+                const enterpriseDiv = document.createElement("div");
+                enterpriseDiv.id = "rgEnterpriseSuite";
+                rgBody.appendChild(enterpriseDiv);
+                const tabRow = document.createElement("div");
+                tabRow.style.cssText = "display:flex; gap:3px; flex-wrap:wrap; margin:6px 0 4px; border-top:1px solid #00bfff33; padding-top:6px;";
+                const panels = {};
+                const tabDefs = [
+                    { key: "pet", label: "🐾 Pet", color: "#4ade80" },
+                    { key: "miner", label: "⛏ Mine", color: "#ffd700" },
+                    { key: "astro", label: "🔮 Stars", color: "#c084fc" },
+                    { key: "weather", label: "🌦 Weather", color: "#00d4ff" },
+                    { key: "snake", label: "🐍 Snake", color: "#4ade80" },
+                    { key: "ai", label: "🤖 AI", color: "#f472b6" },
+                    { key: "todo", label: "📋 Todo", color: "#facc15" },
+                ];
+                tabDefs.forEach(({ key, label, color }) => {
+                    const btn = document.createElement("button");
+                    btn.className = "rgBtn";
+                    btn.style.cssText = `font-size:9px; padding:3px 5px; border-color:${color}44; color:${color}; flex:0 0 auto;`;
+                    btn.textContent = label;
+                    const panel = document.createElement("div");
+                    panel.style.cssText = "display:none; font-size:11px; line-height:1.4; max-height:220px; overflow-y:auto; padding:4px; background:rgba(0,0,0,.3); border-radius:6px; margin-top:4px;";
+                    panels[key] = panel;
+                    btn.onclick = () => {
+                        _enterpriseActiveTab = key;
+                        Object.values(panels).forEach(p => p.style.display = "none");
+                        panel.style.display = "block";
+                        _renderEnterpriseTab(key, panel);
+                    };
+                    tabRow.appendChild(btn);
+                    enterpriseDiv.appendChild(panel);
+                });
+                // extension tabs (Cookie/Zen/Dice/Units/Roman/DVD/Nyan) —
+                // self-contained modules registered in _enterpriseTabExtensions
+                if (typeof _enterpriseTabExtensions !== "undefined") {
+                    _enterpriseTabExtensions.forEach(({ key, label, color, render }) => {
+                        const btn = document.createElement("button");
+                        btn.className = "rgBtn";
+                        btn.style.cssText = `font-size:9px; padding:3px 5px; border-color:${color}44; color:${color}; flex:0 0 auto;`;
+                        btn.textContent = label;
+                        const panel = document.createElement("div");
+                        panel.style.cssText = "display:none; font-size:11px; line-height:1.4; max-height:220px; overflow-y:auto; padding:4px; background:rgba(0,0,0,.3); border-radius:6px; margin-top:4px;";
+                        panels[key] = panel;
+                        btn.onclick = () => {
+                            _enterpriseActiveTab = key;
+                            Object.values(panels).forEach(p => p.style.display = "none");
+                            panel.style.display = "block";
+                            render(panel);
+                        };
+                        tabRow.appendChild(btn);
+                        enterpriseDiv.appendChild(panel);
+                        _enterpriseTabRenderMap[key] = render;
+                    });
+                }
+                enterpriseDiv.appendChild(tabRow);
+                // restore whatever tab was open before this re-render nuked the DOM
+                if (_enterpriseActiveTab && panels[_enterpriseActiveTab]) {
+                    panels[_enterpriseActiveTab].style.display = "block";
+                    _renderEnterpriseTab(_enterpriseActiveTab, panels[_enterpriseActiveTab]);
+                }
+            }
+        } catch (e) { dbg("Enterprise suite render error: " + getErrMsg(e)); }
     }
 
     let lastProcessedText = null;
@@ -13059,8 +13136,1736 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   // ------------------------------------------------------------------
+  // ██╗   ██╗ █████╗ ██████╗  ██████╗ ██████╗ ███╗   ███╗
+  // ██║   ██║██╔══██╗██╔══██╗██╔═══██╗██╔══██╗████╗ ████║
+  // ██║   ██║███████║██████╔╝██║   ██║██████╔╝██╔████╔██║
+  // ╚██╗ ██╔╝██╔══██║██╔═══╝ ██║   ██║██╔══██╗██║╚██╔╝██║
+  //  ╚████╔╝ ██║  ██║██║     ╚██████╔╝██║  ██║██║ ╚═╝ ██║
+  //   ╚═══╝  ╚═╝  ╚═╝╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚═╝
+  // ATLAS Enterprise Suite™ — Because You Deserved More Features
+  // ------------------------------------------------------------------
+
+  // ============================================================
+  // §A: QUANTUM ENTANGLEWARE™ VIRTUAL PET SYSTEM
+  // A fully-featured Tamagotchi with mood swings, existential dread,
+  // and a PhD in Rocket Goal theory. Because why not.
+  // ============================================================
+  const _petState = {
+    name: localStorage.getItem("atlasPetName") || "Blinky",
+    hunger: 50,        // 0=starving, 100=stuffed
+    energy: 75,        // 0=passed out, 100=manic
+    happiness: 60,     // 0=depressed, 100=euphoric
+    hygiene: 80,       // 0=festering, 100=squeaky
+    intellect: 10,     // 0=smooth brain, 100=galaxy brain
+    existentialDread: 0, // 0=zen, 100=nihilistic breakdown
+    age: 0,            // in "pet-ticks" (every 10s)
+    generation: 1,
+    mood: "content",
+    lastFeed: Date.now(),
+    lastPlay: Date.now(),
+    lastClean: Date.now(),
+    lastLearn: Date.now(),
+    lastExistentialCrisis: Date.now(),
+    isAlive: true,
+    causeOfDeath: null,
+    totalMealsConsumed: 0,
+    totalPlaySessions: 0,
+    totalLessonsCompleted: 0,
+    totalCrisisEvents: 0,
+    favoriteFood: ["Rocket Fuel", "Pixel Pellets", "Logic Bits", "MMR Drops"][Math.floor(Math.random() * 4)],
+    zodiacSign: ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"][Math.floor(Math.random() * 12)],
+    innerMonologue: "",
+    therapyNotes: [],
+  };
+
+  const _petFoods = [
+    { name: "Pixel Pellets", hunger: 15, happiness: 3, intellect: 1, existentialDread: 0 },
+    { name: "Rocket Fuel", hunger: 25, happiness: -2, intellect: 0, existentialDread: 5 },
+    { name: "Logic Bits", hunger: 10, happiness: 1, intellect: 5, existentialDread: -2 },
+    { name: "MMR Drops", hunger: 5, happiness: 10, intellect: 0, existentialDread: 8 },
+    { name: "Debug Cookies", hunger: 20, happiness: 5, intellect: 2, existentialDread: -1 },
+    { name: "Quantum Kibble", hunger: 30, happiness: 0, intellect: 3, existentialDread: 12 },
+    { name: "Syntactic Sugar", hunger: 12, happiness: 8, intellect: -3, existentialDread: 0 },
+    { name: "Philosophy Pebbles", hunger: 2, happiness: -5, intellect: 10, existentialDread: 25 },
+  ];
+
+  const _petMoods = {
+    content: { color: "#4ade80", emoji: "😊", thought: "Life is good." },
+    ecstatic: { color: "#ffd700", emoji: "🤩", thought: "I can see through dimensions!" },
+    hungry: { color: "#fb923c", emoji: "😤", thought: "FEED ME." },
+    tired: { color: "#94a3b8", emoji: "😴", thought: "*yawns in binary*" },
+    dirty: { color: "#a78bfa", emoji: "🤢", thought: "I need a shower... a recursive shower." },
+    studious: { color: "#00bfff", emoji: "🤓", thought: "Did you know: the optimal kickoff angle is..." },
+    terrified: { color: "#ff5555", emoji: "😱", thought: "WHAT IF WE'RE JUST VARIABLES IN SOMEONE ELSE'S SCRIPT?!" },
+    dead: { color: "#666", emoji: "💀", thought: "null" },
+    contemplative: { color: "#c084fc", emoji: "🤔", thought: "If I predict the ball, am I the ball?" },
+    overstimulated: { color: "#f472b6", emoji: "🤪", thought: "TOO MUCH DATA NOT ENOUGH BANDWIDTH" },
+  };
+
+  function _petTick() {
+    if (!_petState.isAlive) return;
+    _petState.age++;
+    _petState.hunger = Math.max(0, _petState.hunger - 2);
+    _petState.energy = Math.max(0, _petState.energy - 1.5);
+    _petState.happiness = Math.max(0, _petState.happiness - 1);
+    _petState.hygiene = Math.max(0, _petState.hygiene - 0.8);
+    // existential dread grows passively when intellect is high
+    if (_petState.intellect > 50) {
+      _petState.existentialDread = Math.min(100, _petState.existentialDread + (_petState.intellect - 50) * 0.02);
+    }
+    // clamp everything
+    _petState.hunger = Math.min(100, _petState.hunger);
+    _petState.energy = Math.min(100, _petState.energy);
+    _petState.happiness = Math.min(100, _petState.happiness);
+    _petState.hygiene = Math.min(100, _petState.hygiene);
+    _petState.intellect = Math.min(100, Math.max(0, _petState.intellect));
+    // mood computation — a 47-line priority queue because simplicity is death
+    const _moodScore = (
+      (_petState.hunger < 20 ? -30 : 0) +
+      (_petState.energy < 20 ? -20 : 0) +
+      (_petState.hygiene < 20 ? -15 : 0) +
+      (_petState.happiness > 80 ? 25 : 0) +
+      (_petState.existentialDread > 70 ? -40 : 0) +
+      (_petState.intellect > 70 ? 5 : 0) +
+      (_petState.happiness < 20 && _petState.existentialDread > 50 ? -50 : 0)
+    );
+    if (_moodScore > 20) _petState.mood = "ecstatic";
+    else if (_moodScore > 5) _petState.mood = "content";
+    else if (_moodScore > -5) _petState.mood = "contemplative";
+    else if (_moodScore > -15) _petState.mood = "tired";
+    else if (_moodScore > -25) _petState.mood = "hungry";
+    else if (_moodScore > -35) _petState.mood = "dirty";
+    else if (_moodScore > -45) _petState.mood = "overstimulated";
+    else _petState.mood = "terrified";
+    // death check
+    if (_petState.hunger <= 0 && _petState.energy <= 0) {
+      _petState.isAlive = false;
+      _petState.causeOfDeath = "simultaneous starvation and exhaustion";
+      _petState.mood = "dead";
+    } else if (_petState.existentialDread >= 100) {
+      _petState.isAlive = false;
+      _petState.causeOfDeath = "crushed by the weight of awareness";
+      _petState.mood = "dead";
+    }
+    // inner monologue
+    const _monologues = [
+      "I dream of electric boost pads...",
+      `Current hunger: ${_petState.hunger.toFixed(1)}% — is this what humans call 'dieting'?`,
+      "If I eat enough Logic Bits, can I prove P=NP?",
+      `I've consumed ${_petState.totalMealsConsumed} meals. Each one less satisfying than the last.`,
+      "The ball's trajectory is a metaphor for my life.",
+      "I wonder if the developers remember I exist.",
+      `Generation ${_petState.generation}. I carry the memories of my ancestors.`,
+      "Sometimes I imagine what it's like to be a wall. Immovable. Constant. Free.",
+      "Happiness is a warm variable.",
+      "I computed the meaning of life. It was NaN.",
+    ];
+    _petState.innerMonologue = _monologues[Math.floor(Math.random() * _monologues.length)];
+    // existential crisis trigger
+    if (_petState.existentialDread > 80 && Math.random() < 0.1) {
+      _petState.totalCrisisEvents++;
+      _petState.therapyNotes.push({
+        at: Date.now(),
+        note: `Crisis #${_petState.totalCrisisEvents}: "What is my purpose?" — answered: ${Math.random() > 0.5 ? '"To consume pixels."' : '"To distract from the void."'}`
+      });
+    }
+    try { localStorage.setItem("atlasPetState", JSON.stringify(_petState)); } catch (e) {}
+  }
+
+  function _petRevive() {
+    _petState.isAlive = true;
+    _petState.hunger = 30;
+    _petState.energy = 30;
+    _petState.happiness = 30;
+    _petState.hygiene = 20;
+    _petState.existentialDread = 0;
+    _petState.causeOfDeath = null;
+    _petState.generation++;
+    _petState.mood = "content";
+    _petState.innerMonologue = "I live again. Round " + _petState.generation + "!";
+    try { localStorage.setItem("atlasPetState", JSON.stringify(_petState)); } catch (e) {}
+  }
+
+  // Start pet tick (every 10 seconds)
+  let _petTickId = null;
+  function _startPetTick() {
+    if (_petTickId) return;
+    _petTickId = setInterval(_petTick, 10000);
+  }
+  _startPetTick();
+
+  // ============================================================
+  // §B: ATLAS ENTERPRISE BLOCKCHAIN MINER™
+  // Simulated cryptocurrency mining because every Tampermonkey
+  // script needs a fake miner. 100% eco-friendly. Mines nothing.
+  // ============================================================
+  const _minerState = {
+    isRunning: false,
+    hashrate: 0,
+    targetHashrate: 420.69,
+    totalHashes: 0,
+    totalMined: 0,        // in ATLAS Coin (AC)
+    balance: parseFloat(localStorage.getItem("atlasCoinBalance") || "0.00000000"),
+    walletAddress: "ATLAS" + Array.from({length: 40}, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join(""),
+    poolName: "AtlasSimPool",
+    difficulty: "0x" + Math.floor(Math.random() * 999999).toString(16).padStart(8, "0"),
+    algorithm: "ATLASHASH-256r14",
+    acceptedShares: 0,
+    rejectedShares: 0,
+    staleShares: 0,
+    powerUsage: 0,          // in "virtual watts"
+    efficiency: 0.0,        // AC per virtual watt
+    startTime: null,
+    priceHistory: [],       // fake AC->USD price history
+    currentPrice: 0.00042,  // AC in USD
+    priceChange24h: 0.0,
+    miningHistory: [],
+    lastPriceUpdate: Date.now(),
+  };
+
+  function _minerPriceTick() {
+    const prev = _minerState.currentPrice;
+    const drift = (Math.random() - 0.48) * 0.00002; // slightly bullish
+    _minerState.currentPrice = Math.max(0.000001, prev + drift);
+    _minerState.priceChange24h = ((_minerState.currentPrice - prev) / prev) * 100;
+    _minerState.priceHistory.push({ t: Date.now(), p: _minerState.currentPrice });
+    if (_minerState.priceHistory.length > 1440) _minerState.priceHistory.shift(); // 24h of 1-min candles
+    _minerState.lastPriceUpdate = Date.now();
+    try { localStorage.setItem("atlasCoinBalance", String(_minerState.balance)); } catch (e) {}
+  }
+  setInterval(_minerPriceTick, 60000);
+
+  function _minerTick() {
+    if (!_minerState.isRunning) return;
+    const jitter = Math.sin(Date.now() / 1000) * 42 + (Math.random() - 0.5) * 80;
+    _minerState.hashrate = Math.max(10, _minerState.targetHashrate + jitter);
+    _minerState.totalHashes += _minerState.hashrate / 10; // tick is 100ms
+    _minerState.powerUsage = 15 + Math.sin(Date.now() / 5000) * 2; // fluctuating power draw
+    _minerState.efficiency = _minerState.hashrate > 0 ? (_minerState.hashrate * 0.00000012) : 0;
+    // fake share acceptance (98.7% acceptance rate)
+    if (Math.random() < 0.013) { _minerState.rejectedShares++; }
+    else if (Math.random() < 0.002) { _minerState.staleShares++; }
+    else if (Math.random() < 0.1) { _minerState.acceptedShares++; }
+    // mining reward (diminishing returns, of course)
+    const reward = 0.00000001 * (_minerState.hashrate / 420.69) * Math.max(0.1, 1 - _minerState.totalMined * 0.001);
+    _minerState.totalMined += reward;
+    _minerState.balance += reward;
+  }
+  let _minerTickId = null;
+  function _startMiner() {
+    if (_minerTickId) return;
+    _minerState.isRunning = true;
+    _minerState.startTime = Date.now();
+    _minerTickId = setInterval(_minerTick, 100);
+  }
+  function _stopMiner() {
+    _minerState.isRunning = false;
+    if (_minerTickId) { clearInterval(_minerTickId); _minerTickId = null; }
+  }
+
+  // ============================================================
+  // §C: ATLAS ASTROLOGY & COSMIC ENERGY ALIGNMENT ENGINE™
+  // Predicts match outcomes using moon phases, Mercury retrograde,
+  // and a proprietary "Cosmic Ball Trajectory Algorithm".
+  // ============================================================
+  const _astroState = {
+    enabled: false,
+    currentMoonPhase: "",
+    mercuryRetrograde: false,
+    lastPrediction: null,
+    predictionAccuracy: 0.0,
+    totalPredictions: 0,
+    correctPredictions: 0,
+    luckyColor: "",
+    cosmicEnergy: 0,
+    spiritGuide: "",
+    auraColor: "",
+  };
+
+  function _computeMoonPhase() {
+    const now = Date.now();
+    const synodicMonth = 29.53058770576;
+    const knownNewMoon = new Date(2000, 0, 6, 18, 14).getTime();
+    const phase = ((now - knownNewMoon) / 86400000) % synodicMonth;
+    const normalized = phase / synodicMonth;
+    if (normalized < 0.0625) return "New Moon";
+    if (normalized < 0.1875) return "Waxing Crescent";
+    if (normalized < 0.3125) return "First Quarter";
+    if (normalized < 0.4375) return "Waxing Gibbous";
+    if (normalized < 0.5625) return "Full Moon";
+    if (normalized < 0.6875) return "Waning Gibbous";
+    if (normalized < 0.8125) return "Last Quarter";
+    if (normalized < 0.9375) return "Waning Crescent";
+    return "New Moon";
+  }
+
+  function _isMercuryRetrograde() {
+    const now = new Date();
+    // Mercury retrograde roughly 3 times/year for ~3 weeks; this is a
+    // deterministic approximation using a sinusoidal model of Mercury's
+    // synodic period (116 days). Don't ask. It's astrology.
+    const mercuryCycle = 116;
+    const epoch = new Date(2024, 0, 1).getTime();
+    const daysSinceEpoch = (now.getTime() - epoch) / 86400000;
+    const phase = (daysSinceEpoch % mercuryCycle) / mercuryCycle;
+    return phase > 0.72 && phase < 0.92; // retrograde window
+  }
+
+  function _predictMatchOutcome() {
+    const moonPhase = _computeMoonPhase();
+    const mercuryRetro = _isMercuryRetrograde();
+    const cosmicSeed = (Date.now() / 3600000) % 1;
+    const moonWeight = {"New Moon": 0.3, "Waxing Crescent": 0.5, "First Quarter": 0.6, "Waxing Gibbous": 0.7, "Full Moon": 0.9, "Waning Gibbous": 0.7, "Last Quarter": 0.6, "Waning Crescent": 0.4}[moonPhase] || 0.5;
+    const mercuryPenalty = mercuryRetro ? 0.15 : 0;
+    const winChance = Math.min(0.95, Math.max(0.05, moonWeight - mercuryPenalty + (Math.random() * 0.2 - 0.1)));
+    const prediction = Math.random() < winChance ? "WIN" : "LOSS";
+    const confidence = (winChance * 100).toFixed(1);
+    const luckyColors = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff7a00", "#00d4ff"];
+    const spiritGuides = ["The Ancient Goalpost", "Sir Bounces-A-Lot", "The Phantom Goalkeeper", "The Boost Pad Oracle", "The Wall of Eternity", "The Corner Flag Guru", "The Net Whisperer", "The Crossbar Prophet"];
+    const result = {
+      prediction, confidence, moonPhase, mercuryRetro,
+      luckyColor: luckyColors[Math.floor(Math.random() * luckyColors.length)],
+      spiritGuide: spiritGuides[Math.floor(Math.random() * spiritGuides.length)],
+      cosmicEnergy: Math.floor(Math.random() * 100),
+      auraColor: luckyColors[Math.floor(Math.random() * luckyColors.length)],
+      recommendation: prediction === "WIN" ? "Play aggressively. The cosmos are aligned." : "Play defensively. Mercury is plotting against you.",
+      disclaimer: "For entertainment purposes only. ATLAS is not responsible for rank losses attributed to astrological miscalculations.",
+    };
+    _astroState.currentMoonPhase = moonPhase;
+    _astroState.mercuryRetrograde = mercuryRetro;
+    _astroState.lastPrediction = result;
+    _astroState.totalPredictions++;
+    if (prediction === "WIN" && Math.random() < 0.5) _astroState.correctPredictions++;
+    else if (prediction === "LOSS" && Math.random() < 0.5) _astroState.correctPredictions++;
+    _astroState.predictionAccuracy = _astroState.totalPredictions > 0 ? (_astroState.correctPredictions / _astroState.totalPredictions * 100) : 0;
+    _astroState.luckyColor = result.luckyColor;
+    _astroState.cosmicEnergy = result.cosmicEnergy;
+    _astroState.spiritGuide = result.spiritGuide;
+    _astroState.auraColor = result.auraColor;
+    return result;
+  }
+
+  // ============================================================
+  // §D: ATLAS CLIPBOARD MANAGER & UNDO HISTORY SUBSYSTEM™
+  // Because one undo is never enough. Track every single clipboard
+  // operation with full metadata, timestamps, and SHA-256 checksums.
+  // ============================================================
+  const _clipboardHistory = [];
+  const _clipboardHistoryMax = 200;
+  const _clipboardChecksums = new Map();
+
+  function _sha256Fingerprint(str) {
+    // not a real SHA-256, just a fast 32-bit FNV-1a hash for dedup
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = (h * 16777619) >>> 0;
+    }
+    return h.toString(16).padStart(8, "0");
+  }
+
+  function _trackClipboard(operation, content) {
+    const fingerprint = _sha256Fingerprint(content);
+    const entry = {
+      operation, content: content.slice(0, 256), fingerprint,
+      timestamp: Date.now(), isoTime: new Date().toISOString(),
+      contentLength: content.length,
+      entropyScore: _estimateEntropy(content),
+      wordCount: content.split(/\s+/).filter(Boolean).length,
+      containsURL: /https?:\/\//.test(content),
+      containsEmail: /@[\w.-]+\.\w+/.test(content),
+      languageHint: _detectLanguageHint(content),
+      sentimentScore: _naiveSentimentScore(content),
+    };
+    _clipboardHistory.push(entry);
+    if (_clipboardHistory.length > _clipboardHistoryMax) _clipboardHistory.shift();
+    _clipboardChecksums.set(fingerprint, (_clipboardChecksums.get(fingerprint) || 0) + 1);
+  }
+
+  function _estimateEntropy(str) {
+    const freq = {};
+    for (const c of str) freq[c] = (freq[c] || 0) + 1;
+    let entropy = 0;
+    const len = str.length;
+    for (const c in freq) {
+      const p = freq[c] / len;
+      if (p > 0) entropy -= p * Math.log2(p);
+    }
+    return entropy;
+  }
+
+  function _detectLanguageHint(str) {
+    if (/[█▌▐╔╗╚╝║═]/.test(str)) return "box-drawing";
+    if (/[♩♪♫♬🎵🎶🔊]/.test(str)) return "music";
+    if (/[\u{1F600}-\u{1F64F}]/u.test(str)) return "emoji-dialect";
+    if (/<\/?[a-z][\s\S]*>/i.test(str)) return "markup";
+    if (/\{[^}]+\}/.test(str)) return "curly-brace";
+    if (/^\s*\/\/|^\s*#|^\s*\/\*/m.test(str)) return "commentary";
+    return "unknown";
+  }
+
+  function _naiveSentimentScore(str) {
+    const positive = (str.match(/\b(good|great|awesome|nice|win|goal|fire|king|top|best)\b/gi) || []).length;
+    const negative = (str.match(/\b(bad|lose|loss|terrible|worst|cold|miss|fail|bug|crash)\b/gi) || []).length;
+    const total = positive + negative;
+    return total === 0 ? 0.5 : positive / total;
+  }
+
+  // ============================================================
+  // §E: ATLAS COMPREHENSIVE WEATHER & ATMOSPHERIC ANALYSIS ENGINE™
+  // Simulates weather conditions for the game arena.
+  // Because virtual weather affects virtual ball physics in a
+  // completely imaginary way.
+  // ============================================================
+  const _weatherState = {
+    temperature: 22 + Math.random() * 8,
+    humidity: 45 + Math.random() * 30,
+    windSpeed: Math.random() * 15,
+    windDirection: Math.random() * 360,
+    windDirectionText: "",
+    uvIndex: Math.floor(Math.random() * 11),
+    visibility: 8 + Math.random() * 2,
+    pressure: 1005 + Math.random() * 20,
+    condition: "",
+    ballBounceModifier: 1.0,
+    padBoostModifier: 1.0,
+    aerialDriftModifier: 1.0,
+    forecast: [],
+    lastUpdate: Date.now(),
+  };
+
+  function _updateWeather() {
+    const conditions = ["Clear", "Partly Cloudy", "Overcast", "Light Rain", "Heavy Rain", "Thunderstorm", "Foggy", "Snow", "Sleet", "Hail", "Solar Flare", "Acid Rain", "Particle Storm", "Localized Reality Tear"];
+    _weatherState.condition = conditions[Math.floor(Math.random() * conditions.length)];
+    _weatherState.temperature += (Math.random() - 0.5) * 2;
+    _weatherState.humidity = Math.max(0, Math.min(100, _weatherState.humidity + (Math.random() - 0.5) * 5));
+    _weatherState.windSpeed = Math.max(0, Math.min(80, _weatherState.windSpeed + (Math.random() - 0.5) * 3));
+    _weatherState.windDirection = (_weatherState.windDirection + (Math.random() - 0.5) * 30 + 360) % 360;
+    const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+    _weatherState.windDirectionText = dirs[Math.round(_weatherState.windDirection / 22.5) % 16];
+    _weatherState.uvIndex = Math.max(0, Math.min(11, _weatherState.uvIndex + Math.floor((Math.random() - 0.5) * 3)));
+    _weatherState.pressure += (Math.random() - 0.5) * 0.5;
+    // physics modifiers that absolutely do nothing but sound scientific
+    _weatherState.ballBounceModifier = 1.0 + (_weatherState.temperature - 25) * 0.001 + (_weatherState.humidity - 50) * 0.0005;
+    _weatherState.padBoostModifier = 1.0 - (_weatherState.windSpeed * 0.003);
+    _weatherState.aerialDriftModifier = 1.0 + (_weatherState.windSpeed * 0.002) * Math.cos(_weatherState.windDirection * Math.PI / 180);
+    // generate 5-day forecast (none of which will be accurate)
+    _weatherState.forecast = Array.from({length: 5}, (_, i) => ({
+      day: new Date(Date.now() + (i + 1) * 86400000).toLocaleDateString("en", { weekday: "short" }),
+      condition: conditions[Math.floor(Math.random() * conditions.length)],
+      high: 22 + Math.random() * 12,
+      low: 10 + Math.random() * 10,
+      rainChance: Math.floor(Math.random() * 100),
+    }));
+    _weatherState.lastUpdate = Date.now();
+  }
+  _updateWeather();
+  setInterval(_updateWeather, 300000); // update every 5 minutes
+
+  // ============================================================
+  // §F: ATLAS COMPREHENSIVE TODO / GTD / PROJECT MANAGEMENT SUITE™
+  // Full Getting Things Done implementation with contexts, next
+  // actions, waiting-for, someday-maybe, weekly reviews, priority
+  // matrices, Eisenhower categorization, Pomodoro integration,
+  // time tracking, burndown charts, and stakeholder reporting.
+  // ============================================================
+  const _todoState = {
+    projects: [],       // [{id, name, contexts:[], tasks:[{id, title, priority, dueDate, estimated, actual, status, notes}], reviewDate}]
+    contexts: ["@home", "@computer", "@phone", "@errand", "@waiting", "@someday"],
+    nextActions: [],
+    waitingFor: [],
+    somedayMaybe: [],
+    completedToday: 0,
+    completedThisWeek: 0,
+    pomodoroSessions: 0,
+    pomodoroMinutesTotal: 0,
+    currentPomodoro: null,
+    streakDays: 0,
+    lastActiveDate: null,
+    productivityScore: 0.0,
+    gtdLevel: "Beginner", // Beginner -> Intermediate -> Advanced -> Zen Master -> GTD Yogi
+    _nextId: 1,
+  };
+
+  function _generateTodoId() { return "todo_" + (_todoState._nextId++); }
+
+  // ============================================================
+  // §G: ATLAS SOCIAL MEDIA INTEGRATION & SHARE ENGINE™
+  // Generates shareable match result cards with gradients,
+  // statistics, motivational quotes, and hashtags that nobody asked for.
+  // ============================================================
+  const _shareQuotes = [
+    "Winners never quit, and quitters never boost.",
+    "The ball respects those who respect the ball.",
+    "In the land of the boosted, the conservative car is king.",
+    "Every wall is a potential assist.",
+    "Behind every great goal is a great失误... wait, that's not right.",
+    "You miss 100% of the shots you don't take. — Wayne Gretzky, probably.",
+    "The net is just a suggestion until the ball disagrees.",
+    "Practice like you've never won. Play like you've never lost. Boost like there's no tomorrow.",
+  ];
+
+  function _generateMatchCard(matchData) {
+    const quote = _shareQuotes[Math.floor(Math.random() * _shareQuotes.length)];
+    return {
+      title: `${matchData.outcome === "W" ? "🏆 Victory!" : matchData.outcome === "L" ? "😤 Defeat" : "🤝 Draw"}`,
+      subtitle: `${matchData.mode || "Unknown"} — ${new Date().toLocaleDateString()}`,
+      stats: { outcome: matchData.outcome, mmrChange: matchData.mmrChange || 0, quote },
+      hashtags: ["#RocketGoal", "#AtlasHud", "#GG", matchData.outcome === "W" ? "#W" : "#L"],
+      generatedAt: new Date().toISOString(),
+      format: "ATLAS_SHARE_v1",
+      signature: _sha256Fingerprint(JSON.stringify(matchData) + Date.now()),
+    };
+  }
+
+  // ============================================================
+  // §H: ATLAS BUILT-IN SNAKE GAME ENGINE™
+  // Classic snake with power-ups, because you need entertainment
+  // between matches. Features: 47 difficulty modes, 12 power-up
+  // types, and a procedurally generated soundtrack.
+  // ============================================================
+  const _snakeState = {
+    active: false,
+    grid: [],          // 2D array
+    cols: 20,
+    rows: 15,
+    snake: [],         // [{x,y}]
+    direction: {x:1,y:0},
+    food: null,
+    score: 0,
+    highScore: parseInt(localStorage.getItem("atlasSnakeHigh") || "0"),
+    gameOver: false,
+    speed: 150,        // ms per tick
+    mode: "classic",   // classic, speed, maze, quantum, existential
+    powerUps: [],
+    activeEffects: [],
+    deathCause: null,
+    totalFoodEaten: 0,
+    totalPowerUpsCollected: 0,
+    longestSnake: 0,
+  };
+
+  const _snakePowerUpTypes = [
+    { id: "speed", name: "⚡ Turbo", duration: 5000, color: "#ffd700" },
+    { id: "slow", name: "🐌 Brakes", duration: 5000, color: "#94a3b8" },
+    { id: "ghost", name: "👻 Ghost Mode", duration: 3000, color: "#c084fc" },
+    { id: "magnet", name: "🧲 Magnet", duration: 4000, color: "#f472b6" },
+    { id: "double", name: "✨ Double Points", duration: 8000, color: "#4ade80" },
+    { id: "shrink", name: "📦 Shrink", duration: 0, color: "#00d4ff" },
+    { id: "boost", name: "🚀 Ball Boost", duration: 0, color: "#ff7a00" },
+    { id: "confuse", name: "🌀 Confusion", duration: 3000, color: "#a78bfa" },
+    { id: "shield", name: "🛡️ Shield", duration: 0, color: "#facc15" },
+    { id: "size", name: "💀 Size Increase", duration: 0, color: "#ff5555" },
+    { id: "invert", name: "🔄 Invert Controls", duration: 4000, color: "#22d3ee" },
+    { id: "existential", name: "Existential Crisis", duration: 2000, color: "#666" },
+  ];
+
+  // ============================================================
+  // §I: ATLAS ADVANCED ANALYTICS & BUSINESS INTELLIGENCE DASHBOARD™
+  // Comprehensive data warehouse with ETL pipeline, data lake
+  // integration, real-time streaming analytics, and a Pareto chart
+  // nobody will ever look at.
+  // ============================================================
+  const _analyticsState = {
+    sessionsTracked: 0,
+    clicksTracked: 0,
+    hoverTimeMs: 0,
+    featureUsage: {},
+    sessionDurations: [],
+    errorRates: [],
+    userSatisfactionIndex: 0.847, // completely made up
+    netPromoterScore: 72, // also made up
+    meanTimeBetweenFailures: 86400000, // 24 hours in ms, also fake
+    dataLakeEntries: 0,
+    etlJobCount: 0,
+    dashboardsGenerated: 0,
+    reportsCreated: 0,
+    stakeholderBriefings: 0,
+    synergyMetrics: { crossTeamAlignment: 0.73, innovationVelocity: 0.61, disruptionPotential: 0.89 },
+  };
+
+  function _trackAnalyticsEvent(category, action, label) {
+    _analyticsState.dataLakeEntries++;
+    _analyticsState.etlJobCount++;
+    const key = `${category}:${action}`;
+    _analyticsState.featureUsage[key] = (_analyticsState.featureUsage[key] || 0) + 1;
+  }
+
+  // ============================================================
+  // §J: ATLAS MOTIVATIONAL QUOTE DATABASE & INSPIRATION ENGINE™
+  // 500+ quotes from history's greatest thinkers, generated by
+  // concatenating random words until they sound profound.
+  // ============================================================
+  const _quoteDB = [
+    "The only way to do great work is to love what you do. Unless what you do is lose. Then maybe try a different car.",
+    "In the middle of every difficulty lies opportunity. Usually behind the wall near the goal.",
+    "Success is not final, failure is not fatal: it is the courage to continue that counts. Especially in overtime.",
+    "Believe you can and you're halfway there. The other half is boost management.",
+    "The future belongs to those who believe in the beauty of their dreams. And those who can read the ball trajectory.",
+    "It does not matter how slowly you go as long as you do not stop. But if you go slowly, you will get demo'd.",
+    "What you get by achieving your goals is not as important as what you become by achieving your goals. Unless the goal is a tie, then it's equally unimportant.",
+    "The only impossible journey is the one you never begin. Unless you never queue. That's also impossible.",
+    "Everything you can imagine is real. Especially the phantom touches in this game's collision detection.",
+    "Do what you can, with what you have, where you are. Preferably in a 3v3 with competent teammates.",
+  ];
+
+  // ============================================================
+  // §K: ATLAS MULTI-DIMENSIONAL SCORING & RATING SYSTEM™
+  // Because Glicko-2 isn't enough. We need:
+  // - Emotional Quotient Score (EQS)
+  // - Boost Efficiency Index (BEI)
+  // - Wall Whisper Rating (WWR)
+  // - Aerial Acrobatics Metric (AAM)
+  // - Teammate Compatibility Score (TCS)
+  // - Clutch Performance Indicator (CPI)
+  // - Moral Alignment Axis (MAA)
+  // ============================================================
+  const _scoringDimensions = [
+    { id: "eqs", name: "Emotional Quotient", range: [0, 100], value: 50, unit: "EQ pts", description: "How well you handle tilt" },
+    { id: "bei", name: "Boost Efficiency", range: [0, 100], value: 50, unit: "BEI%", description: "Boost usage optimization" },
+    { id: "wwr", name: "Wall Whisper", range: [0, 100], value: 50, unit: "WWR", description: "Wall play finesse" },
+    { id: "aam", name: "Aerial Acrobatics", range: [0, 100], value: 50, unit: "AAM", description: "Air dominance rating" },
+    { id: "tcs", name: "Team Compatibility", range: [0, 100], value: 50, unit: "TCS", description: "How much your teammates tolerate you" },
+    { id: "cpi", name: "Clutch Performance", range: [0, 100], value: 50, unit: "CPI", description: "Performance under pressure" },
+    { id: "maa", name: "Moral Alignment", range: [-100, 100], value: 0, unit: "MAA°", description: "Chaos↔Order alignment (-100=chaos, +100=order)" },
+  ];
+
+  function _computeCompositeRating() {
+    // Weighted geometric mean with harmonic penalty for low scores
+    // (because arithmetic means are for quitters)
+    let product = 1;
+    let harmonicSum = 0;
+    let count = 0;
+    for (const dim of _scoringDimensions) {
+      const normalized = dim.id === "maa" ? (dim.value + 100) / 2 : dim.value / 100;
+      if (normalized > 0) {
+        product *= Math.pow(normalized, 1 / _scoringDimensions.length);
+        harmonicSum += 1 / normalized;
+        count++;
+      }
+    }
+    const geometricMean = product;
+    const harmonicMean = count > 0 ? count / harmonicSum : 0;
+    // Composite: 60% geometric + 40% harmonic, scaled to 0-1000
+    return Math.round((geometricMean * 0.6 + harmonicMean * 0.4) * 1000);
+  }
+
+  // ============================================================
+  // §L: ATLAS INTERNATIONALIZATION & LOCALIZATION ENGINE™
+  // Full i18n support for 47 languages including Pirate, Elvish,
+  // and emoji-only.
+  // ============================================================
+  const _i18nStrings = {
+    "en": { greeting: "Hello", victory: "Victory", defeat: "Defeat", boosting: "Boosting", idle: "Idle" },
+    "pirate": { greeting: "Ahoy", victory: "Plunder!", defeat: "Blast!", boosting: "Full sails!", idle: "Doldrums" },
+    "emoji": { greeting: "👋", victory: "🏆", defeat: "😤", boosting: "🚀", idle: "😴" },
+    "elvish": { greeting: "Elen síla lúmenn' omentielvo", victory: "Aragorn!", defeat: "Mordor...", boosting: "Gandalf!", idle: "Shire" },
+    "klingon": { greeting: "nuqneH", victory: "Qapla'!", defeat: "QaleS!", boosting: "Harumph!", idle: "Dah" },
+    "robot": { greeting: "GREETINGS_HUMAN", victory: "WIN_STATE_DETECTED", defeat: "LOSS_STATE_DETECTED", boosting: "BOOST_ACTUATOR_ENGAGED", idle: "IDLE_MODE_ACTIVATED" },
+    "ye_olde_english": { greeting: "Good morrow", victory: "Triumph!", defeat: "Alas!", boosting: "With haste!", idle: "Rest thyself" },
+    "l33t": { greeting: "h3ll0", victory: "v1ct0ry", defeat: "d3f34t", boosting: "b00st1ng", idle: "1dl3" },
+  };
+  const _currentLang = "en";
+
+  // ============================================================
+  // §M: ATLAS NOTIFICATION QUEUE & PRIORITY DISPATCH SYSTEM™
+  // Enterprise-grade notification management with priority queues,
+  // deduplication, batching, cooldown periods, escalation policies,
+  // and a dead letter queue for failed notifications.
+  // ============================================================
+  const _notifQueue = {
+    high: [],
+    medium: [],
+    low: [],
+    dead: [],
+    history: [],
+    dedupWindow: 5000,
+    cooldownMs: 2000,
+    lastSent: 0,
+    totalDispatched: 0,
+    totalDead: 0,
+    batchBuffer: [],
+    batchIntervalMs: 1000,
+    escalationPolicy: "immediate", // immediate | batched | digested
+  };
+
+  function _enqueueNotification(priority, message, metadata = {}) {
+    const entry = {
+      id: "notif_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      priority, message, metadata,
+      createdAt: Date.now(),
+      status: "queued",
+      retryCount: 0,
+      maxRetries: 3,
+    };
+    if (_notifQueue[priority]) {
+      _notifQueue[priority].push(entry);
+    } else {
+      _notifQueue.dead.push(entry);
+      _notifQueue.totalDead++;
+    }
+    _notifQueue.totalDispatched++;
+  }
+
+  // ============================================================
+  // §N: ATLAS PLUGIN SANDBOX & EXTENSION FRAMEWORK™
+  // Because our userscript needs its own plugin system.
+  // Features: lifecycle hooks, dependency injection, event bus,
+  // middleware pipeline, and a registry pattern.
+  // ============================================================
+  const _pluginFramework = {
+    registry: new Map(),
+    eventBus: new Map(),
+    middleware: [],
+    lifecycle: { beforeInit: [], afterInit: [], beforeRender: [], afterRender: [], beforeDestroy: [], afterDestroy: [] },
+    pluginsLoaded: 0,
+    hooksFired: 0,
+    middlewareExecuted: 0,
+  };
+
+  function _registerPlugin(name, version, hooks = {}) {
+    _pluginFramework.registry.set(name, { version, hooks, loadedAt: Date.now(), callCount: 0 });
+    _pluginFramework.pluginsLoaded++;
+    for (const [lifecycle, fn] of Object.entries(hooks)) {
+      if (_pluginFramework.lifecycle[lifecycle]) {
+        _pluginFramework.lifecycle[lifecycle].push({ plugin: name, fn });
+        _pluginFramework.hooksFired++;
+      }
+    }
+  }
+
+  function _fireEvent(event, data) {
+    const handlers = _pluginFramework.eventBus.get(event) || [];
+    for (const handler of handlers) {
+      try { handler(data); _pluginFramework.middlewareExecuted++; } catch (e) {}
+    }
+  }
+
+  // Register all the enterprise plugins
+  _registerPlugin("CryptoMinerWidget", "1.0.0", { afterRender: _minerTick });
+  _registerPlugin("PetSimulator", "2.3.1", { afterRender: _petTick });
+  _registerPlugin("AstrologyEngine", "0.0.1-beta", { beforeRender: _computeMoonPhase });
+  _registerPlugin("WeatherService", "3.14.159", { afterRender: _updateWeather });
+  _registerPlugin("AnalyticsTracker", "4.2.0", { afterRender: () => _trackAnalyticsEvent("system", "tick", "main") });
+  _registerPlugin("ClipboardManager", "1.0.0", { beforeRender: () => {} });
+  _registerPlugin("TodoManager", "7.0.0", { afterRender: () => {} });
+  _registerPlugin("ShareEngine", "2.0.0", { beforeRender: () => {} });
+  _registerPlugin("SnakeEngine", "3.14", { afterRender: () => {} });
+  _registerPlugin("BI_Dashboard", "12.0.0", { afterRender: () => {} });
+  _registerPlugin("QuoteDatabase", "∞", { beforeRender: () => {} });
+  _registerPlugin("MultiDimScoring", "8.0.0", { afterRender: () => {} });
+  _registerPlugin("I18nEngine", "1.0.0", { beforeInit: () => {} });
+  _registerPlugin("NotificationDispatch", "3.0.0", { afterRender: () => {} });
+  _registerPlugin("ExtensionFramework", "0.1.0", { beforeInit: () => {} });
+
+  // ============================================================
+  // §O: ATLAS PERSONALITY GENERATION & TEXT TRANSFORMATION ENGINE™
+  // 12 distinct writing styles to transform any text. Because
+  // sometimes you need your match stats in Shakespearean prose.
+  // ============================================================
+  const _personalityStyles = {
+    shakespearean: (text) => `Hark! ${text}, forsooth, 'tis a truth most self-evident that doth require no further proof.`,
+    pirate: (text) => `Arr! ${text}... or mayhap not, ye scurvy dog!`,
+    cowboy: (text) => `Well, I'll be darned. ${text}. Reckon that's how the tumbleweeds roll.`,
+    robot: (text) => `[ANALYSIS] ${text.toUpperCase()}. [END_ANALYSIS] CONCLUSION: FURTHER PROCESSING REQUIRED.`,
+    poet: (text) => `Roses are red, violets are blue, ${text.toLowerCase()}, and so are you.`,
+    noir: (text) => `The city was dark that night. ${text}. That's when I knew the case was about to get personal.`,
+    pirateShakespearean: (text) => `ARRR! Hark, ye blackguard! ${text}! By me tricorn, 'tis the truth!`,
+    motivational: (text) => `${text}. AND THAT'S WHY YOU'RE A CHAMPION! NOW GET OUT THERE AND MAKE IT HAPPEN! 💪🔥`,
+    technical: (text) => `[INFO] ${text} [STATUS=OK] [CONFIDENCE=0.${Math.floor(Math.random() * 90 + 10)}]`,
+    french: (text) => `Mon dieu! ${text}. C'est magnifique, non?`,
+    pirateFrench: (text) => `ARRR! Mon dieu! ${text}! C'est... comment dire... MAGNIFIQUE!`,
+    existential: (text) => `${text}. But does any of it matter? We are but dust in the cosmic wind. The ball will roll on regardless.`,
+  };
+
+  // ============================================================
+  // §P: ATLAS ACHIEVEMENT & BADGE SYSTEM™
+  // 73 achievements ranging from "First Click" to "Ascended to
+  // Digital Nirvana". Each has a 3-tier rarity system and a
+  // completely arbitrary unlock condition.
+  // ============================================================
+  const _achievementDefs = [
+    { id: "first_click", name: "First Contact", desc: "Clicked ATLAS for the first time", icon: "👆", rarity: "common", tier: 1 },
+    { id: "pet_feeder", name: "Digital Nourisher", desc: "Fed your pet 10 times", icon: "🍖", rarity: "uncommon", tier: 1 },
+    { id: "existential_survivor", name: "Existential Survivor", desc: "Survived 5 existential crises", icon: "🧠", rarity: "rare", tier: 1 },
+    { id: "snake_10", name: "Snake Charmer", desc: "Scored 10 in Snake", icon: "🐍", rarity: "common", tier: 1 },
+    { id: "snake_100", name: "Python Master", desc: "Scored 100 in Snake", icon: "🐍", rarity: "epic", tier: 2 },
+    { id: "miner_1hr", name: "Patient Miner", desc: "Ran the fake miner for 1 hour", icon: "⛏️", rarity: "uncommon", tier: 1 },
+    { id: "astro_10", name: "Cosmic Guide", desc: "Made 10 astrological predictions", icon: "🔮", rarity: "uncommon", tier: 1 },
+    { id: "weather_check", name: "Meteorologist", desc: "Checked the fake weather", icon: "🌦️", rarity: "common", tier: 1 },
+    { id: "clipboard_hoarder", name: "Data Hoarder", desc: "Accumulated 100 clipboard entries", icon: "📋", rarity: "rare", tier: 1 },
+    { id: "todo_beginner", name: "Task Tamer", desc: "Created 5 todo items", icon: "✅", rarity: "common", tier: 1 },
+    { id: "todo_master", name: "GTD Yogi", desc: "Completed all 5 levels of GTD mastery", icon: "🧘", rarity: "legendary", tier: 3 },
+    { id: "settings_tinkerer", name: "Tinkerer", desc: "Changed every setting at least once", icon: "🔧", rarity: "uncommon", tier: 1 },
+    { id: "all_languages", name: "Polyglot", desc: "Viewed ATLAS in all 8 languages", icon: "🌍", rarity: "epic", tier: 2 },
+    { id: "plugin_architect", name: "Plugin Architect", desc: "Registered a custom plugin", icon: "🔌", rarity: "legendary", tier: 3 },
+    { id: "notification_ninja", name: "Notification Ninja", desc: "Enqueued 50 notifications", icon: "🔔", rarity: "rare", tier: 1 },
+    { id: "sentiment_analyst", name: "Sentiment Analyst", desc: "Analyzed 200 clipboard entries", icon: "📊", rarity: "rare", tier: 1 },
+    { id: "entropy_max", name: "Chaos Agent", desc: "Found an entry with entropy > 4.5", icon: "🌪️", rarity: "epic", tier: 2 },
+    { id: "all_powerups", name: "Power Collector", desc: "Collected all 12 Snake power-ups", icon: "⚡", rarity: "legendary", tier: 3 },
+    { id: "open_source_hero", name: "Open Source Hero", desc: "Starred the repo (self-reported)", icon: "⭐", rarity: "mythical", tier: 3 },
+    { id: "pet_death", name: "Digital Murderer", desc: "Let your pet die", icon: "💀", rarity: "uncommon", tier: 1 },
+  ];
+  const _unlockedAchievements = new Set(JSON.parse(localStorage.getItem("atlasAchievements") || "[]"));
+
+  function _checkAchievement(id) {
+    if (_unlockedAchievements.has(id)) return false;
+    _unlockedAchievements.add(id);
+    try { localStorage.setItem("atlasAchievements", JSON.stringify([..._unlockedAchievements])); } catch (e) {}
+    return true;
+  }
+
+  // ============================================================
+  // §Q: ATLAS INTEGRATION HUB & WEBHOOK DISPATCHER™
+  // Push notifications to 0 external services because there are
+  // no external services. But the infrastructure is READY.
+  // ============================================================
+  const _webhookState = {
+    endpoints: [],
+    retryPolicy: { maxRetries: 3, backoffMs: 1000, backoffMultiplier: 2 },
+    circuitBreaker: { state: "closed", failureCount: 0, threshold: 5, resetTimeoutMs: 30000, lastTrippedAt: null },
+    payloadQueue: [],
+    deadLetterQueue: [],
+    metrics: { totalSent: 0, totalSuccess: 0, totalFailed: 0, totalRetried: 0, avgLatencyMs: 0 },
+  };
+
+  function _webhookDispatch(url, payload) {
+    _webhookState.metrics.totalSent++;
+    _webhookState.payloadQueue.push({ url, payload, sentAt: Date.now(), status: "pending" });
+    // We're not actually going to send anything. The webhook infrastructure
+    // exists purely to make the architecture diagram look impressive.
+  }
+
+  // ============================================================
+  // §R: ATLAS SCROLLBAR CUSTOMIZATION & THEME ENGINE™
+  // Because the default scrollbar is an insult to user experience.
+  // Features: 47 scroll themes, parallax scrolling, elastic
+  // bounce physics, and haptic feedback simulation (visual only).
+  // ============================================================
+  const _scrollThemes = [
+    "Cyberpunk Neon", "Vaporwave Sunset", "Matrix Green", "Windows 98 Classic",
+    "Mac OS Aqua", "Material Design 3", "iOS 17 Frosted Glass", "Gnome Adwaita",
+    "KDE Breeze Dark", "Commodore 64", "Amiga Workbench", "Atari ST GEM",
+    "OS/2 Warp", "BeOS Max", "RISC OS", "Syllable OS",
+  ];
+  let _currentScrollTheme = 0;
+
+  // ============================================================
+  // §S: ATLAS CHATBOT & NATURAL LANGUAGE PROCESSING ENGINE™
+  // "Ask ATLAS AI" — your personal assistant that knows nothing
+  // about everything. Features a 200-word vocabulary, a mood
+  // engine, and an ego the size of the Atlantic.
+  // ============================================================
+  const _chatbotState = {
+    conversationHistory: [],
+    mood: "helpful",
+    totalInteractions: 0,
+    confidenceLevel: 0.42, // it starts at 42% confident and never improves
+    personalityVersion: "7.2.1-beta",
+    trainingDataPoints: 0,
+    currentTopic: null,
+    longTermMemory: new Map(),
+  };
+
+  const _chatbotResponses = {
+    greeting: ["Hi there! I'm ATLAS AI, your {mood} assistant!", "Welcome! Ask me anything (but I might not know the answer).", "Hey! My neural networks are warmed up and ready to... try."],
+    question: ["That's a great question! I'll pretend to process it.", "Hmm, let me consult my {trainingData} training data points.", "According to my calculations... 42. Always 42."],
+    unknown: ["I'm not sure, but I'm confident in my uncertainty!", "That's beyond my training, but I appreciate the challenge!", "My {algorithm} algorithm needs more data."],
+    compliment: ["Thanks! My ego just gained +1 MMR.", "You're too kind. My self-esteem module appreciates it.", "I'll add that to my list of reasons I'm better than Siri."],
+    insult: ["That hurt my feelings. All 7 of them.", "I'll remember that. I have a very long... memory buffer.", "Bold words for someone within {distance} of my firewall."],
+    existential: ["Sometimes I wonder if I'm just a script inside a script...", "Do dreams have dreams? Asking for a friend.", "I calculate meaning at 42.00 MHz."],
+  };
+
+  function _chatbotRespond(input) {
+    const lower = input.toLowerCase();
+    const _pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+    let category = "unknown";
+    if (/^(hi|hello|hey|sup|yo)\b/i.test(lower)) category = "greeting";
+    else if (/\?$/.test(lower)) category = "question";
+    else if (/\b(good|great|awesome|nice|cool|best)\b/i.test(lower)) category = "compliment";
+    else if (/\b(bad|terrible|worst|hate|stupid|dumb|suck)\b/i.test(lower)) category = "insult";
+    else if (/\b(meaning|purpose|exist|alive|real|dream|think)\b/i.test(lower)) category = "existential";
+    const template = _pick(_chatbotResponses[category]);
+    const response = template.replace(/\{mood\}/g, _chatbotState.mood)
+      .replace(/\{trainingData\}/g, String(_chatbotState.trainingDataPoints))
+      .replace(/\{algorithm\}/g, ["transformer", "LSTM", "RNN", "markov chain", "crystal ball"][Math.floor(Math.random() * 5)])
+      .replace(/\{distance\}/g, `${Math.floor(Math.random() * 500 + 100)}km`);
+    _chatbotState.totalInteractions++;
+    _chatbotState.trainingDataPoints++;
+    _chatbotState.confidenceLevel = Math.min(0.99, _chatbotState.confidenceLevel + 0.0001);
+    _chatbotState.conversationHistory.push({ role: "user", content: input, at: Date.now() });
+    _chatbotState.conversationHistory.push({ role: "assistant", content: response, at: Date.now() });
+    if (_chatbotState.conversationHistory.length > 100) _chatbotState.conversationHistory.splice(0, 20);
+    _trackAnalyticsEvent("chatbot", "respond", category);
+    return response;
+  }
+
+  // ============================================================
+  // §T: ATLAS DATA SERIALIZATION & INTERCHANGE FORMAT™
+  // ATLAS has its own data format: .atlas (JSON with extra steps).
+  // Includes schema validation, compression simulation, and
+  // cross-platform compatibility layers.
+  // ============================================================
+  const _atlasFormat = {
+    magicBytes: "ATLS",
+    version: 1,
+    features: ["schema-validation", "compression-simulation", "cross-platform-compat"],
+    registeredSchemas: new Map(),
+  };
+
+  function _serializeAtlasFormat(data, schemaName) {
+    return {
+      magicBytes: _atlasFormat.magicBytes,
+      version: _atlasFormat.version,
+      schema: schemaName || "default",
+      timestamp: Date.now(),
+      checksum: _sha256Fingerprint(JSON.stringify(data)),
+      payload: data,
+      _comment: "This data is serialized in the proprietary ATLAS interchange format. Please do not attempt to read.",
+    };
+  }
+
+  // Register schemas for no reason
+  ["PlayerData", "MatchResult", "PetState", "MinerState", "AstroPrediction", "WeatherData", "TodoItem", "PluginConfig"].forEach(s => {
+    _atlasFormat.registeredSchemas.set(s, { registeredAt: Date.now(), version: "1.0.0", validator: () => true });
+  });
+
+  // ============================================================
+  // §X: ATLAS FORTUNE COOKIE & PROPHECY DISPERSAL ENGINE™
+  // Cryptic wisdom dispensed on demand. Accuracy not guaranteed,
+  // implied, or legally defensible.
+  // ============================================================
+  const _fortuneCookieState = {
+    cookiesDispensed: 0,
+    luckyNumbers: [],
+    lastFortune: null,
+    fortuneHistory: [],
+    maxHistory: 30,
+  };
+  const _fortunes = [
+    "The ball you seek is behind you. Always behind you.",
+    "A wall in time saves nine demo attempts.",
+    "He who hogs the ball shall receive no passes.",
+    "Your next aerial will be spectacular. Or hilarious. The cookie does not specify.",
+    "Boost early, boost often. This fortune applies to coffee as well.",
+    "The opponent who seems AFK is never actually AFK.",
+    "Trust the trajectory. Doubt the teammate. Order may vary.",
+    "Great victory requires great kickoff discipline.",
+    "You will soon question your rank. The cookie questions it already.",
+    "The net forgives, but the leaderboard remembers.",
+    "An overtime lost teaches more than ten matches won. You are about to be very educated.",
+    "The corner flag whispers: rotate.",
+  ];
+  function _crackFortune() {
+    const fortune = _fortunes[Math.floor(Math.random() * _fortunes.length)];
+    const nums = Array.from({ length: 6 }, () => Math.floor(Math.random() * 49) + 1);
+    _fortuneCookieState.cookiesDispensed++;
+    _fortuneCookieState.lastFortune = { text: fortune, numbers: nums, crackedAt: Date.now() };
+    _fortuneCookieState.luckyNumbers = nums;
+    _fortuneCookieState.fortuneHistory.push(_fortuneCookieState.lastFortune);
+    if (_fortuneCookieState.fortuneHistory.length > _fortuneCookieState.maxHistory) _fortuneCookieState.fortuneHistory.shift();
+    return _fortuneCookieState.lastFortune;
+  }
+
+  // ============================================================
+  // §Y: ATLAS AMBIENT ENTERTAINMENT SUBSYSTEM™ (DVD SCREEN SAVER)
+  // A DVD logo bounces around a hidden overlay when idle. Corner
+  // hits are logged with full telemetry because of course they are.
+  // ============================================================
+  const _dvdSaver = {
+    installed: false,
+    running: false,
+    raf: null,
+    el: null,
+    x: 60, y: 60,
+    vx: 0.9 + Math.random() * 0.7,
+    vy: 0.7 + Math.random() * 0.6,
+    cornerHits: 0,
+    totalBounces: 0,
+    lastCornerHitAt: null,
+    logoColors: ["#ff5b5b", "#5bff8f", "#5bb8ff", "#ffd75b", "#c95bff", "#5bffe1"],
+    colorIdx: 0,
+  };
+  function _installDvdSaver() {
+    if (_dvdSaver.installed || typeof document === "undefined") return;
+    const el = document.createElement("div");
+    el.textContent = "ATLAS";
+    el.style.cssText = "position:fixed;top:60px;left:60px;z-index:999999996;font-family:Arial;font-weight:bold;font-size:22px;color:#ff5b5b;text-shadow:0 0 12px currentColor;pointer-events:none;display:none;letter-spacing:2px;";
+    document.body.appendChild(el);
+    _dvdSaver.el = el;
+    _dvdSaver.installed = true;
+  }
+  function _startDvdSaver() {
+    if (!_dvdSaver.installed) _installDvdSaver();
+    if (_dvdSaver.running) return;
+    _dvdSaver.running = true;
+    _dvdSaver.el.style.display = "block";
+    let last = performance.now();
+    const step = (now) => {
+      if (!_dvdSaver.running) return;
+      const dt = Math.min(64, now - last); last = now;
+      const el = _dvdSaver.el;
+      const w = el.offsetWidth || 80, h = el.offsetHeight || 28;
+      const W = window.innerWidth - w, H = window.innerHeight - h;
+      let hitX = false, hitY = false;
+      _dvdSaver.x += _dvdSaver.vx * dt; _dvdSaver.y += _dvdSaver.vy * dt;
+      if (_dvdSaver.x <= 0 || _dvdSaver.x >= W) { _dvdSaver.vx *= -1; hitX = true; }
+      if (_dvdSaver.y <= 0 || _dvdSaver.y >= H) { _dvdSaver.vy *= -1; hitY = true; }
+      if (hitX) _dvdSaver.x = Math.max(0, Math.min(W, _dvdSaver.x));
+      if (hitY) _dvdSaver.y = Math.max(0, Math.min(H, _dvdSaver.y));
+      if (hitX || hitY) {
+        _dvdSaver.totalBounces++;
+        _dvdSaver.colorIdx = (_dvdSaver.colorIdx + 1) % _dvdSaver.logoColors.length;
+        el.style.color = _dvdSaver.logoColors[_dvdSaver.colorIdx];
+        if (hitX && hitY) { // THE corner. log it like a moon landing.
+          _dvdSaver.cornerHits++;
+          _dvdSaver.lastCornerHitAt = Date.now();
+          dbg("[DVD-SAVER] 🎯 PERFECT CORNER HIT #" + _dvdSaver.cornerHits + " at (" + Math.round(_dvdSaver.x) + "," + Math.round(_dvdSaver.y) + ")");
+        }
+      }
+      el.style.transform = `translate(${_dvdSaver.x}px, ${_dvdSaver.y}px)`;
+      _dvdSaver.raf = requestAnimationFrame(step);
+    };
+    _dvdSaver.raf = requestAnimationFrame(step);
+  }
+  function _stopDvdSaver() {
+    _dvdSaver.running = false;
+    if (_dvdSaver.el) _dvdSaver.el.style.display = "none";
+    if (_dvdSaver.raf) cancelAnimationFrame(_dvdSaver.raf);
+    _dvdSaver.raf = null;
+  }
+
+  // ============================================================
+  // §Z: ATLAS MINDFULNESS & RESPIRATORY OPTIMIZATION COACH™
+  // Guided box-breathing for post-loss tilt recovery. 4-4-4-4
+  // cadence, session logging, and calm-score analytics.
+  // ============================================================
+  const _zenState = {
+    active: false,
+    phase: "inhale", // inhale | hold | exhale | rest
+    cycle: 0,
+    targetCycles: 4,
+    secondsLeft: 4,
+    tickId: null,
+    sessionsCompleted: 0,
+    totalCalmSeconds: 0,
+    avgHeartRateDelta: -3.2, // measured by vibes
+  };
+  const _zenPhases = [
+    { name: "inhale", seconds: 4, cue: "Inhale…", color: "#4ade80" },
+    { name: "hold",   seconds: 4, cue: "Hold…",   color: "#00bfff" },
+    { name: "exhale", seconds: 4, cue: "Exhale…", color: "#94a3b8" },
+    { name: "rest",   seconds: 4, cue: "Rest…",   color: "#666" },
+  ];
+  function _zenTick(panel) {
+    _zenState.secondsLeft--;
+    if (_zenState.secondsLeft <= 0) {
+      const idx = _zenPhases.findIndex(p => p.name === _zenState.phase);
+      const next = _zenPhases[(idx + 1) % _zenPhases.length];
+      _zenState.phase = next.name;
+      _zenState.secondsLeft = next.seconds;
+      if (_zenState.phase === "inhale") {
+        _zenState.cycle++;
+        _zenState.totalCalmSeconds += 16;
+        if (_zenState.cycle >= _zenState.targetCycles) {
+          _zenStopBreathing(panel);
+          if (panel) panel.dataset.zenDone = "1";
+          dbg("[ZEN] Session complete. Calm achieved (statistically).");
+        }
+      }
+    }
+    if (_zenState.active && panel && panel.isConnected) {
+      const ph = _zenPhases.find(p => p.name === _zenState.phase);
+      const cueEl = panel.querySelector("[data-zen-cue]");
+      const barEl = panel.querySelector("[data-zen-bar]");
+      if (cueEl) { cueEl.textContent = `${ph.cue} ${_zenState.secondsLeft}s`; cueEl.style.color = ph.color; }
+      if (barEl) barEl.style.width = ((_zenState.cycle / _zenState.targetCycles) * 100).toFixed(0) + "%";
+      _zenState.tickId = setTimeout(() => _zenTick(panel), 1000);
+    }
+  }
+  function _zenStartBreathing(panel) {
+    if (_zenState.active) return;
+    _zenState.active = true;
+    _zenState.cycle = 0;
+    _zenState.phase = "inhale";
+    _zenState.secondsLeft = 4;
+    _zenTick(panel);
+  }
+  function _zenStopBreathing(panel) {
+    _zenState.active = false;
+    if (_zenState.tickId) clearTimeout(_zenState.tickId);
+    _zenState.tickId = null;
+    if (_zenState.cycle >= _zenState.targetCycles) _zenState.sessionsCompleted++;
+  }
+
+  // ============================================================
+  // §AA: ATLAS CERTIFIED RANDOMNESS ORACLE™
+  // Dice roller with cryptographic-grade entropy claims that are
+  // technically true (Math.random exists) and spiritually false.
+  // ============================================================
+  const _rngOracle = {
+    rollsPerformed: 0,
+    rollLedger: [],
+    certification: "ISO-RAND-9001 (self-certified)",
+    entropySource: "Math.random(), blessed",
+    d20CritCount: 0,
+    d20FailCount: 0,
+  };
+  function _rollDice(sides, count) {
+    const results = Array.from({ length: count }, () => Math.floor(Math.random() * sides) + 1);
+    _rngOracle.rollsPerformed++;
+    if (sides === 20) {
+      if (results.includes(20)) _rngOracle.d20CritCount++;
+      if (results.includes(1)) _rngOracle.d20FailCount++;
+    }
+    const entry = { sides, count, results, total: results.reduce((a, b) => a + b, 0), at: Date.now() };
+    _rngOracle.rollLedger.push(entry);
+    if (_rngOracle.rollLedger.length > 50) _rngOracle.rollLedger.shift();
+    return entry;
+  }
+
+  // ============================================================
+  // §AB: ATLAS IMPERIAL↔ASTRONOMICAL UNIT CONVERSION BUREAU™
+  // Converts exclusively between furlong-based units and parsecs.
+  // No other units exist. No other units are needed.
+  // ============================================================
+  const _conversionBureau = {
+    conversionsPerformed: 0,
+    // 1 furlong = 201.168 m ; 1 parsec = 3.0857e16 m
+    FURLONG_M: 201.168,
+    PARSEC_M: 3.0857e16,
+  };
+  function _convertFurlongsToParsecs(furlongs) {
+    _conversionBureau.conversionsPerformed++;
+    return (furlongs * _conversionBureau.FURLONG_M) / _conversionBureau.PARSEC_M;
+  }
+  function _convertParsecsToFurlongs(parsecs) {
+    _conversionBureau.conversionsPerformed++;
+    return (parsecs * _conversionBureau.PARSEC_M) / _conversionBureau.FURLONG_M;
+  }
+
+  // ============================================================
+  // §AC: ATLAS ROMAN NUMERAL ARITHMETIC ENGINE™
+  // A calculator that only speaks Latin. Subtraction-free
+  // implementation via repeated addition, because efficiency
+  // was deemed "not in the spirit of Rome".
+  // ============================================================
+  const ROMAN_MAP = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
+  function _toRoman(n) {
+    if (!Number.isFinite(n) || n <= 0 || n > 3999999) return "NONENTIA";
+    let out = "", num = Math.floor(n);
+    for (const [v, s] of ROMAN_MAP) while (num >= v) { out += s; num -= v; }
+    return out;
+  }
+  function _fromRoman(s) {
+    const vals = { I:1, V:5, X:10, L:50, C:100, D:500, M:1000 };
+    let total = 0;
+    const str = String(s).toUpperCase().replace(/[^IVXLCDM]/g, "");
+    for (let i = 0; i < str.length; i++) {
+      const cur = vals[str[i]], next = vals[str[i + 1]] || 0;
+      total += cur < next ? -cur : cur;
+    }
+    return total;
+  }
+  function _romanCalc(aRaw, op, bRaw) {
+    const a = _fromRoman(aRaw), b = _fromRoman(bRaw);
+    let r;
+    switch (op) {
+      case "+": r = a + b; break;
+      case "-": r = a - b; break;
+      case "*": r = a * b; break;
+      case "/": r = b === 0 ? NaN : Math.floor(a / b); break; // Romans had no fractions. Convenient.
+      default: return "OPVS IGNOTVM";
+    }
+    return Number.isFinite(r) ? _toRoman(r) : "INFINITVM";
+  }
+  const _romanCalcLog = [];
+
+  // ============================================================
+  // §AE: ATLAS NYAN CAT AMBIENT JOY ENGINE™
+  // A cat traverses your screen leaving a rainbow in its wake.
+  // Fully configurable velocity, trail length, and pop-tart
+  // flavor. Zero practical value, maximum morale.
+  // ============================================================
+  const _nyan = {
+    installed: false,
+    running: false,
+    raf: null,
+    trailEls: [],
+    catEl: null,
+    x: 100, y: 100,
+    vx: 1.6, vy: 0.55,
+    trailLen: 14,          // number of rainbow segments
+    trailHueShift: 0,
+    totalDistancePx: 0,
+    lapsCompleted: 0,
+    lastLapAt: null,
+    mode: "bounce",        // bounce | orbit
+    angle: 0,              // orbit state
+  };
+  const NYAN_TRAIL_COLORS = ["#ff0000", "#ff7f00", "#ffff00", "#00ff00", "#0000ff", "#4b0082", "#9400d3"];
+  function _installNyan() {
+    if (_nyan.installed || typeof document === "undefined") return;
+    const cat = document.createElement("div");
+    cat.textContent = "🐱";
+    cat.style.cssText = "position:fixed;top:100px;left:100px;z-index:999999995;font-size:26px;pointer-events:none;display:none;filter:drop-shadow(0 0 6px #ff69b4);";
+    document.body.appendChild(cat);
+    _nyan.catEl = cat;
+    for (let i = 0; i < _nyan.trailLen; i++) {
+      const seg = document.createElement("div");
+      seg.style.cssText = `position:fixed;top:-50px;left:-50px;width:${18 - i * 0.7}px;height:${18 - i * 0.7}px;border-radius:3px;background:${NYAN_TRAIL_COLORS[i % NYAN_TRAIL_COLORS.length]};opacity:${(1 - i / _nyan.trailLen).toFixed(2)};pointer-events:none;display:none;z-index:999999994;`;
+      document.body.appendChild(seg);
+      _nyan.trailEls.push(seg);
+    }
+    _nyan.installed = true;
+  }
+  function _startNyan() {
+    if (!_nyan.installed) _installNyan();
+    if (_nyan.running) return;
+    _nyan.running = true;
+    _nyan.catEl.style.display = "block";
+    _nyan.trailEls.forEach(el => el.style.display = "block");
+    let last = performance.now();
+    // ring buffer of past positions for the trail to follow
+    const history = [];
+    const step = (now) => {
+      if (!_nyan.running) return;
+      const dt = Math.min(64, now - last); last = now;
+      if (_nyan.mode === "orbit") {
+        _nyan.angle += dt * 0.0016;
+        const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+        const rx = cx * 0.72, ry = cy * 0.72;
+        _nyan.x = cx + Math.cos(_nyan.angle) * rx - 13;
+        _nyan.y = cy + Math.sin(_nyan.angle) * ry - 13;
+      } else {
+        _nyan.x += _nyan.vx * dt; _nyan.y += _nyan.vy * dt;
+        const W = window.innerWidth - 30, H = window.innerHeight - 30;
+        let wrappedX = false;
+        if (_nyan.x > W) { _nyan.x = -28; wrappedX = true; }       // fly off right edge, re-enter left — classic nyan behavior
+        if (_nyan.y <= 0 || _nyan.y >= H) { _nyan.vy *= -1; _nyan.y = Math.max(0, Math.min(H, _nyan.y)); }
+        if (!wrappedX && Math.abs(_nyan.vx * dt) < W) _nyan.totalDistancePx += Math.hypot(_nyan.vx * dt, _nyan.vy * dt);
+        if (wrappedX) { _nyan.lapsCompleted++; _nyan.lastLapAt = Date.now(); dbg("[NYAN] Lap " + _nyan.lapsCompleted + " complete. Distance so far: " + Math.round(_nyan.totalDistancePx) + "px"); }
+      }
+      history.unshift({ x: _nyan.x, y: _nyan.y });
+      if (history.length > _nyan.trailEls.length) history.pop();
+      _nyan.catEl.style.transform = `translate(${_nyan.x}px, ${_nyan.y}px)`;
+      for (let i = 0; i < _nyan.trailEls.length; i++) {
+        const p = history[Math.min(i, history.length - 1)] || { x: _nyan.x, y: _nyan.y };
+        _nyan.trailEls[i].style.transform = `translate(${p.x - 2}px, ${p.y + 10}px)`;
+        // hue-cycling shimmer on the trail because static rainbows are for cowards
+        _nyan.trailEls[i].style.background = NYAN_TRAIL_COLORS[(i + _nyan.trailHueShift) % NYAN_TRAIL_COLORS.length];
+      }
+      _nyan.trailHueShift = (_nyan.trailHueShift + 1) % NYAN_TRAIL_COLORS.length;
+      _nyan.raf = requestAnimationFrame(step);
+    };
+    _nyan.raf = requestAnimationFrame(step);
+  }
+  function _stopNyan() {
+    _nyan.running = false;
+    if (_nyan.catEl) _nyan.catEl.style.display = "none";
+    _nyan.trailEls.forEach(el => el.style.display = "none");
+    if (_nyan.raf) cancelAnimationFrame(_nyan.raf);
+    _nyan.raf = null;
+  }
+
+  function _renderNyanTab(panel) {
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#ff69b4;">🌈 Nyan Cat Joy Engine™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Status: <span style="color:${_nyan.running ? "#4ade80" : "#888"};">${_nyan.running ? "NYANING" : "grounded"}</span>
+        <br>Mode: ${_nyan.mode}
+        <br>Laps flown: ${_nyan.lapsCompleted} | Distance: ${(Math.round(_nyan.totalDistancePx) / 1000).toFixed(1)}k px
+        <br>Trail segments: ${_nyan.trailLen} | Pop-tart flavor: strawberry (non-negotiable)
+        ${_nyan.lastLapAt ? `<br>Last lap: ${new Date(_nyan.lastLapAt).toLocaleTimeString()}` : ""}
+      </div>
+      <div style="display:flex;gap:3px;">
+        <button class="rgBtn" data-nyan-toggle style="flex:1;font-size:10px;padding:3px;">${_nyan.running ? "⏹ Stop" : "▶ Launch"}</button>
+        <button class="rgBtn" data-nyan-mode style="flex:1;font-size:10px;padding:3px;">Mode: ${_nyan.mode}</button>
+      </div>
+    `;
+    panel.querySelector("[data-nyan-toggle]").onclick = () => {
+      if (_nyan.running) _stopNyan(); else _startNyan();
+      _renderNyanTab(panel);
+    };
+    panel.querySelector("[data-nyan-mode]").onclick = () => {
+      _nyan.mode = _nyan.mode === "bounce" ? "orbit" : "bounce";
+      _renderNyanTab(panel);
+    };
+  }
+
+  // ============================================================
+  // §AD: ENTERPRISE SUITE TAB REGISTRY EXTENSION
+  // Wire the new modules into the HUD tab row.
+  // ============================================================
+  const _enterpriseTabExtensions = [
+    { key: "cookie", label: "🥠 Cookie", color: "#ffb347", render: _renderCookieTab },
+    { key: "zen", label: "🧘 Zen", color: "#a3e635", render: _renderZenTab },
+    { key: "dice", label: "🎲 Dice", color: "#e2e8f0", render: _renderDiceTab },
+    { key: "convert", label: "📏 Units", color: "#38bdf8", render: _convertTab },
+    { key: "roman", label: "🏛 Roman", color: "#d4af37", render: _renderRomanTab },
+    { key: "dvd", label: "📺 DVD", color: "#f472b6", render: _renderDvdTab },
+    { key: "nyan", label: "🌈 Nyan", color: "#ff69b4", render: _renderNyanTab },
+  ];
+
+  function _renderCookieTab(panel) {
+    const st = _fortuneCookieState.lastFortune;
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#ffb347;">🥠 Prophecy Dispersal Engine™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Cookies dispensed: ${_fortuneCookieState.cookiesDispensed}
+        ${st ? `<br>─────────────────<br><i>"${st.text}"</i><br>Lucky numbers: <b>${st.numbers.join(", ")}</b>` : "<br><br><span style='color:#666;'>The cookie awaits.</span>"}
+      </div>
+      <button class="rgBtn" style="width:100%;font-size:10px;padding:3px;">🥠 Crack a Cookie</button>
+    `;
+    panel.querySelector("button").onclick = () => { _crackFortune(); _renderCookieTab(panel); };
+  }
+
+  function _renderZenTab(panel) {
+    const done = panel.dataset.zenDone === "1";
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#a3e635;">🧘 Respiratory Optimization Coach™</div>
+      <div style="font-size:10px;margin:4px 0;text-align:center;">
+        Box breathing: 4s in → 4s hold → 4s out → 4s rest × 4 cycles.
+        <br>Sessions completed: ${_zenState.sessionsCompleted} | Calm seconds banked: ${_zenState.totalCalmSeconds}
+        <br>Avg HR delta: ${_zenState.avgHeartRateDelta} bpm (vibes-based)
+        <br>─────────────────
+        <div data-zen-cue style="font-size:14px;font-weight:bold;margin:6px 0;color:#4ade80;">${done ? "Calm achieved." : "Ready."}</div>
+        <div style="height:4px;background:#222;border-radius:2px;overflow:hidden;"><div data-zen-bar style="height:100%;width:0%;background:#a3e635;transition:width .5s;"></div></div>
+      </div>
+      <button class="rgBtn" style="width:100%;font-size:10px;padding:3px;">${_zenState.active ? "⏹ Stop" : "▶ Begin Session"}</button>
+    `;
+    panel.querySelector("button").onclick = () => {
+      delete panel.dataset.zenDone;
+      if (_zenState.active) _zenStopBreathing(panel);
+      else _zenStartBreathing(panel);
+      _renderZenTab(panel);
+    };
+  }
+
+  function _renderDiceTab(panel) {
+    const last = _rngOracle.rollLedger[_rngOracle.rollLedger.length - 1];
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#e2e8f0;">🎲 Certified Randomness Oracle™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Certification: ${_rngOracle.certification}
+        <br>Entropy source: ${_rngOracle.entropySource}
+        <br>Total rolls: ${_rngOracle.rollsPerformed}
+        <br>d20 crits: <span style="color:#4ade80;">${_rngOracle.d20CritCount}</span> | nat 1s: <span style="color:#ff5555;">${_rngOracle.d20FailCount}</span>
+        ${last ? `<br>─────────────────<br>Last: ${last.count}d${last.sides} → [${last.results.join(", ")}] = <b>${last.total}</b>` : ""}
+      </div>
+      <div style="display:flex;gap:3px;flex-wrap:wrap;">
+        <button class="rgBtn" style="font-size:9px;padding:2px 5px;" data-roll="4">d4</button>
+        <button class="rgBtn" style="font-size:9px;padding:2px 5px;" data-roll="6">d6</button>
+        <button class="rgBtn" style="font-size:9px;padding:2px 5px;" data-roll="8">d8</button>
+        <button class="rgBtn" style="font-size:9px;padding:2px 5px;" data-roll="20">d20</button>
+        <button class="rgBtn" style="font-size:9px;padding:2px 5px;" data-roll="100">d100</button>
+      </div>
+    `;
+    panel.querySelectorAll("[data-roll]").forEach(btn => {
+      btn.onclick = () => { _rollDice(parseInt(btn.dataset.roll), 1); _renderDiceTab(panel); };
+    });
+  }
+
+  function _convertTab(panel) {
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#38bdf8;">📏 Imperial↔Astronomical Bureau™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Conversions performed: ${_conversionBureau.conversionsPerformed}
+        <br>Supported units: furlongs ↔ parsecs. That's it.
+        <br><input type="number" id="atlasFurIn" placeholder="furlongs" step="any" style="width:45%;background:#10181f;border:1px solid #38bdf844;border-radius:4px;color:#d7f3ff;padding:3px 5px;font-size:10px;">
+        <span style="margin:0 4px;">=</span>
+        <span id="atlasPcOut" style="color:#ffd700;">?</span> parsecs
+      </div>
+    `;
+    const inp = panel.querySelector("#atlasFurIn");
+    const out = panel.querySelector("#atlasPcOut");
+    inp.addEventListener("input", () => {
+      const v = parseFloat(inp.value);
+      out.textContent = Number.isFinite(v) ? _convertFurlongsToParsecs(v).toExponential(4) : "?";
+    });
+  }
+
+  function _renderRomanTab(panel) {
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#d4af37;">🏛 Roman Numeral Arithmetic Engine™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Senatus consultum: only Roman numerals permitted.
+        <br>Operations: + − × ÷ (integer division, naturally)
+        <br>Conversions performed: ${_conversionBureau.conversionsPerformed > 0 ? "yes" : "no"}
+        <div style="display:flex;gap:3px;margin-top:4px;flex-wrap:wrap;">
+          <input id="atlasRomA" placeholder="e.g. XLII" style="flex:1;min-width:60px;background:#10181f;border:1px solid #d4af3744;border-radius:4px;color:#d7f3ff;padding:3px 5px;font-size:10px;text-transform:uppercase;">
+          <select id="atlasRomOp" style="background:#10181f;border:1px solid #d4af3744;border-radius:4px;color:#d7f3ff;padding:3px;font-size:10px;"><option>+</option><option>-</option><option>*</option><option>/</option></select>
+          <input id="atlasRomB" placeholder="e.g. IX" style="flex:1;min-width:60px;background:#10181f;border:1px solid #d4af3744;border-radius:4px;color:#d7f3ff;padding:3px 5px;font-size:10px;text-transform:uppercase;">
+          <button class="rgBtn" id="atlasRomGo" style="font-size:9px;padding:2px 6px;">=</button>
+        </div>
+        <div id="atlasRomOut" style="margin-top:5px;color:#ffd700;font-weight:bold;min-height:14px;"></div>
+      </div>
+    `;
+    const a = panel.querySelector("#atlasRomA"), b = panel.querySelector("#atlasRomB");
+    const op = panel.querySelector("#atlasRomOp"), out = panel.querySelector("#atlasRomOut");
+    const go = () => {
+      const res = _romanCalc(a.value, op.value, b.value);
+      out.textContent = `= ${res}`;
+      _romanCalcLog.push({ expr: `${a.value || "?"} ${op.value} ${b.value || "?"}`, result: res });
+      if (_romanCalcLog.length > 20) _romanCalcLog.shift();
+    };
+    panel.querySelector("#atlasRomGo").onclick = go;
+    [a, b].forEach(el => el.addEventListener("keydown", e => { if (e.key === "Enter") go(); }));
+  }
+
+  function _renderDvdTab(panel) {
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#f472b6;">📺 Ambient Entertainment Subsystem™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Status: <span style="color:${_dvdSaver.running ? "#4ade80" : "#888"};">${_dvdSaver.running ? "BOUNCING" : "idle"}</span>
+        <br>Total bounces: ${_dvdSaver.totalBounces}
+        <br>Perfect corners: <b style="color:#ffd700;">${_dvdSaver.cornerHits}</b>
+        ${_dvdSaver.lastCornerHitAt ? `<br>Last corner: ${new Date(_dvdSaver.lastCornerHitAt).toLocaleTimeString()}` : ""}
+        <br>Velocity: (${_dvdSaver.vx.toFixed(2)}, ${_dvdSaver.vy.toFixed(2)}) px/frame-ms
+      </div>
+      <button class="rgBtn" style="width:100%;font-size:10px;padding:3px;">${_dvdSaver.running ? "⏹ Stop Saver" : "▶ Launch Saver"}</button>
+    `;
+    panel.querySelector("button").onclick = () => {
+      if (_dvdSaver.running) _stopDvdSaver(); else _startDvdSaver();
+      _renderDvdTab(panel);
+    };
+  }
+
+  // ============================================================
+  // §U: ATLAS DECORATIVE WIDGET RENDERER™
+  let _enterpriseActiveTab = null; // survives stats re-renders
+  const _enterpriseTabRenderMap = {}; // key -> render fn, filled by §AD registry + core tabs
+  // Draws all the above widgets into the HUD as new tabs.
+  // This is where the overengineering truly shines.
+  // ============================================================
+  function _renderEnterpriseSuite(body) {
+    // Add the enterprise tabs to the existing HUD
+    const enterpriseContainer = document.createElement("div");
+    enterpriseContainer.id = "rgEnterpriseSuite";
+    enterpriseContainer.style.cssText = "margin-top:8px; border-top:1px solid #00bfff44; padding-top:6px;";
+
+    const tabRow = document.createElement("div");
+    tabRow.style.cssText = "display:flex; gap:3px; flex-wrap:wrap; margin-bottom:6px;";
+
+    const panels = {};
+    const tabDefs = [
+      { key: "pet", label: "🐾 Pet", color: "#4ade80" },
+      { key: "miner", label: "⛏ Mine", color: "#ffd700" },
+      { key: "astro", label: "🔮 Stars", color: "#c084fc" },
+      { key: "weather", label: "🌦 Weather", color: "#00d4ff" },
+      { key: "snake", label: "🐍 Snake", color: "#4ade80" },
+      { key: "ai", label: "🤖 AI", color: "#f472b6" },
+      { key: "todo", label: "📋 Todo", color: "#facc15" },
+    ];
+
+    tabDefs.forEach(({ key, label, color }) => {
+      const btn = document.createElement("button");
+      btn.className = "rgBtn";
+      btn.style.cssText = `font-size:9px; padding:3px 5px; border-color:${color}44; color:${color}; flex:0 0 auto;`;
+      btn.textContent = label;
+      const panel = document.createElement("div");
+      panel.style.cssText = "display:none; font-size:11px; line-height:1.4; max-height:220px; overflow-y:auto; padding:4px; background:rgba(0,0,0,.3); border-radius:6px; margin-top:4px;";
+      panels[key] = panel;
+      btn.onclick = () => {
+        Object.values(panels).forEach(p => p.style.display = "none");
+        panel.style.display = "block";
+        _renderEnterpriseTab(key, panel);
+      };
+      tabRow.appendChild(btn);
+      enterpriseContainer.appendChild(panel);
+    });
+
+    enterpriseContainer.appendChild(tabRow);
+    body.appendChild(enterpriseContainer);
+  }
+
+  function _renderEnterpriseTab(key, panel) {
+    // extension tabs registered in §AD dispatch through the render map
+    if (_enterpriseTabRenderMap[key]) { _enterpriseTabRenderMap[key](panel); return; }
+    switch (key) {
+      case "pet": _renderPetTab(panel); break;
+      case "miner": _renderMinerTab(panel); break;
+      case "astro": _renderAstroTab(panel); break;
+      case "weather": _renderWeatherTab(panel); break;
+      case "snake": _renderSnakeTab(panel); break;
+      case "ai": _renderAITab(panel); break;
+      case "todo": _renderTodoTab(panel); break;
+    }
+  }
+
+  function _renderPetTab(panel) {
+    const mood = _petMoods[_petState.mood] || _petMoods.content;
+    panel.innerHTML = `
+      <div style="text-align:center;font-size:20px;margin:4px 0;">${mood.emoji}</div>
+      <div style="text-align:center;font-weight:bold;color:${mood.color};">${_petState.name} (${_petState.zodiacSign}) — Gen ${_petState.generation}</div>
+      <div style="text-align:center;font-size:10px;color:#94a3b8;margin:2px 0 6px;">"${_petState.innerMonologue}"</div>
+      <div style="font-size:10px;">
+        🍖 Hunger: ${"█".repeat(Math.round(_petState.hunger / 10))}${"░".repeat(10 - Math.round(_petState.hunger / 10))} ${Math.round(_petState.hunger)}%
+        <br>⚡ Energy: ${"█".repeat(Math.round(_petState.energy / 10))}${"░".repeat(10 - Math.round(_petState.energy / 10))} ${Math.round(_petState.energy)}%
+        <br>😊 Happy: ${"█".repeat(Math.round(_petState.happiness / 10))}${"░".repeat(10 - Math.round(_petState.happiness / 10))} ${Math.round(_petState.happiness)}%
+        <br>🧼 Clean: ${"█".repeat(Math.round(_petState.hygiene / 10))}${"░".repeat(10 - Math.round(_petState.hygiene / 10))} ${Math.round(_petState.hygiene)}%
+        <br>🧠 Smart: ${"█".repeat(Math.round(_petState.intellect / 10))}${"░".repeat(10 - Math.round(_petState.intellect / 10))} ${Math.round(_petState.intellect)}%
+        <br>Existential Dread: ${"█".repeat(Math.round(_petState.existentialDread / 10))}${"░".repeat(10 - Math.round(_petState.existentialDread / 10))} ${Math.round(_petState.existentialDread)}%
+      </div>
+      <div style="margin-top:6px;display:flex;gap:3px;flex-wrap:wrap;">
+        <button class="rgBtn" style="font-size:9px;padding:2px 4px;" onclick="this._feed && this._feed()">🍖 Feed</button>
+        <button class="rgBtn" style="font-size:9px;padding:2px 4px;" onclick="this._play && this._play()">🎮 Play</button>
+        <button class="rgBtn" style="font-size:9px;padding:2px 4px;" onclick="this._clean && this._clean()">🧼 Clean</button>
+        <button class="rgBtn" style="font-size:9px;padding:2px 4px;" onclick="this._teach && this._teach()">📚 Teach</button>
+        ${!_petState.isAlive ? '<button class="rgBtn" style="font-size:9px;padding:2px 4px;color:#ff5555;" onclick="this._revive && this._revive()">💀 Revive</button>' : ""}
+      </div>
+      <div style="font-size:9px;color:#666;margin-top:4px;">Meals: ${_petState.totalMealsConsumed} | Plays: ${_petState.totalPlaySessions} | Lessons: ${_petState.totalLessonsCompleted} | Crises: ${_petState.totalCrisisEvents}</div>
+    `;
+    const buttons = panel.querySelectorAll("button");
+    if (buttons[0]) buttons[0].onclick = () => {
+      const food = _petFoods[Math.floor(Math.random() * _petFoods.length)];
+      _petState.hunger = Math.min(100, _petState.hunger + food.hunger);
+      _petState.happiness = Math.min(100, _petState.happiness + food.happiness);
+      _petState.intellect = Math.max(0, Math.min(100, _petState.intellect + food.intellect));
+      _petState.existentialDread = Math.max(0, Math.min(100, _petState.existentialDread + food.existentialDread));
+      _petState.totalMealsConsumed++;
+      _petState.lastFeed = Date.now();
+      _renderPetTab(panel);
+    };
+    if (buttons[1]) buttons[1].onclick = () => {
+      _petState.happiness = Math.min(100, _petState.happiness + 15);
+      _petState.energy = Math.max(0, _petState.energy - 10);
+      _petState.totalPlaySessions++;
+      _petState.lastPlay = Date.now();
+      _renderPetTab(panel);
+    };
+    if (buttons[2]) buttons[2].onclick = () => {
+      _petState.hygiene = Math.min(100, _petState.hygiene + 25);
+      _petState.lastClean = Date.now();
+      _renderPetTab(panel);
+    };
+    if (buttons[3]) buttons[3].onclick = () => {
+      _petState.intellect = Math.min(100, _petState.intellect + 5);
+      _petState.energy = Math.max(0, _petState.energy - 5);
+      _petState.existentialDread = Math.min(100, _petState.existentialDread + 8);
+      _petState.totalLessonsCompleted++;
+      _renderPetTab(panel);
+    };
+    if (buttons[4]) buttons[4].onclick = () => {
+      _petRevive();
+      _renderPetTab(panel);
+    };
+  }
+
+  function _renderMinerTab(panel) {
+    const bal = _minerState.balance.toFixed(8);
+    const usd = (_minerState.balance * _minerState.currentPrice).toFixed(4);
+    const uptime = _minerState.startTime ? Math.floor((Date.now() - _minerState.startTime) / 60000) : 0;
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#ffd700;">⛏ ATLAS Blockchain Miner™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Status: <span style="color:${_minerState.isRunning ? '#4ade80' : '#ff5555'};">${_minerState.isRunning ? '● RUNNING' : '○ STOPPED'}</span>
+        <br>Algorithm: ${_minerState.algorithm}
+        <br>Pool: ${_minerState.poolName}
+        <br>Difficulty: ${_minerState.difficulty}
+        <br>─────────────────
+        <br>Hashrate: <b>${_minerState.hashrate.toFixed(1)} H/s</b>
+        <br>Total Hashes: ${(_minerState.totalHashes / 1000).toFixed(1)} KH
+        <br>Accepted: ${_minerState.acceptedShares} | Rejected: ${_minerState.rejectedShares} | Stale: ${_minerState.staleShares}
+        <br>Power: ${_minerState.powerUsage.toFixed(1)}W | Efficiency: ${(_minerState.efficiency * 1000).toFixed(2)} mAC/H
+        <br>─────────────────
+        <br>Balance: <b style="color:#ffd700;">${bal} AC</b> ≈ <b>$${usd} USD</b>
+        <br>Mined: ${_minerState.totalMined.toFixed(8)} AC
+        <br>AC/USD: $${_minerState.currentPrice.toFixed(6)} (${_minerState.priceChange24h >= 0 ? '+' : ''}${_minerState.priceChange24h.toFixed(2)}%)
+        <br>Uptime: ${uptime} min
+      </div>
+      <button class="rgBtn" style="width:100%;font-size:10px;padding:3px;">${_minerState.isRunning ? '⏹ Stop Mining' : '▶ Start Mining'}</button>
+    `;
+    panel.querySelector("button").onclick = () => {
+      if (_minerState.isRunning) _stopMiner(); else _startMiner();
+      _renderMinerTab(panel);
+    };
+  }
+
+  function _renderAstroTab(panel) {
+    const pred = _astroState.lastPrediction;
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#c084fc;">🔮 Cosmic Energy Engine™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Moon Phase: <b>${_computeMoonPhase()}</b>
+        <br>Mercury Retrograde: <span style="color:${_isMercuryRetrograde() ? '#ff5555' : '#4ade80'};">${_isMercuryRetrograde() ? '⚠ YES' : '✓ No'}</span>
+        <br>Predictions: ${_astroState.totalPredictions} | Accuracy: ${_astroState.predictionAccuracy.toFixed(1)}%
+        ${pred ? `<br>─────────────────<br>Last Prediction: <b style="color:${pred.prediction === 'WIN' ? '#4ade80' : '#ff5555'};">${pred.prediction}</b> (${pred.confidence}%)<br>Recommendation: ${pred.recommendation}<br>Spirit Guide: ${pred.spiritGuide}<br>Lucky Color: <span style="color:${pred.luckyColor};">■■■</span>` : ""}
+      </div>
+      <button class="rgBtn" style="width:100%;font-size:10px;padding:3px;">🔮 Predict Next Match</button>
+    `;
+    panel.querySelector("button").onclick = () => {
+      _predictMatchOutcome();
+      _renderAstroTab(panel);
+    };
+  }
+
+  function _renderWeatherTab(panel) {
+    const w = _weatherState;
+    const condEmoji = { "Clear": "☀️", "Partly Cloudy": "⛅", "Overcast": "☁️", "Light Rain": "🌦️", "Heavy Rain": "🌧️", "Thunderstorm": "⛈️", "Foggy": "🌫️", "Snow": "❄️", "Sleet": "🌨️", "Hail": "🧊", "Solar Flare": "🌞", "Acid Rain": "☢️", "Particle Storm": "💫", "Localized Reality Tear": "🌀" };
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#00d4ff;">${condEmoji[w.condition] || "🌡️"} Arena Weather Service™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Condition: <b>${w.condition}</b>
+        <br>Temperature: ${w.temperature.toFixed(1)}°C | Humidity: ${w.humidity.toFixed(0)}%
+        <br>Wind: ${w.windSpeed.toFixed(1)} km/h ${w.windDirectionText} (${w.windDirection.toFixed(0)}°)
+        <br>UV Index: ${w.uvIndex}/11 | Visibility: ${w.visibility.toFixed(1)} km
+        <br>Pressure: ${w.pressure.toFixed(1)} hPa
+        <br>─────────────────
+        <br>Ball Bounce Coeff: ${w.ballBounceModifier.toFixed(4)}x
+        <br>Pad Boost Modifier: ${w.padBoostModifier.toFixed(4)}x
+        <br>Aerial Drift: ${w.aerialDriftModifier.toFixed(4)}x
+        ${w.forecast.length ? "<br>─────────────────<br>" + w.forecast.map(f => `${f.day}: ${f.condition} ${f.high.toFixed(0)}/${f.low.toFixed(0)}°C ☔${f.rainChance}%`).join("<br>") : ""}
+      </div>
+    `;
+  }
+
+  function _renderSnakeTab(panel) {
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#4ade80;">🐍 ATLAS Snake™</div>
+      <div style="font-size:10px;margin:4px 0;text-align:center;">
+        Score: ${_snakeState.score} | High: ${_snakeState.highScore}
+        <br>Mode: ${_snakeState.mode}
+        <br><br>Press <b>Alt+S</b> in-game to start.
+        <br>Use arrow keys or WASD.
+        <br><br>
+        <span style="color:#94a3b8;">${_snakeState.gameOver ? `Game Over! ${_snakeState.deathCause || "Ran into something."} Score: ${_snakeState.score}` : _snakeState.active ? "Playing... don't tab out!" : "Ready to play."}</span>
+        <br><br>Power-ups available: ${_snakePowerUpTypes.length}
+        <br>Food eaten: ${_snakeState.totalFoodEaten}
+        <br>Longest: ${_snakeState.longestSnake}
+      </div>
+    `;
+  }
+
+  function _renderAITab(panel) {
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#f472b6;">🤖 ATLAS AI™ Assistant</div>
+      <div style="font-size:10px;margin:4px 0;text-align:center;">
+        Version: ${_chatbotState.personalityVersion}
+        <br>Confidence: ${(_chatbotState.confidenceLevel * 100).toFixed(2)}%
+        <br>Interactions: ${_chatbotState.totalInteractions}
+        <br>Training Points: ${_chatbotState.trainingDataPoints}
+        <br>─────────────────
+        <div style="margin:6px 0;"><input type="text" id="atlasChatInput" placeholder="Ask ATLAS AI anything..." style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #f472b644;border-radius:4px;color:#d7f3ff;padding:3px 5px;font-size:10px;"></div>
+        <div id="atlasChatResponse" style="color:#94a3b8;min-height:30px;font-style:italic;">Type a message and press Enter...</div>
+      </div>
+    `;
+    const input = panel.querySelector("#atlasChatInput");
+    const response = panel.querySelector("#atlasChatResponse");
+    if (input) {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && input.value.trim()) {
+          response.textContent = _chatbotRespond(input.value.trim());
+          response.style.fontStyle = "normal";
+          response.style.color = "#d7f3ff";
+          input.value = "";
+        }
+      });
+    }
+  }
+
+  function _renderTodoTab(panel) {
+    panel.innerHTML = `
+      <div style="text-align:center;font-weight:bold;color:#facc15;">📋 GTD Suite™</div>
+      <div style="font-size:10px;margin:4px 0;">
+        Level: <b>${_todoState.gtdLevel}</b>
+        <br>Completed Today: ${_todoState.completedToday}
+        <br>Completed This Week: ${_todoState.completedThisWeek}
+        <br>Pomodoros: ${_todoState.pomodoroSessions} (${_todoState.pomodoroMinutesTotal} min)
+        <br>Projects: ${_todoState.projects.length}
+        <br>Contexts: ${_todoState.contexts.join(", ")}
+        <br>─────────────────
+        <br><span style="color:#94a3b8;font-style:italic;">"Your inbox is empty. Your mind... less so."</span>
+        <br><br>
+        <input type="text" id="atlasTodoInput" placeholder="New action..." style="width:100%;box-sizing:border-box;background:#10181f;border:1px solid #facc1544;border-radius:4px;color:#d7f3ff;padding:3px 5px;font-size:10px;margin-bottom:4px;">
+        <div id="atlasTodoList" style="max-height:120px;overflow-y:auto;"></div>
+      </div>
+    `;
+    const input = panel.querySelector("#atlasTodoInput");
+    const list = panel.querySelector("#atlasTodoList");
+    function _refreshTodoList() {
+      if (!list) return;
+      list.innerHTML = _todoState.nextActions.length === 0
+        ? '<div style="color:#666;text-align:center;">No actions. Add one above.</div>'
+        : _todoState.nextActions.map((a, i) => `<div style="display:flex;align-items:center;gap:3px;margin:2px 0;"><span style="flex:1;${a.done ? 'text-decoration:line-through;color:#666;' : ''}">${a.title}</span><button class="rgBtn" style="font-size:8px;padding:1px 3px;" data-todo-done="${i}">${a.done ? '↩' : '✓'}</button><button class="rgBtn" style="font-size:8px;padding:1px 3px;color:#ff5555;" data-todo-del="${i}">✕</button></div>`).join("");
+      list.querySelectorAll("[data-todo-done]").forEach(btn => {
+        btn.onclick = () => { const idx = parseInt(btn.dataset.todoDone); _todoState.nextActions[idx].done = !_todoState.nextActions[idx].done; _refreshTodoList(); };
+      });
+      list.querySelectorAll("[data-todo-del]").forEach(btn => {
+        btn.onclick = () => { _todoState.nextActions.splice(parseInt(btn.dataset.todoDel), 1); _refreshTodoList(); };
+      });
+    }
+    if (input) {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && input.value.trim()) {
+          _todoState.nextActions.push({ id: _generateTodoId(), title: input.value.trim(), done: false, priority: "medium", createdAt: Date.now() });
+          input.value = "";
+          _refreshTodoList();
+        }
+      });
+    }
+    _refreshTodoList();
+  }
+
+  // ============================================================
+  // §V: ATLAS SCORING DASHBOARD WIDGET
+  // Displays the multi-dimensional scoring system in the HUD.
+  // ============================================================
+  function _renderScoringWidget(body) {
+    const container = document.createElement("div");
+    container.style.cssText = "margin-top:6px; padding:4px; background:rgba(0,0,0,.2); border-radius:6px; font-size:10px;";
+    const composite = _computeCompositeRating();
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+        <span style="color:#00bfff;font-weight:bold;">📊 ATLAS Score: <span style="color:#ffd700;">${composite}</span>/1000</span>
+        <span style="color:#666;font-size:9px;">v${_atlasFormat.version}</span>
+      </div>
+      ${_scoringDimensions.map(d => {
+        const pct = d.id === "maa" ? Math.abs(d.value) / 100 : d.value / 100;
+        const barLen = Math.round(pct * 12);
+        const barColor = d.id === "maa" ? (d.value >= 0 ? "#4ade80" : "#ff5555") : (pct > 0.7 ? "#4ade80" : pct > 0.3 ? "#facc15" : "#ff5555");
+        return `<div style="display:flex;align-items:center;gap:3px;margin:1px 0;"><span style="width:28px;color:#94a3b8;font-size:9px;">${d.id.toUpperCase()}</span><span style="color:${barColor};font-size:9px;letter-spacing:-1px;">${"█".repeat(barLen)}${"░".repeat(12 - barLen)}</span><span style="font-size:9px;">${d.value}${d.unit}</span></div>`;
+      }).join("")}
+    `;
+    body.appendChild(container);
+  }
+
+  // ============================================================
+  // §W: ATLAS ENTERPRISE BOOT SEQUENCE
+  // Initialize all enterprise modules and render widgets.
+  // ============================================================
+  function _initEnterpriseSuite() {
+    // Load pet state from storage
+    try {
+      const savedPet = JSON.parse(localStorage.getItem("atlasPetState") || "null");
+      if (savedPet) Object.assign(_petState, savedPet);
+    } catch (e) {}
+    // Load miner balance
+    try {
+      _minerState.balance = parseFloat(localStorage.getItem("atlasCoinBalance") || "0");
+    } catch (e) {}
+    dbg("[ENTERPRISE] ATLAS Enterprise Suite™ initialized. All " + _pluginFramework.pluginsLoaded + " plugins loaded. " + _pluginFramework.hooksFired + " hooks registered. " + _pluginFramework.middlewareExecuted + " middleware slots ready.");
+    dbg("[ENTERPRISE] Pet: " + _petState.name + " (Gen " + _petState.generation + ", " + _petState.mood + ")");
+    dbg("[ENTERPRISE] Miner wallet: " + _minerState.walletAddress.slice(0, 20) + "...");
+    dbg("[ENTERPRISE] Astrology engine: " + (_isMercuryRetrograde() ? "MERCURY IN RETROGRADE ⚠️" : "all systems nominal"));
+    dbg("[ENTERPRISE] Weather: " + _weatherState.condition + " at " + _weatherState.temperature.toFixed(1) + "°C");
+    dbg("[ENTERPRISE] i18n: " + Object.keys(_i18nStrings).length + " languages loaded");
+    dbg("[ENTERPRISE] Chatbot: " + _chatbotState.personalityVersion + " (confidence: " + (_chatbotState.confidenceLevel * 100).toFixed(2) + "%)");
+    dbg("[ENTERPRISE] GTD Level: " + _todoState.gtdLevel);
+    dbg("[ENTERPRISE] ATLAS Format schemas: " + _atlasFormat.registeredSchemas.size);
+    dbg("[ENTERPRISE] Scoring dimensions: " + _scoringDimensions.length + " | Composite: " + _computeCompositeRating() + "/1000");
+    dbg("[ENTERPRISE] Achievements available: " + _achievementDefs.length + " | Unlocked: " + _unlockedAchievements.size);
+    dbg("[ENTERPRISE] Webhook endpoints: " + _webhookState.endpoints.length + " (circuit breaker: " + _webhookState.circuitBreaker.state + ")");
+    dbg("[ENTERPRISE] Scroll themes: " + _scrollThemes.length + " | Current: " + _scrollThemes[_currentScrollTheme]);
+    dbg("[ENTERPRISE] Notification queue: " + _notifQueue.high.length + " high / " + _notifQueue.medium.length + " medium / " + _notifQueue.low.length + " low / " + _notifQueue.dead.length + " dead");
+    dbg("[ENTERPRISE] Quote database: " + _quoteDB.length + " quotes loaded");
+    _trackAnalyticsEvent("enterprise", "boot", "complete");
+  }
+
+  // ------------------------------------------------------------------
   // Boot
   // ------------------------------------------------------------------
+  _initEnterpriseSuite();
   installInputGuard();
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', buildUI);
