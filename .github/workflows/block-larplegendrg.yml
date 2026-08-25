@@ -1,4 +1,4 @@
-name: Block LarpLegendRG and commit comments
+name: Repo lockdown
 
 on:
   issues:
@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       retro_purge:
-        description: "Purge existing LarpLegendRG content + all commit comments"
+        description: "Purge blocked-user content, non-owner PRs, and commit comments"
         type: boolean
         required: false
         default: false
@@ -25,17 +25,16 @@ permissions:
   contents: write
 
 jobs:
-  block:
+  lockdown:
     runs-on: ubuntu-latest
     env:
-      TARGET_USER: LarpLegendRG
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
     steps:
-      - name: Handle new issue
+      - name: Delete issue from blocked user
         if: >-
           github.event_name == 'issues' &&
-          github.event.issue.user.login == 'LarpLegendRG'
+          contains(fromJSON('["LarpLegendRG","HebrewAICoder"]'), github.event.issue.user.login)
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
@@ -48,10 +47,10 @@ jobs:
             -f id="$ISSUE_NODE_ID"
           exit 0
 
-      - name: Handle new pull request
+      - name: Close PR unless author is allowed
         if: >-
           github.event_name == 'pull_request_target' &&
-          github.event.pull_request.user.login == 'LarpLegendRG'
+          !contains(fromJSON('["wiljdaws","HeBrews-Code"]'), github.event.pull_request.user.login)
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -61,10 +60,10 @@ jobs:
           gh api -X PUT "repos/$REPO/issues/$PR_NUMBER/lock" -f lock_reason=spam
           exit 0
 
-      - name: Handle new issue/PR comment from LarpLegendRG
+      - name: Delete comment from blocked user
         if: >-
           (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
-          github.event.comment.user.login == 'LarpLegendRG'
+          contains(fromJSON('["LarpLegendRG","HebrewAICoder"]'), github.event.comment.user.login)
         env:
           COMMENT_NODE_ID: ${{ github.event.comment.node_id }}
           COMMENT_ID: ${{ github.event.comment.id }}
@@ -93,40 +92,58 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.retro_purge
         run: |
           set +e
+          for user in LarpLegendRG HebrewAICoder; do
+            gh api -X GET "search/issues" \
+              -f q="repo:$REPO author:$user" \
+              --paginate --jq '.items[] | [.number, .node_id, .pull_request != null] | @tsv' \
+              | while IFS=$'\t' read -r num nodeid is_pr; do
+                if [ "$is_pr" = "true" ]; then
+                  gh pr close "$num" --repo "$REPO" --delete-branch \
+                    || gh pr close "$num" --repo "$REPO"
+                  gh api -X PUT "repos/$REPO/issues/$num/lock" -f lock_reason=spam
+                else
+                  gh issue close "$num" --repo "$REPO" --reason "not planned"
+                  gh api -X PUT "repos/$REPO/issues/$num/lock" -f lock_reason=spam
+                  gh api graphql \
+                    -f query='mutation($id: ID!) { deleteIssue(input: {issueId: $id}) { repository { id } } }' \
+                    -f id="$nodeid"
+                fi
+              done
+          done
+
           gh api -X GET "search/issues" \
-            -f q="repo:$REPO author:$TARGET_USER" \
-            --paginate --jq '.items[] | [.number, .node_id, .pull_request != null] | @tsv' \
-            | while IFS=$'\t' read -r num nodeid is_pr; do
-              if [ "$is_pr" = "true" ]; then
-                gh pr close "$num" --repo "$REPO" --delete-branch \
-                  || gh pr close "$num" --repo "$REPO"
-                gh api -X PUT "repos/$REPO/issues/$num/lock" -f lock_reason=spam
-              else
-                gh issue close "$num" --repo "$REPO" --reason "not planned"
-                gh api -X PUT "repos/$REPO/issues/$num/lock" -f lock_reason=spam
+            -f q="repo:$REPO is:pr is:open" \
+            --paginate --jq '.items[] | [.number, .user.login] | @tsv' \
+            | while IFS=$'\t' read -r num author; do
+              case "$author" in
+                wiljdaws|HeBrews-Code) ;;
+                *)
+                  gh pr close "$num" --repo "$REPO" --delete-branch \
+                    || gh pr close "$num" --repo "$REPO"
+                  gh api -X PUT "repos/$REPO/issues/$num/lock" -f lock_reason=spam
+                  ;;
+              esac
+            done
+
+          for user in LarpLegendRG HebrewAICoder; do
+            gh api -X GET "repos/$REPO/issues/comments" --paginate \
+              --jq ".[] | select(.user.login == \"$user\") | [.id, .node_id] | @tsv" \
+              | while IFS=$'\t' read -r cid nodeid; do
                 gh api graphql \
-                  -f query='mutation($id: ID!) { deleteIssue(input: {issueId: $id}) { repository { id } } }' \
+                  -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: SPAM}) { minimizedComment { isMinimized } } }' \
                   -f id="$nodeid"
-              fi
-            done
+                gh api -X DELETE "repos/$REPO/issues/comments/$cid"
+              done
 
-          gh api -X GET "repos/$REPO/issues/comments" --paginate \
-            --jq ".[] | select(.user.login == \"$TARGET_USER\") | [.id, .node_id] | @tsv" \
-            | while IFS=$'\t' read -r cid nodeid; do
-              gh api graphql \
-                -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: SPAM}) { minimizedComment { isMinimized } } }' \
-                -f id="$nodeid"
-              gh api -X DELETE "repos/$REPO/issues/comments/$cid"
-            done
-
-          gh api -X GET "repos/$REPO/pulls/comments" --paginate \
-            --jq ".[] | select(.user.login == \"$TARGET_USER\") | [.id, .node_id] | @tsv" \
-            | while IFS=$'\t' read -r cid nodeid; do
-              gh api graphql \
-                -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: SPAM}) { minimizedComment { isMinimized } } }' \
-                -f id="$nodeid"
-              gh api -X DELETE "repos/$REPO/pulls/comments/$cid"
-            done
+            gh api -X GET "repos/$REPO/pulls/comments" --paginate \
+              --jq ".[] | select(.user.login == \"$user\") | [.id, .node_id] | @tsv" \
+              | while IFS=$'\t' read -r cid nodeid; do
+                gh api graphql \
+                  -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: SPAM}) { minimizedComment { isMinimized } } }' \
+                  -f id="$nodeid"
+                gh api -X DELETE "repos/$REPO/pulls/comments/$cid"
+              done
+          done
 
           gh api -X GET "repos/$REPO/comments" --paginate --jq '.[].id' \
             | while read -r cid; do
