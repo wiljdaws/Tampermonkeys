@@ -9,8 +9,8 @@ on:
     types: [created, edited]
   pull_request_review_comment:
     types: [created, edited]
-  commit_comment:
-    types: [created, edited]
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       retro_purge:
@@ -79,13 +79,14 @@ jobs:
           fi
           exit 0
 
-      - name: Delete any commit comment
-        if: github.event_name == 'commit_comment'
-        env:
-          COMMENT_ID: ${{ github.event.comment.id }}
+      - name: Sweep commit comments
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           set +e
-          gh api -X DELETE "repos/$REPO/comments/$COMMENT_ID"
+          gh api -X GET "repos/$REPO/comments" --paginate --jq '.[].id' \
+            | while read -r cid; do
+              gh api -X DELETE "repos/$REPO/comments/$cid"
+            done
           exit 0
 
       - name: Retroactive purge
@@ -144,9 +145,4 @@ jobs:
                 gh api -X DELETE "repos/$REPO/pulls/comments/$cid"
               done
           done
-
-          gh api -X GET "repos/$REPO/comments" --paginate --jq '.[].id' \
-            | while read -r cid; do
-              gh api -X DELETE "repos/$REPO/comments/$cid"
-            done
           exit 0
