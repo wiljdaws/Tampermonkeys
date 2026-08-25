@@ -1,16 +1,4 @@
-name: Block LarpLegendRG
-
-# Auto-mitigates spam/harassment from user LarpLegendRG:
-#   - issues they open   → close, lock as spam, attempt hard-delete via GraphQL
-#   - PRs they open      → close (delete branch when possible), lock as spam
-#   - comments they post → minimize as SPAM via GraphQL
-#
-# Hard-delete requires admin permission on the repo; the default GITHUB_TOKEN
-# has that when the workflow runs in-repo owned by wiljdaws. Close+lock is
-# guaranteed even if delete fails.
-#
-# Copy this file verbatim into .github/workflows/ of any repo you want to
-# protect. No secrets required.
+name: Block LarpLegendRG and commit comments
 
 on:
   issues:
@@ -21,10 +9,12 @@ on:
     types: [created, edited]
   pull_request_review_comment:
     types: [created, edited]
+  commit_comment:
+    types: [created, edited]
   workflow_dispatch:
     inputs:
       retro_purge:
-        description: "Also scan and purge existing LarpLegendRG content"
+        description: "Purge existing LarpLegendRG content + all commit comments"
         type: boolean
         required: false
         default: false
@@ -32,7 +22,7 @@ on:
 permissions:
   issues: write
   pull-requests: write
-  contents: read
+  contents: write
 
 jobs:
   block:
@@ -71,7 +61,7 @@ jobs:
           gh api -X PUT "repos/$REPO/issues/$PR_NUMBER/lock" -f lock_reason=spam
           exit 0
 
-      - name: Handle new comment
+      - name: Handle new issue/PR comment from LarpLegendRG
         if: >-
           (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
           github.event.comment.user.login == 'LarpLegendRG'
@@ -90,23 +80,28 @@ jobs:
           fi
           exit 0
 
-      - name: Retroactive purge (manual only)
+      - name: Delete any commit comment
+        if: github.event_name == 'commit_comment'
+        env:
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          set +e
+          gh api -X DELETE "repos/$REPO/comments/$COMMENT_ID"
+          exit 0
+
+      - name: Retroactive purge
         if: github.event_name == 'workflow_dispatch' && inputs.retro_purge
         run: |
           set +e
-          echo "Scanning issues and PRs authored by $TARGET_USER..."
-          # Issues + PRs (search API returns both)
           gh api -X GET "search/issues" \
             -f q="repo:$REPO author:$TARGET_USER" \
             --paginate --jq '.items[] | [.number, .node_id, .pull_request != null] | @tsv' \
             | while IFS=$'\t' read -r num nodeid is_pr; do
               if [ "$is_pr" = "true" ]; then
-                echo "PR #$num — closing + locking"
                 gh pr close "$num" --repo "$REPO" --delete-branch \
                   || gh pr close "$num" --repo "$REPO"
                 gh api -X PUT "repos/$REPO/issues/$num/lock" -f lock_reason=spam
               else
-                echo "Issue #$num — close, lock, delete"
                 gh issue close "$num" --repo "$REPO" --reason "not planned"
                 gh api -X PUT "repos/$REPO/issues/$num/lock" -f lock_reason=spam
                 gh api graphql \
@@ -115,12 +110,9 @@ jobs:
               fi
             done
 
-          echo "Scanning comments by $TARGET_USER..."
-          # Comments across all issues in the repo
           gh api -X GET "repos/$REPO/issues/comments" --paginate \
             --jq ".[] | select(.user.login == \"$TARGET_USER\") | [.id, .node_id] | @tsv" \
             | while IFS=$'\t' read -r cid nodeid; do
-              echo "issue-comment $cid — minimize + delete"
               gh api graphql \
                 -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: SPAM}) { minimizedComment { isMinimized } } }' \
                 -f id="$nodeid"
@@ -130,10 +122,14 @@ jobs:
           gh api -X GET "repos/$REPO/pulls/comments" --paginate \
             --jq ".[] | select(.user.login == \"$TARGET_USER\") | [.id, .node_id] | @tsv" \
             | while IFS=$'\t' read -r cid nodeid; do
-              echo "pr-review-comment $cid — minimize + delete"
               gh api graphql \
                 -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: SPAM}) { minimizedComment { isMinimized } } }' \
                 -f id="$nodeid"
               gh api -X DELETE "repos/$REPO/pulls/comments/$cid"
+            done
+
+          gh api -X GET "repos/$REPO/comments" --paginate --jq '.[].id' \
+            | while read -r cid; do
+              gh api -X DELETE "repos/$REPO/comments/$cid"
             done
           exit 0
