@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      24.9
+// @version      25.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/wiljdaws/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "24.9";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -5147,6 +5147,28 @@
     // stale mode (like 3v3 for a mostly-1v1 player) still gets refreshed.
     const RANK_QUERY_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6h
 
+    // Site publishes the same JSON blob it renders from every ~15 min via
+    // the publish-leaderboard-json workflow. Reading it directly means
+    // HUD rank matches site rank exactly (identity dedup, soft-delete
+    // filter, and fresh MMR all baked in), and costs zero Firebase reads.
+    // The Firestore aggregate can lag 30+ min behind this, which is why a
+    // player who just finished a match sees the site update first.
+    const SITE_JSON_BASE = "https://raw.githubusercontent.com/wiljdaws/rg_player_leaderboard/data/leaderboard";
+    const SITE_JSON_TTL_MS = 5 * 60 * 1000; // 5 min in-memory
+    const siteJsonCache = new Map(); // playlist -> { rows, fetchedAt }
+    async function fetchSiteLeaderboardRows(playlist) {
+        const hit = siteJsonCache.get(playlist);
+        if (hit && Date.now() - hit.fetchedAt < SITE_JSON_TTL_MS) return hit.rows;
+        try {
+            const res = await fetch(`${SITE_JSON_BASE}/${playlist}.json`, { cache: "default" });
+            if (!res.ok) return null;
+            const data = await res.json();
+            const rows = Array.isArray(data?.rows) ? data.rows : [];
+            siteJsonCache.set(playlist, { rows, fetchedAt: Date.now() });
+            return rows;
+        } catch (e) { return null; }
+    }
+
     // Cache the last-known rank+MMR per account in localStorage so a HUD reload
     // doesn't force a fresh Firestore fetch. Your rank only meaningfully moves
     // when you play — match-end force=true takes care of that. 24h TTL is just
@@ -5216,23 +5238,47 @@
                 const mmr = data.ModesGlicko?.[mode]?.displayRating;
                 if (typeof mmr !== "number") continue;
 
-                // Skip only when MMR is unchanged AND the cache is fresh
-                // enough. Freshness matters because rank can shift when
-                // other players move even if yours doesn't. A player who
-                // rarely touches this mode (Daemo in 3v3 e.g.) has a very
-                // old cached rank and needs the re-query.
-                const queriedAt = lastRankedAt.get(playlist) || 0;
-                const isFresh = Date.now() - queriedAt < RANK_QUERY_MAX_AGE_MS;
-                if (isFresh && lastRankedMMR.get(playlist) === mmr) continue;
-
-                // Try the leaderboard_cache aggregate first — it's already
-                // identity-deduped (Virtualzzs's two docs collapse to one)
-                // and carries a pre-computed rank per row, matching what
-                // the site shows. One read per playlist. Only trust it when
-                // it's under an hour old, otherwise fall back to the raw
-                // count so the badge doesn't lag a stale build's mmr.
-                const AGG_FRESH_MS = 60 * 60 * 1000; // 1h
                 let rank = null;
+                let siteGapMmr = null;
+
+                // Prefer the site JSON blob — it's the same file the site
+                // renders from, updated every ~15 min, identity-deduped, and
+                // free (public GitHub). Rank read here matches site exactly.
+                try {
+                    const siteRows = await fetchSiteLeaderboardRows(playlist);
+                    if (siteRows) {
+                        const uid = firebaseAuthUid || "";
+                        const rgId = data?.Id || "";
+                        const me = siteRows.find((r) =>
+                            (uid && (r.uid === uid || r.sourceUserId === uid))
+                            || (rgId && r.rgPlayerId === rgId)
+                        );
+                        if (me && typeof me.rank === "number") {
+                            rank = me.rank;
+                            if (rank > 1) {
+                                const above = siteRows.find((r) => r.rank === rank - 1);
+                                if (above && typeof above.mmr === "number") {
+                                    siteGapMmr = Math.max(0, above.mmr - mmr + 1);
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    dbg(`refreshRanks: site JSON lookup failed for ${playlist} (non-fatal)`);
+                }
+
+                // Site JSON gave us a rank — cache and skip Firebase entirely.
+                if (rank != null) {
+                    cachedRanks.set(playlist, rank);
+                    lastRankedMMR.set(playlist, mmr);
+                    lastRankedAt.set(playlist, Date.now());
+                    if (siteGapMmr != null) cachedMmrToNext.set(playlist, siteGapMmr);
+                    continue;
+                }
+
+                // Fallback: Firestore aggregate. Still catches drift when
+                // the site JSON fetch failed (CDN hiccup, offline, etc.).
+                const AGG_FRESH_MS = 60 * 60 * 1000; // 1h
                 try {
                     const aggSnap = await fb.getDoc(
                         fb.doc(fb.db, LEADERBOARD_CACHE_COLLECTION, playlist)
@@ -5256,11 +5302,23 @@
                     dbg(`refreshRanks: aggregate lookup failed for ${playlist} (non-fatal)`);
                 }
 
-                // Fallback: below top-100 users don't appear in the aggregate,
-                // so approximate their rank with the raw-count-minus-deleted
-                // path. It won't be identity-deduped, but rank drift of ±1-3
-                // at low placement rarely matters visually.
-                if (rank == null) {
+                // If the aggregate gave us a rank, use it and move on.
+                if (rank != null) {
+                    cachedRanks.set(playlist, rank);
+                    lastRankedMMR.set(playlist, mmr);
+                    lastRankedAt.set(playlist, Date.now());
+                    continue;
+                }
+
+                // Aggregate stale, missing, or user below top-100: use the
+                // MMR-freshness skip to save reads on the expensive count
+                // path. Rank at low placement drifts by ±1-3 without dedup
+                // but that rarely matters visually.
+                const queriedAt = lastRankedAt.get(playlist) || 0;
+                const isFresh = Date.now() - queriedAt < RANK_QUERY_MAX_AGE_MS;
+                if (isFresh && lastRankedMMR.get(playlist) === mmr) continue;
+
+                {
                     const q = fb.query(
                         fb.collection(fb.db, REAL_LEADERBOARD_COLLECTION),
                         fb.where("playlist", "==", playlist),

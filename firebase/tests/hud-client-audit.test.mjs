@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "24.9");
+  assert.equal(version, "25.0");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -989,6 +989,7 @@ test("account switches clear every rank cache", () => {
     cachedMmrToNext: new Map([["1v1", 10]]),
     prevRanks: new Map([["1v1", 2]]),
     lastRankedMMR: new Map([["1v1", 2200]]),
+    lastRankedAt: new Map([["1v1", Date.now()]]),
     ranksFetchedThisSession: true,
   };
   const resetAccountRankState = extractHudFunction(
@@ -1000,6 +1001,7 @@ test("account switches clear every rank cache", () => {
   assert.equal(context.cachedMmrToNext.size, 0);
   assert.equal(context.prevRanks.size, 0);
   assert.equal(context.lastRankedMMR.size, 0);
+  assert.equal(context.lastRankedAt.size, 0);
   assert.equal(context.ranksFetchedThisSession, false);
 
   const sessionStart = hudSource.indexOf("function captureSessionStart(data)");
