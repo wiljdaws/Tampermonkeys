@@ -1,19 +1,19 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      25.1
+// @version      25.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
-// @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
+// @icon         https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/atlas/atlas.png
 // @match        https://rocketgoal.io/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @inject-into  page
 // @run-at       document-start
-// @updateURL    https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js
-// @downloadURL  https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js
-// @supportURL   https://github.com/Pal1533/Tampermonkeys/issues
+// @updateURL    https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/rg_hud.user.js
+// @downloadURL  https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/rg_hud.user.js
+// @supportURL   https://github.com/pal153/Tampermonkeys/issues
 // ==/UserScript==
 
 (function () {
@@ -190,7 +190,7 @@
     let hud;
 
     // img not emoji, stays crisp cross-OS
-    const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png';
+    const ATLAS_ICON_URL = 'https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/atlas/atlas.png';
     const atlasIconHtml = () => `<img src="${ATLAS_ICON_URL}" alt="" style="height:16px;width:16px;vertical-align:middle;margin-right:4px;object-fit:contain;">`;
 
 
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -731,8 +731,8 @@
         document.getElementById("rgLeaderboard").onclick = () => {
             const onClanTab = isVisible(document.getElementById("rgClanView"));
             const url = onClanTab
-                ? "https://pal1533.github.io/RG_Clan_Leaderboard/"
-                : "https://pal1533.github.io/rg_player_leaderboard/";
+                ? "https://pal153.github.io/RG_Clan_Leaderboard/"
+                : "https://pal153.github.io/rg_player_leaderboard/";
             window.open(url, "_blank", "noopener");
         };
         document.getElementById("rgRename").onclick = () => {
@@ -2546,7 +2546,7 @@
     // admin/gate.minVersion and admin/blacklist.minVersion (writes).
     let updateNudgeChecked = false;
     const DEFAULT_UPDATE_URL =
-        "https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js";
+        "https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/rg_hud.user.js";
 
     async function maybeShowUpdateNudge() {
         if (updateNudgeChecked) return;
@@ -5153,7 +5153,7 @@
     // filter, and fresh MMR all baked in), and costs zero Firebase reads.
     // The Firestore aggregate can lag 30+ min behind this, which is why a
     // player who just finished a match sees the site update first.
-    const SITE_JSON_BASE = "https://raw.githubusercontent.com/Pal1533/rg_player_leaderboard/data/leaderboard";
+    const SITE_JSON_BASE = "https://raw.githubusercontent.com/pal153/rg_player_leaderboard/data/leaderboard";
     const SITE_JSON_TTL_MS = 5 * 60 * 1000; // 5 min in-memory
     const siteJsonCache = new Map(); // playlist -> { rows, fetchedAt }
     async function fetchSiteLeaderboardRows(playlist) {

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { decodeFirestoreDocument } from "./snapshot-production.mjs";
 import { incrementPipelineReads } from "./pipeline-read-counter.mjs";
+import { eventsFromCacheResult, persistSecurityEvents } from "./security-log.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -1148,6 +1149,7 @@ export async function buildLeaderboardCaches({
       uploads: [],
       stateSummary: [],
       heldRows: [],
+      autoBanUids: [],
       paused: true,
     };
   }
@@ -1158,6 +1160,7 @@ export async function buildLeaderboardCaches({
   const uploads = [];
   const stateSummary = [];
   const heldRows = [];
+  let autoBanUids = [];
 
   for (const playlist of playlists) {
     // If prior state exists, pull only what changed since then. Otherwise
@@ -1369,6 +1372,7 @@ export async function buildLeaderboardCaches({
       reads: readsThisRun,
     });
     const autoBan = uidsToAutoBlacklist(heldRows, access.userIds, access.allowedUserIds);
+    autoBanUids = autoBan;
     if (autoBan.length) {
       try {
         await appendBlacklistUserIds(fetchImpl, token, project, autoBan);
@@ -1377,6 +1381,8 @@ export async function buildLeaderboardCaches({
         console.warn(`[autoban] skipped: ${error?.message || error}`);
       }
     }
+  } else {
+    autoBanUids = uidsToAutoBlacklist(heldRows, access.userIds, access.allowedUserIds);
   }
 
   return {
@@ -1393,6 +1399,7 @@ export async function buildLeaderboardCaches({
     uploads,
     stateSummary,
     heldRows,
+    autoBanUids,
   };
 }
 
@@ -1486,6 +1493,34 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     if (result.heldRows?.length) {
       console.warn(`HELD ${heldPath} rows=${result.heldRows.length}`);
     }
+  }
+
+  try {
+    const { appendFile, mkdir, readFile, writeFile } = await import("node:fs/promises");
+    const path = await import("node:path");
+    const events = eventsFromCacheResult(result, { autoBan: result.autoBanUids || [] });
+    const fallbackOut = process.env.GITHUB_WORKSPACE
+      ? path.join(process.env.GITHUB_WORKSPACE, "out")
+      : "";
+    const outDir = parsed.outputDir || fallbackOut;
+    const outputPath = outDir ? path.join(outDir, "security-events.jsonl") : "";
+    const statePath = parsed.stateDir
+      ? path.join(parsed.stateDir, "security-events.json")
+      : "";
+    if (outputPath) await mkdir(outDir, { recursive: true });
+    await persistSecurityEvents(events, {
+      writeFile,
+      readFile,
+      appendFile,
+      outputPath,
+      statePath,
+      stepSummaryPath: process.env.GITHUB_STEP_SUMMARY || "",
+    });
+    if (outputPath && events.length) {
+      console.warn(`SECURITY ${outputPath} events=${events.length}`);
+    }
+  } catch (error) {
+    console.warn(`[security] persist skipped: ${error?.message || error}`);
   }
 
   // Publish landed — safe to flush the deferred state writes now.

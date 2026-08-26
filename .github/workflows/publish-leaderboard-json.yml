@@ -9,7 +9,7 @@ name: Publish leaderboard JSON
 #   - GCP_WIF_PROVIDER + GCP_SA_EMAIL — same secrets as
 #     firestore-aggregates.yml. Read-only Firestore access.
 #   - PUBLIC_SITE_PAT — fine-grained personal access token with
-#     contents:write on Pal1533/rg_player_leaderboard.
+#     contents:write on pal153/rg_player_leaderboard.
 #     Create at https://github.com/settings/personal-access-tokens/new
 #     and add as a repository secret named PUBLIC_SITE_PAT.
 
@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 10
     env:
       PROJECT: ${{ inputs.project || 'rgleaderboard' }}
-      SITE_REPO: Pal1533/rg_player_leaderboard
+      SITE_REPO: pal153/rg_player_leaderboard
       DATA_BRANCH: data
 
     steps:

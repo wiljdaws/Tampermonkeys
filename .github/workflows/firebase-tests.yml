@@ -52,7 +52,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@v7
         with:
-          repository: Pal1533/RG_Clan_Leaderboard
+          repository: pal153/RG_Clan_Leaderboard
           ref: ${{ inputs.clan_site_ref || 'main' }}
           path: .integration/RG_Clan_Leaderboard
 
