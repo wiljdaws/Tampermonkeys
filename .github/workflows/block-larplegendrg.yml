@@ -50,7 +50,7 @@ jobs:
       - name: Close PR unless author is allowed
         if: >-
           github.event_name == 'pull_request_target' &&
-          !contains(fromJSON('["wiljdaws","HeBrews-Code"]'), github.event.pull_request.user.login)
+          !contains(fromJSON('["wiljdaws","HeBrews-Code","Pal1533"]'), github.event.pull_request.user.login)
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -117,7 +117,7 @@ jobs:
             --paginate --jq '.items[] | [.number, .user.login] | @tsv' \
             | while IFS=$'\t' read -r num author; do
               case "$author" in
-                wiljdaws|HeBrews-Code) ;;
+                wiljdaws|HeBrews-Code|Pal1533) ;;
                 *)
                   gh pr close "$num" --repo "$REPO" --delete-branch \
                     || gh pr close "$num" --repo "$REPO"
