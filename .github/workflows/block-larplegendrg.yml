@@ -34,7 +34,7 @@ jobs:
       - name: Delete issue from blocked user
         if: >-
           github.event_name == 'issues' &&
-          contains(fromJSON('["LarpLegendRG","HebrewAICoder"]'), github.event.issue.user.login)
+          contains(fromJSON('["LarpLegendRG","HebrewAICoder","ManhatenHebrew"]'), github.event.issue.user.login)
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
@@ -63,7 +63,7 @@ jobs:
       - name: Delete comment from blocked user
         if: >-
           (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
-          contains(fromJSON('["LarpLegendRG","HebrewAICoder"]'), github.event.comment.user.login)
+          contains(fromJSON('["LarpLegendRG","HebrewAICoder","ManhatenHebrew"]'), github.event.comment.user.login)
         env:
           COMMENT_NODE_ID: ${{ github.event.comment.node_id }}
           COMMENT_ID: ${{ github.event.comment.id }}
@@ -93,7 +93,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.retro_purge
         run: |
           set +e
-          for user in LarpLegendRG HebrewAICoder; do
+          for user in LarpLegendRG HebrewAICoder ManhatenHebrew; do
             gh api -X GET "search/issues" \
               -f q="repo:$REPO author:$user" \
               --paginate --jq '.items[] | [.number, .node_id, .pull_request != null] | @tsv' \
@@ -126,7 +126,7 @@ jobs:
               esac
             done
 
-          for user in LarpLegendRG HebrewAICoder; do
+          for user in LarpLegendRG HebrewAICoder ManhatenHebrew; do
             gh api -X GET "repos/$REPO/issues/comments" --paginate \
               --jq ".[] | select(.user.login == \"$user\") | [.id, .node_id] | @tsv" \
               | while IFS=$'\t' read -r cid nodeid; do
