@@ -2,9 +2,9 @@
 
 A free Tampermonkey script that turns [Rocket Goal](https://rocketgoal.io) into a live service game - stats HUD, community leaderboard, clans with events, and a full custom name editor. The devs stopped updating, so we did it ourselves.
 
-[Install ATLAS](https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/rg_hud.user.js)
-· [Player board](https://pal153.github.io/rg_player_leaderboard/)
-· [Clan Clash](https://pal153.github.io/RG_Clan_Leaderboard/)
+[Install ATLAS](https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js)
+· [Player board](https://pal1533.github.io/rg_player_leaderboard/)
+· [Clan Clash](https://pal1533.github.io/RG_Clan_Leaderboard/)
 · [Discord](https://discord.gg/MDz7hsrh9m)
 · [Contributing](CONTRIBUTING.md)
 
@@ -50,7 +50,7 @@ Don't worry, this doesn't make your browser less safe. It just allows extensions
 
 ## Step 4: Install ATLAS
 
-1. Click this link: **[Install ATLAS](https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/rg_hud.user.js)**
+1. Click this link: **[Install ATLAS](https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js)**
 2. Tampermonkey will open a new tab showing the script's code and an **Install** button.
 3. Click **Install**.
 
@@ -94,7 +94,7 @@ If you ever want to check for an update right now instead of waiting:
 2. Click the **Utilities** tab at the top
 3. Click **Check for userscript updates**
 
-If that doesn't grab the newest version (Tampermonkey can be stubborn), just click the [install link](https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/rg_hud.user.js) again and hit **Reinstall**. Always works.
+If that doesn't grab the newest version (Tampermonkey can be stubborn), just click the [install link](https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js) again and hit **Reinstall**. Always works.
 
 ---
 
@@ -131,7 +131,7 @@ If the Firebase id still says `signing in…`, wait a few seconds, or close and 
 
 ## Found a bug or have a suggestion?
 
-[Open an issue](https://github.com/pal153/Tampermonkeys/issues/new/choose) or ping Pal / JesusDied4U in the [Championship Discord](https://discord.gg/MDz7hsrh9m).
+[Open an issue](https://github.com/Pal1533/Tampermonkeys/issues/new/choose) or ping Pal / JesusDied4U in the [Championship Discord](https://discord.gg/MDz7hsrh9m).
 
 ---
 ---
@@ -155,7 +155,7 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 
 ## 🏆 Community Leaderboard
 
-- Your stats auto-sync to the [community leaderboard](https://pal153.github.io/rg_player_leaderboard/) after every match - nothing to do manually
+- Your stats auto-sync to the [community leaderboard](https://pal1533.github.io/rg_player_leaderboard/) after every match - nothing to do manually
 - Pick your own display name, rename whenever
 - The anti-cheat is real: server-side rules, device blacklisting, forged-stat detection, and old exploited versions get force-updated
 
@@ -219,7 +219,7 @@ Everything below ships in the one script. No paid tiers, no premium unlock, none
 
 ---
 
-*Update from the [install link](https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/rg_hud.user.js) and go make a name so shiny the other team scores on themselves.* 🏔️
+*Update from the [install link](https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js) and go make a name so shiny the other team scores on themselves.* 🏔️
 
 ---
 
@@ -231,5 +231,5 @@ ATLAS is a fan project. It is not affiliated with Rocket Goal.
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security policy](SECURITY.md)
 - [MIT License](LICENSE)
-- [Privacy](https://pal153.github.io/rg_player_leaderboard/privacy.html)
-- [Terms](https://pal153.github.io/rg_player_leaderboard/terms.html)
+- [Privacy](https://pal1533.github.io/rg_player_leaderboard/privacy.html)
+- [Terms](https://pal1533.github.io/rg_player_leaderboard/terms.html)

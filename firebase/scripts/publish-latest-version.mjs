@@ -16,7 +16,7 @@ import { dirname, resolve } from "node:path";
 import { getGcloudAccessToken } from "./build-leaderboard-cache.mjs";
 
 const HUD_UPDATE_URL =
-  "https://raw.githubusercontent.com/pal153/Tampermonkeys/refs/heads/main/rg_hud.user.js";
+  "https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/rg_hud.user.js";
 
 function parseArgs(argv) {
   const args = {
