@@ -1,6 +1,0 @@
-{
-  "projects": {
-    "default": "demo-rgleaderboard",
-    "production": "rgleaderboard"
-  }
-}
