@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      25.4
+// @version      25.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -10739,8 +10739,31 @@
     return { line, visibleWidth };
   }
 
-  function layersMarkup(s) {
+  // Render the actual prefix TMP into a hidden probe inside the Name Forge
+  // panel so it inherits the same font/size, then measure and convert to em.
+  function estimatePrefixEm(pfx) {
+    const raw = String(pfx || '');
+    if (!raw.trim()) return 0;
+    try {
+      const host = document.querySelector('.rgnf-panel') || document.body;
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'visibility:hidden;position:absolute;left:-9999px;top:-9999px;display:inline-block;';
+      const probe = renderRawTMP(raw);
+      wrap.appendChild(probe);
+      host.appendChild(wrap);
+      const w = wrap.getBoundingClientRect().width;
+      wrap.remove();
+      if (!w) throw new Error('zero');
+      return Math.round((w / 18) * 100) / 100;
+    } catch {
+      const plain = raw.replace(/<[^>]*>/g, '');
+      return Math.round(plain.length * 0.55 * 100) / 100;
+    }
+  }
+
+  function layersMarkup(s, opts = {}) {
     if (!Array.isArray(s.layers) || !s.layers.length) return '';
+    const baseOffset = opts.noPrefixOffset ? 0 : estimatePrefixEm(_prefix());
     let out = '';
     for (const L of s.layers) {
       // Blank layer text mirrors the current base name — keeps shadow/outline
@@ -10749,11 +10772,14 @@
       if (!text) continue;
       const x = Number(L.x) || 0;
       const y = Number(L.y) || 0;
+      const size = Math.max(1, Math.min(1000, Number(L.sizePct) || 100));
       const c = String(L.color || '#ffffff').toUpperCase();
       let inner = text;
       if (y) inner = `<voffset=${y}em>${inner}</voffset>`;
       if (L.bold) inner = `<b>${inner}</b>`;
-      out += `<pos=0>${x ? `<space=${x}em>` : ''}<color=${c}>${inner}</color>`;
+      if (size !== 100) inner = `<size=${size}%>${inner}</size>`;
+      const totalX = baseOffset + x;
+      out += `<pos=${totalX}em><color=${c}>${inner}</color>`;
     }
     return out;
   }
@@ -11892,7 +11918,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       if (st.bold) span.style.fontWeight = '700';
       if (st.italic) span.style.fontStyle = 'italic';
       if (st.mark) span.style.background = st.mark;
-      let size = 18 * (st.sizePct / 100);
+      let size = 18 * (st.sizePct / 100) * (previewZoom || 1);
       if (st.sub || st.sup) {
         size *= 0.65;
         span.style.verticalAlign = st.sup ? 'super' : 'sub';
@@ -11943,18 +11969,33 @@ _rgnfFab = fab; _rgnfPanel = panel;
     return wrap;
   }
 
-  function renderRawPreview(raw, s) {
-    const pfx = _prefix();
+  function renderRawPreview(raw, s, opts = {}) {
+    const pfx = opts.skipPrefix ? '' : _prefix();
     const body = typeof s?.rawCode === "string" ? s.rawCode : String(raw ?? "");
     const shownPfx = artPreviewText(pfx);
     const shownBody = artPreviewText(body);
-    const shownLayers = layersMarkup(s);
+    const hasLayers = !opts.skipLayers && Array.isArray(s?.layers) && s.layers.length;
+    const shownLayers = hasLayers ? layersMarkup(s, { noPrefixOffset: hasLayers && !!pfx }) : '';
     const shownTail = s?.scoredMode === "hide" ? "" : scoredSuffix(s) + " Scored!";
-    const inner = renderRawTMP(shownPfx + shownBody + shownLayers + shownTail, {
-      paintName: s?.name,
-      paintFrom: shownPfx.length,
-      paintTo: shownPfx.length + shownBody.length,
-    });
+    let inner;
+    if (hasLayers && pfx) {
+      // Prefix as its own sibling so layer <pos=0> resets to the body's start,
+      // not the line start (which would land on top of the tag).
+      inner = document.createElement('div');
+      inner.style.cssText = 'display:inline-flex;align-items:baseline;white-space:nowrap;';
+      inner.appendChild(renderRawTMP(shownPfx));
+      inner.appendChild(renderRawTMP(shownBody + shownLayers + shownTail, {
+        paintName: s?.name,
+        paintFrom: 0,
+        paintTo: shownBody.length,
+      }));
+    } else {
+      inner = renderRawTMP(shownPfx + shownBody + shownLayers + shownTail, {
+        paintName: s?.name,
+        paintFrom: shownPfx.length,
+        paintTo: shownPfx.length + shownBody.length,
+      });
+    }
 
 
     // Width 100% stack keeps the flex preview from collapsing to one
@@ -12038,7 +12079,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       const bodyOnly = buildCode({ ...state, layers: [] });
       const suffix = scoredSuffix(state);
       const bodyClean = suffix && bodyOnly.endsWith(suffix) ? bodyOnly.slice(0, -suffix.length) : bodyOnly;
-      pv.appendChild(renderRawPreview(_prefix() + bodyClean, state));
+      pv.appendChild(renderRawPreview(bodyClean, state));
     } else {
       pv.appendChild(renderPreview(state));
     }
@@ -12134,7 +12175,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         const bodyOnly = buildCode({ ...state, layers: [] });
         const suffix = scoredSuffix(state);
         const bodyClean = suffix && bodyOnly.endsWith(suffix) ? bodyOnly.slice(0, -suffix.length) : bodyOnly;
-        pv.replaceChildren(renderRawPreview(_prefix() + bodyClean, state));
+        pv.replaceChildren(renderRawPreview(bodyClean, state));
       } else {
         pv.replaceChildren(renderPreview(state));
       }
@@ -12385,9 +12426,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
               color: prev.color || '#ffffff',
               x: (Number(prev.x) || 0) + 0.05,
               y: Number(prev.y) || 0,
+              sizePct: Number(prev.sizePct) || 100,
               bold: !!prev.bold,
             }
-          : { text: '', color: '#ffffff', x: 0.05, y: 0, bold: false };
+          : { text: '', color: '#ffffff', x: 0.05, y: 0, sizePct: 100, bold: false };
         state.layers.push(seed);
         render(panel);
       },
@@ -12452,7 +12494,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       xRow.appendChild(el('span', { text: 'X', style: 'width:14px;opacity:.7;font-size:11px;' }));
       const xVal = el('span', { text: fmt(L.x) + 'em', style: 'width:60px;text-align:right;opacity:.8;font-size:11px;' });
       xRow.appendChild(el('input', {
-        type: 'range', min: '-0.5', max: '0.5', step: '0.01', value: L.x || 0,
+        type: 'range', min: '-3', max: '3', step: '0.01', value: L.x || 0,
         style: 'flex:1;',
         oninput: (e) => {
           L.x = Number(e.target.value) || 0;
@@ -12478,6 +12520,23 @@ _rgnfFab = fab; _rgnfPanel = panel;
       }));
       yRow.appendChild(yVal);
       card.appendChild(yRow);
+
+      // size slider (% of base font)
+      if (typeof L.sizePct !== 'number') L.sizePct = 100;
+      const sRow = el('div', { style: 'display:flex;align-items:center;gap:8px;' });
+      sRow.appendChild(el('span', { text: 'S', style: 'width:14px;opacity:.7;font-size:11px;' }));
+      const sVal = el('span', { text: Math.round(L.sizePct) + '%', style: 'width:60px;text-align:right;opacity:.8;font-size:11px;' });
+      sRow.appendChild(el('input', {
+        type: 'range', min: '10', max: '500', step: '5', value: L.sizePct || 100,
+        style: 'flex:1;',
+        oninput: (e) => {
+          L.sizePct = Number(e.target.value) || 100;
+          sVal.textContent = Math.round(L.sizePct) + '%';
+          refreshPreview();
+        },
+      }));
+      sRow.appendChild(sVal);
+      card.appendChild(sRow);
 
       secLayers.appendChild(card);
     });
@@ -13040,7 +13099,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       hist.forEach((h) => {
         const recentPreview = el('span', { title: h.code });
         recentPreview.style.cssText = 'flex:1;overflow:hidden;max-height:44px;white-space:normal;';
-        recentPreview.appendChild(renderRawTMP(h.code));
+        recentPreview.appendChild(renderRawTMP(String(h.code || '')));
         const recentCode = () => {
           let code = _stripTag(h.rawCode || h.code);
           const pfx = _prefix();
