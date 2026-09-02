@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      25.5
+// @version      25.6
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.5";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.6";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -10763,11 +10763,14 @@
 
   function layersMarkup(s, opts = {}) {
     if (!Array.isArray(s.layers) || !s.layers.length) return '';
-    const baseOffset = opts.noPrefixOffset ? 0 : estimatePrefixEm(_prefix());
+    // Ghost the clan tag inside each layer so <pos=0> becomes font-independent.
+    // The invisible copy takes the same width TMP gives the real tag in
+    // whichever scene the game happens to be rendering.
+    const pfx = opts.noPrefixOffset ? '' : _prefix();
+    const plainPfx = pfx ? pfx.replace(/<[^>]*>/g, '') : '';
+    const ghostPrefix = plainPfx ? `<color=#00000000>${plainPfx}</color>` : '';
     let out = '';
     for (const L of s.layers) {
-      // Blank layer text mirrors the current base name — keeps shadow/outline
-      // layers in sync when the user changes the name later.
       const text = String(L?.text || '') || String(s.name || '');
       if (!text) continue;
       const x = Number(L.x) || 0;
@@ -10778,8 +10781,8 @@
       if (y) inner = `<voffset=${y}em>${inner}</voffset>`;
       if (L.bold) inner = `<b>${inner}</b>`;
       if (size !== 100) inner = `<size=${size}%>${inner}</size>`;
-      const totalX = baseOffset + x;
-      out += `<pos=${totalX}em><color=${c}>${inner}</color>`;
+      const spaceTag = x ? `<space=${x}em>` : '';
+      out += `<pos=0>${ghostPrefix}${spaceTag}<color=${c}>${inner}</color>`;
     }
     return out;
   }
