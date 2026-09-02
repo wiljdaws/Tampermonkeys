@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      25.3
+// @version      25.4
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -5563,22 +5563,23 @@
                     const nm = parsed?.name ?? "";
                     const uid = parsed?.uid ?? "";
                     const team = parsed?.team ?? null;
-                    if (nm && uid) {
+                    if (uid) {
+                        const displayName = nm || "(unnamed)";
                         _lastInitLineAt = performance.now();
                         setAutoVisible(false); // real match — hide HUD
                         if (!_inMatch) {
                             _liveRoster = [];
                             _inMatch = true;
                             syncPingTracker();
-                            dbg(`match forming — roster reset, first player "${nm}"`);
+                            dbg(`match forming — roster reset, first player "${displayName}"`);
                         }
                         // Dedupe by uid, but accept a later corrected team/name
                         // before firing. Photon can re-emit after rebalancing.
                         const existing = _liveRoster.find(player => player.uid === uid);
                         if (!existing) {
-                            const entry = { name: nm, uid, team };
+                            const entry = { name: displayName, uid, team };
                             _liveRoster.push(entry);
-                            dbg(`roster +1 "${nm}"${team ? ` (${team})` : ""} (${_liveRoster.length} total)`);
+                            dbg(`roster +1 "${displayName}"${team ? ` (${team})` : ""} (${_liveRoster.length} total)`);
                             // fire the leaderboard-opponent popup check
                             onRosterEntry(entry);
                         } else {
@@ -9376,6 +9377,7 @@
     scoredSizePct: 100,
     rawCode: null,                    // when set: exact current in-game markup, used verbatim
     align: readAlignDefault() || 'left',
+    layers: [],                       // stacked overlays: [{text,color,x,y,bold}], max 10
   });
 
   let state = loadJSON(stateKey(), null) || loadJSON(STATE_KEY_LEGACY, defaultState());
@@ -10737,6 +10739,25 @@
     return { line, visibleWidth };
   }
 
+  function layersMarkup(s) {
+    if (!Array.isArray(s.layers) || !s.layers.length) return '';
+    let out = '';
+    for (const L of s.layers) {
+      // Blank layer text mirrors the current base name — keeps shadow/outline
+      // layers in sync when the user changes the name later.
+      const text = String(L?.text || '') || String(s.name || '');
+      if (!text) continue;
+      const x = Number(L.x) || 0;
+      const y = Number(L.y) || 0;
+      const c = String(L.color || '#ffffff').toUpperCase();
+      let inner = text;
+      if (y) inner = `<voffset=${y}em>${inner}</voffset>`;
+      if (L.bold) inner = `<b>${inner}</b>`;
+      out += `<pos=0>${x ? `<space=${x}em>` : ''}<color=${c}>${inner}</color>`;
+    }
+    return out;
+  }
+
   function buildCode(s) {
     let open = '';
     let close = '';
@@ -10810,6 +10831,8 @@
       }
     }
 
+    code += layersMarkup(s);
+
     // trailing tags style whatever "Scored!" text the game appends.
     code += scoredSuffix(s);
 
@@ -10820,7 +10843,7 @@
     if (typeof s.rawCode === 'string') {
       const art = isAsciiArtText(s.rawCode) || isAsciiArtText(s.name);
       const raw = art ? packAsciiArt(s.rawCode, s.align) : preserveForgeNewlines(s.rawCode);
-      return raw + scoredSuffix(s);
+      return raw + layersMarkup(s) + scoredSuffix(s);
     }
     return buildCode(s);
   }
@@ -11735,6 +11758,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
       sizePct: 100,
       rotate: 0,
       mark: null,
+      voffsetEm: 0,
     };
     const startLine = () => {
       const next = document.createElement('div');
@@ -11746,6 +11770,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
     };
     let line = startLine();
     root.appendChild(line);
+    // Append target — flips to a stacked layer when <pos> opens one.
+    let currentContainer = line;
     let i = 0;
     const spriteEmoji = n => (SPRITES.find(x => x.n === n) || {}).e || '❔';
     while (i < raw.length) {
@@ -11755,6 +11781,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         tagPaintBreak(i);
         line = startLine();
         root.appendChild(line);
+        currentContainer = line;
         i += m ? m[0].length : 1;
         continue;
       }
@@ -11767,7 +11794,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
           pad.style.display = 'inline-block';
           pad.style.width = mspaceEm + 'em';
         }
-        line.appendChild(pad);
+        currentContainer.appendChild(pad);
         i += m[0].length;
         continue;
       }
@@ -11798,10 +11825,33 @@ _rgnfFab = fab; _rgnfPanel = panel;
         pad.style.display = 'inline-block';
         pad.style.width = m[1] + 'em';
         pad.style.height = '1em';
-        line.appendChild(pad);
+        currentContainer.appendChild(pad);
         i += m[0].length;
         continue;
       }
+      // <pos=X> starts a stacked layer so names with multiple <pos=0> passes
+      // overlay instead of drawing side-by-side.
+      if ((m = rest.match(/^<pos=(-?[\d.]+)(em|px|%)?>/i))) {
+        line.style.position = 'relative';
+        line.style.display = 'inline-block';
+        const layer = document.createElement('span');
+        layer.style.position = 'absolute';
+        layer.style.left = m[1] + (m[2] || 'em');
+        layer.style.top = '0';
+        layer.style.whiteSpace = 'nowrap';
+        line.appendChild(layer);
+        currentContainer = layer;
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<\/pos>/i))) { currentContainer = line; i += m[0].length; continue; }
+      // TMP voffset: positive is up, so invert for CSS translateY.
+      if ((m = rest.match(/^<voffset=(-?[\d.]+)em>/i))) {
+        st.voffsetEm = Number(m[1]) || 0;
+        i += m[0].length;
+        continue;
+      }
+      if ((m = rest.match(/^<\/voffset>/i))) { st.voffsetEm = 0; i += m[0].length; continue; }
       if ((m = rest.match(/^<mspace=([\d.]+)em>/i))) {
         mspaceEm = Number(m[1]);
         i += m[0].length;
@@ -11832,7 +11882,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         const sp = document.createElement('span');
         sp.textContent = spriteEmoji(Number(m[1]));
         tagPaintChar(sp, i, m[0]);
-        line.appendChild(sp); i += m[0].length; continue;
+        currentContainer.appendChild(sp); i += m[0].length; continue;
       }
       if ((m = rest.match(/^<[^>]*>/))) { i += m[0].length; continue; } // unknown tag
       const ch = raw[i];
@@ -11856,13 +11906,41 @@ _rgnfFab = fab; _rgnfPanel = panel;
           span.style.width = mspaceEm + 'em';
           span.style.textAlign = 'center';
         }
-        if (st.rotate) { span.style.display = 'inline-block'; span.style.transform = 'rotate(' + st.rotate + 'deg)'; }
+        const transforms = [];
+        if (st.rotate) transforms.push('rotate(' + st.rotate + 'deg)');
+        if (st.voffsetEm) transforms.push('translateY(' + (-st.voffsetEm) + 'em)');
+        if (transforms.length) {
+          span.style.display = 'inline-block';
+          span.style.transform = transforms.join(' ');
+        }
       }
       tagPaintChar(span, i, ch);
-      line.appendChild(span);
+      currentContainer.appendChild(span);
       i++;
     }
     return root;
+  }
+
+  function attachLayerOverlays(baseDom, s) {
+    if (!Array.isArray(s?.layers) || !s.layers.length) return baseDom;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:relative;display:inline-block;';
+    wrap.appendChild(baseDom);
+    for (const L of s.layers) {
+      const text = String(L?.text || '') || String(s.name || '');
+      if (!text) continue;
+      const x = Number(L.x) || 0;
+      const y = Number(L.y) || 0;
+      const c = String(L.color || '#ffffff').toUpperCase();
+      let inner = text;
+      if (y) inner = `<voffset=${y}em>${inner}</voffset>`;
+      if (L.bold) inner = `<b>${inner}</b>`;
+      const snippet = `${x ? `<space=${x}em>` : ''}<color=${c}>${inner}</color>`;
+      const overlay = renderRawTMP(snippet);
+      overlay.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;';
+      wrap.appendChild(overlay);
+    }
+    return wrap;
   }
 
   function renderRawPreview(raw, s) {
@@ -11870,12 +11948,15 @@ _rgnfFab = fab; _rgnfPanel = panel;
     const body = typeof s?.rawCode === "string" ? s.rawCode : String(raw ?? "");
     const shownPfx = artPreviewText(pfx);
     const shownBody = artPreviewText(body);
+    const shownLayers = layersMarkup(s);
     const shownTail = s?.scoredMode === "hide" ? "" : scoredSuffix(s) + " Scored!";
-    const inner = renderRawTMP(shownPfx + shownBody + shownTail, {
+    const inner = renderRawTMP(shownPfx + shownBody + shownLayers + shownTail, {
       paintName: s?.name,
       paintFrom: shownPfx.length,
       paintTo: shownPfx.length + shownBody.length,
     });
+
+
     // Width 100% stack keeps the flex preview from collapsing to one
     // character (min-content of per-glyph spans) and going tall/skinny.
     const stack = document.createElement("div");
@@ -11953,6 +12034,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
     pv.style.justifyContent = previewArt ? "flex-start" : forgeAlignJustify(state.align);
     if (state.rawCode) {
       pv.appendChild(renderRawPreview(_prefix() + state.rawCode, state));
+    } else if (Array.isArray(state.layers) && state.layers.length) {
+      const bodyOnly = buildCode({ ...state, layers: [] });
+      const suffix = scoredSuffix(state);
+      const bodyClean = suffix && bodyOnly.endsWith(suffix) ? bodyOnly.slice(0, -suffix.length) : bodyOnly;
+      pv.appendChild(renderRawPreview(_prefix() + bodyClean, state));
     } else {
       pv.appendChild(renderPreview(state));
     }
@@ -12044,7 +12130,14 @@ _rgnfFab = fab; _rgnfPanel = panel;
       // rawCode capture has no baked-in tag
       const built = buildCode(state);
       const code = _prefix() + built;
-      pv.replaceChildren(renderPreview(state));
+      if (Array.isArray(state.layers) && state.layers.length) {
+        const bodyOnly = buildCode({ ...state, layers: [] });
+        const suffix = scoredSuffix(state);
+        const bodyClean = suffix && bodyOnly.endsWith(suffix) ? bodyOnly.slice(0, -suffix.length) : bodyOnly;
+        pv.replaceChildren(renderRawPreview(_prefix() + bodyClean, state));
+      } else {
+        pv.replaceChildren(renderPreview(state));
+      }
       if (rawEdit.value !== built) rawEdit.value = built;
       autosizeRawEdit();
       charSpan.textContent = `${code.length} chars`;
@@ -12269,6 +12362,126 @@ _rgnfFab = fab; _rgnfPanel = panel;
     }
     secStyle.appendChild(markRow);
     panel.appendChild(secStyle);
+
+    // ---- Layers ----
+    if (!Array.isArray(state.layers)) state.layers = [];
+    const secLayers = el('div', { class: 'rgnf-sec' });
+    secLayers.appendChild(el('h4', { text: 'Layers' }));
+    secLayers.appendChild(el('div', {
+      style: 'opacity:.7;font-size:11px;margin:-4px 0 6px;',
+      text: 'Stack copies of your name on top with color and offset — shadows, outlines, ghost letters.',
+    }));
+
+    const addLayerRow = el('div', { class: 'rgnf-row' });
+    const addLayerBtn = el('button', {
+      class: 'rgnf-chip',
+      text: `➕ Add layer${state.layers.length ? ` (${state.layers.length}/10)` : ''}`,
+      onclick: () => {
+        if (state.layers.length >= 10) return;
+        const prev = state.layers[state.layers.length - 1];
+        const seed = prev
+          ? {
+              text: prev.text || '',
+              color: prev.color || '#ffffff',
+              x: (Number(prev.x) || 0) + 0.05,
+              y: Number(prev.y) || 0,
+              bold: !!prev.bold,
+            }
+          : { text: '', color: '#ffffff', x: 0.05, y: 0, bold: false };
+        state.layers.push(seed);
+        render(panel);
+      },
+    });
+    if (state.layers.length >= 10) addLayerBtn.setAttribute('disabled', 'true');
+    addLayerRow.appendChild(addLayerBtn);
+    if (state.layers.length) {
+      addLayerRow.appendChild(el('button', {
+        class: 'rgnf-chip', text: 'Clear all',
+        onclick: () => { state.layers = []; render(panel); },
+      }));
+    }
+    secLayers.appendChild(addLayerRow);
+
+    const fmt = (n) => (Number(n) || 0).toFixed(2);
+    state.layers.forEach((L, idx) => {
+      const card = el('div', {
+        style: 'border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;margin-top:8px;display:flex;flex-direction:column;gap:6px;',
+      });
+
+      // header: label · color · bold · remove
+      const header = el('div', { style: 'display:flex;align-items:center;gap:8px;' });
+      header.appendChild(el('span', {
+        text: `Layer ${idx + 1}`, style: 'font-size:12px;opacity:.8;flex:1;',
+      }));
+      const colorInput = el('input', {
+        type: 'color', value: L.color || '#ffffff', title: 'Color',
+        style: 'width:32px;height:24px;padding:0;cursor:pointer;',
+      });
+      const setLayerColor = (v) => {
+        const layer = state.layers[idx];
+        if (!layer) return;
+        layer.color = v;
+        refreshPreview();
+      };
+      colorInput.addEventListener('input', (e) => setLayerColor(e.target.value));
+      colorInput.addEventListener('change', (e) => setLayerColor(e.target.value));
+      header.appendChild(colorInput);
+      header.appendChild(el('button', {
+        class: `rgnf-chip ${L.bold ? 'rgnf-on' : ''}`, text: 'B', title: 'Bold',
+        onclick: (e) => {
+          L.bold = !L.bold;
+          e.currentTarget.classList.toggle('rgnf-on', L.bold);
+          refreshPreview();
+        },
+      }));
+      header.appendChild(el('button', {
+        class: 'rgnf-chip', text: '⌫', title: 'Remove layer',
+        onclick: () => { state.layers.splice(idx, 1); render(panel); },
+      }));
+      card.appendChild(header);
+
+      // text
+      card.appendChild(el('input', {
+        type: 'text', value: L.text || '', placeholder: 'Layer text (defaults to your name)',
+        style: 'width:100%;box-sizing:border-box;',
+        oninput: (e) => { L.text = e.target.value; refreshPreview(); },
+      }));
+
+      // x offset slider
+      const xRow = el('div', { style: 'display:flex;align-items:center;gap:8px;' });
+      xRow.appendChild(el('span', { text: 'X', style: 'width:14px;opacity:.7;font-size:11px;' }));
+      const xVal = el('span', { text: fmt(L.x) + 'em', style: 'width:60px;text-align:right;opacity:.8;font-size:11px;' });
+      xRow.appendChild(el('input', {
+        type: 'range', min: '-0.5', max: '0.5', step: '0.01', value: L.x || 0,
+        style: 'flex:1;',
+        oninput: (e) => {
+          L.x = Number(e.target.value) || 0;
+          xVal.textContent = fmt(L.x) + 'em';
+          refreshPreview();
+        },
+      }));
+      xRow.appendChild(xVal);
+      card.appendChild(xRow);
+
+      // y offset slider
+      const yRow = el('div', { style: 'display:flex;align-items:center;gap:8px;' });
+      yRow.appendChild(el('span', { text: 'Y', style: 'width:14px;opacity:.7;font-size:11px;' }));
+      const yVal = el('span', { text: fmt(L.y) + 'em', style: 'width:60px;text-align:right;opacity:.8;font-size:11px;' });
+      yRow.appendChild(el('input', {
+        type: 'range', min: '-0.5', max: '0.5', step: '0.01', value: L.y || 0,
+        style: 'flex:1;',
+        oninput: (e) => {
+          L.y = Number(e.target.value) || 0;
+          yVal.textContent = fmt(L.y) + 'em';
+          refreshPreview();
+        },
+      }));
+      yRow.appendChild(yVal);
+      card.appendChild(yRow);
+
+      secLayers.appendChild(card);
+    });
+    panel.appendChild(secLayers);
 
     // ---- Title ----
     const secTitle = el('div', { class: 'rgnf-sec' });
