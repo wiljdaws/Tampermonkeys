@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      25.6
+// @version      25.7
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -446,7 +446,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.6";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.7";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -638,7 +638,7 @@
                         <div class="rgSettingRow"><span>Color 2</span><input type="color" id="rgSetColor2"></div>
                         <div class="rgSettingRow"><span title="Show the animation after you end a tracked opponent streak">Streak snipe</span><input type="checkbox" id="rgSetStreakSnipe"></div>
                         <div class="rgSettingRow" style="flex-wrap:wrap;gap:6px;">
-                            <span title="Send this to Pal or JesusDied4U if you need to be added to the board">Firebase id</span>
+                            <span title="Send this to Pal or RIS3N if you need to be added to the board">Firebase id</span>
                             <code id="rgSetAuthUid" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:#8E9BC2;">signing in…</code>
                         </div>
                         <div class="rgSettingRow" style="flex-wrap:wrap;gap:6px;">
@@ -1110,8 +1110,8 @@
             .replace(/\s*(?:—|--).*$/, "")
             .replace(/\.+$/, "");
         const head = /fail/i.test(raw) ? raw : `${raw} failed`;
-        if (/JesusDied4U/i.test(head)) return head;
-        return `${head}, message JesusDied4U in Discord`;
+        if (/Discord/i.test(head)) return head;
+        return `${head}, message RIS3N or Pal on Discord`;
     }
 
     function showError(message) {
@@ -2483,7 +2483,8 @@
         bar.id = "rgAllowlistNudge";
         bar.style.cssText = `
             position:absolute;
-            top:-38px;
+            top:100%;
+            margin-top:6px;
             left:0;
             right:0;
             display:flex;
@@ -2502,7 +2503,7 @@
         link.href = DISCORD_INVITE;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        link.textContent = "Leaderboard is invite-only — ask Pal or JesusDied4U on Discord to add you";
+        link.textContent = "Leaderboard is invite-only — ask Pal or RIS3N on Discord to add you";
         link.style.cssText = "color:#ffcf5b;text-decoration:none;flex:1;cursor:pointer";
         const uid = firebaseAuthUid || "";
         if (uid) link.title = `Your Firebase id: ${uid}`;

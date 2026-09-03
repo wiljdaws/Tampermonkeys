@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "25.6");
+  assert.equal(version, "25.7");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -424,15 +424,15 @@ test("Firebase id row retries auth instead of staying on signing in", () => {
   assert.doesNotMatch(initSource, /sign-in timed out/);
 });
 
-test("HUD errors tell the player to message JesusDied4U in Discord", () => {
+test("HUD errors tell the player to message RIS3N or Pal on Discord", () => {
   const formatAtlasError = extractHudFunction("formatAtlasError");
   assert.equal(
     formatAtlasError("Stats submission failed -- check console"),
-    "Stats submission failed, message JesusDied4U in Discord",
+    "Stats submission failed, message RIS3N or Pal on Discord",
   );
   assert.equal(
     formatAtlasError("Firebase failed to load"),
-    "Firebase failed to load, message JesusDied4U in Discord",
+    "Firebase failed to load, message RIS3N or Pal on Discord",
   );
   assert.match(hudFunctionSource("showError"), /formatAtlasError\(/);
 });
