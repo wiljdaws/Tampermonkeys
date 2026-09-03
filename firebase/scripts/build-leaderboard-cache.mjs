@@ -25,6 +25,8 @@ export const PUBLISH_MMR_JUMP_CUSHION = 2500;
 export const PUBLISH_KEEP_NAMES = Object.freeze([
   "king von",
   "virtualzzs",
+  "yamajax",
+  "king slayer",
 ]);
 export const MAX_CACHE_DOC_BYTES = 900_000;
 export const SCHEMA_VERSION = 1;
