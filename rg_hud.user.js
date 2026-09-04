@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      25.7
+// @version      25.8
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -18,6 +18,167 @@
 
 (function () {
     'use strict';
+
+    // ---------- Ad blocker ----------
+    //
+    // Runs first so ads don't flash before the HUD is ready. Baseline
+    // rules cover the ad providers rocketgoal.io tends to use (Google
+    // AdSense/DoubleClick, DFP, Unity Ads, Applovin, IMA video). When a
+    // new ad slot slips through, inspect it in DevTools, grab its class
+    // or id, and add the selector to ATLAS_AD_SELECTORS below.
+
+    const ATLAS_AD_SELECTORS = [
+        // Google AdSense / DFP
+        'ins.adsbygoogle',
+        '.adsbygoogle',
+        '[id^="google_ads_iframe"]',
+        '[id^="google_ads_frame"]',
+        '[id^="div-gpt-ad"]',
+        'iframe[id^="google_ads"]',
+        'iframe[src*="doubleclick.net"]',
+        'iframe[src*="googlesyndication"]',
+        'iframe[src*="googleadservices"]',
+        'iframe[src*="googletagservices"]',
+        'iframe[src*="adservice.google"]',
+        '[data-ad-slot]',
+        '[data-ad-client]',
+        // Google IMA (interstitial video)
+        '.videoAdUi',
+        '.ima-ad-container',
+        'iframe[src*="imasdk.googleapis.com"]',
+        // Unity Ads / Applovin
+        'iframe[src*="unityads"]',
+        'iframe[src*="applovin"]',
+        // Generic containers
+        '[class*="ad-container"]',
+        '[class*="ad-slot"]',
+        '[class*="ad-wrapper"]',
+        '[class*="ad-banner"]',
+        '[id*="ad-container"]',
+        '[id*="ad-slot"]',
+        // Content recommendation widgets
+        '[id*="taboola"]',
+        '[class*="taboola"]',
+        '[id*="outbrain"]',
+        '[class*="outbrain"]',
+    ];
+
+    const ATLAS_AD_SCRIPT_HOSTS = [
+        "doubleclick.net",
+        "googlesyndication.com",
+        "googletagservices.com",
+        "googleadservices.com",
+        "adservice.google.com",
+        "imasdk.googleapis.com",
+        "unityads.unity3d.com",
+        "applovin.com",
+    ];
+
+    function isAtlasAdSrc(src) {
+        if (!src || typeof src !== "string") return false;
+        for (let i = 0; i < ATLAS_AD_SCRIPT_HOSTS.length; i++) {
+            if (src.indexOf(ATLAS_AD_SCRIPT_HOSTS[i]) >= 0) return true;
+        }
+        return false;
+    }
+
+    function tryDismissAdVideo(v) {
+        if (!v || v.__atlasAdHandled) return;
+        // A legit video on rocketgoal.io is unlikely (WebGL game). Any
+        // large video element that renders on top is treated as an ad.
+        let rect = null;
+        try { rect = v.getBoundingClientRect(); } catch (e) {}
+        if (!rect || rect.width < 200 || rect.height < 150) return;
+        v.__atlasAdHandled = true;
+        try {
+            v.muted = true;
+            v.pause();
+            if (isFinite(v.duration) && v.duration > 0) v.currentTime = v.duration;
+            v.dispatchEvent(new Event("ended"));
+            v.dispatchEvent(new Event("timeupdate"));
+            let parent = v.parentElement;
+            let hops = 0;
+            while (parent && hops < 5) {
+                let cs = null;
+                try { cs = getComputedStyle(parent); } catch (e) {}
+                if (cs && (cs.position === "fixed" || cs.position === "absolute") && parseInt(cs.zIndex || "0", 10) > 100) {
+                    parent.remove();
+                    return;
+                }
+                parent = parent.parentElement;
+                hops++;
+            }
+            v.remove();
+        } catch (e) {}
+    }
+
+    (function installAtlasAdBlocker() {
+        const selector = ATLAS_AD_SELECTORS.join(",");
+
+        // CSS pass: hides matches so they can't flash before removal.
+        try {
+            const css = selector + " { display: none !important; visibility: hidden !important; height: 0 !important; width: 0 !important; pointer-events: none !important; }";
+            const style = document.createElement("style");
+            style.id = "atlasAdBlockerStyle";
+            style.textContent = css;
+            (document.head || document.documentElement).appendChild(style);
+        } catch (e) {}
+
+        // Kill ad script tags already in the document.
+        try {
+            const scripts = document.querySelectorAll("script[src]");
+            for (let i = 0; i < scripts.length; i++) {
+                if (isAtlasAdSrc(scripts[i].src)) scripts[i].remove();
+            }
+        } catch (e) {}
+
+        const removeMatching = (root) => {
+            if (!root || !root.querySelectorAll) return;
+            try {
+                const matches = root.querySelectorAll(selector);
+                for (let i = 0; i < matches.length; i++) matches[i].remove();
+            } catch (e) {}
+        };
+
+        const handleVideoAd = (node) => {
+            if (!node) return;
+            const videos = node.tagName === "VIDEO"
+                ? [node]
+                : (node.querySelectorAll ? node.querySelectorAll("video") : []);
+            for (let i = 0; i < videos.length; i++) tryDismissAdVideo(videos[i]);
+        };
+
+        try {
+            const observer = new MutationObserver((mutations) => {
+                for (const m of mutations) {
+                    for (const n of m.addedNodes) {
+                        if (n.nodeType !== 1) continue;
+                        try {
+                            if (n.matches && n.matches(selector)) {
+                                n.remove();
+                                continue;
+                            }
+                        } catch (e) {}
+                        removeMatching(n);
+                        handleVideoAd(n);
+                        if (n.tagName === "SCRIPT" && n.src && isAtlasAdSrc(n.src)) {
+                            n.remove();
+                        }
+                    }
+                }
+            });
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) {}
+
+        // Backstop for interstitial video overlays that don't match the
+        // static selector list.
+        try {
+            setInterval(() => {
+                const videos = document.querySelectorAll("video");
+                for (let i = 0; i < videos.length; i++) tryDismissAdVideo(videos[i]);
+            }, 2000);
+        } catch (e) {}
+    })();
 
     // @grant puts Tampermonkey in the isolated world on Chrome. Game
     // fetch / console.log live on the page. Always hook that window.
@@ -2236,6 +2397,188 @@
         try { storage.set("atlasFirebaseAuthUser", blob); return true; } catch (e) { return false; }
     }
 
+    // ---------- Proxy KV auth fallback ----------
+    //
+    // Runs only when the script was injected by the reverse-proxy Worker
+    // (no Tampermonkey). Firebase's own IndexedDB survives normal reloads,
+    // but any "clear site data" nukes it, and the next boot mints a fresh
+    // anonymous uid. That loses the user's stats and clan membership.
+    //
+    // The Worker exposes /atlas/kv/:sid/atlasFirebaseAuthUser as a tiny
+    // ciphertext store. We encrypt the Firebase auth blob with an AES-GCM
+    // key held only in the browser (localStorage + cookie mirror), so the
+    // Worker never sees plaintext or key.
+
+    const ATLAS_PROXY_KV_KEY_NAME = "atlasFirebaseAuthUser";
+    const atlasProxyKvPath = (sid) =>
+        "/atlas/kv/" + encodeURIComponent(sid) + "/" + ATLAS_PROXY_KV_KEY_NAME;
+
+    function bytesToBase64(bytes) {
+        let s = "";
+        for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return btoa(s);
+    }
+
+    function base64ToBytes(b64) {
+        const s = atob(b64);
+        const out = new Uint8Array(s.length);
+        for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+        return out;
+    }
+
+    function atlasSetLongCookie(name, value) {
+        try {
+            document.cookie =
+                name + "=" + encodeURIComponent(value) +
+                "; max-age=31536000; path=/; SameSite=Lax; Secure";
+        } catch (e) {}
+    }
+
+    function atlasReadCookie(name) {
+        try {
+            const prefix = name + "=";
+            const parts = document.cookie ? document.cookie.split("; ") : [];
+            for (let i = 0; i < parts.length; i++) {
+                if (parts[i].indexOf(prefix) === 0) {
+                    return decodeURIComponent(parts[i].slice(prefix.length));
+                }
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    function getAtlasProxyKvConfig() {
+        try {
+            if (typeof window === "undefined" || !window.location) return null;
+            const host = window.location.hostname;
+            // Real game runs the Tampermonkey path. Anything else that served
+            // this script must be the proxy origin.
+            if (!host || host === "rocketgoal.io") return null;
+
+            let sid = null;
+            let keyB64 = null;
+            try { sid = localStorage.getItem("atlas.kv.sid") || atlasReadCookie("atlas_kv_sid"); } catch (e) {}
+            try { keyB64 = localStorage.getItem("atlas.kv.key") || atlasReadCookie("atlas_kv_key"); } catch (e) {}
+
+            if (!sid || !keyB64) {
+                sid = (typeof crypto !== "undefined" && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : Date.now().toString(36) + Math.random().toString(36).slice(2);
+                const rand = new Uint8Array(32);
+                crypto.getRandomValues(rand);
+                keyB64 = bytesToBase64(rand);
+                try {
+                    localStorage.setItem("atlas.kv.sid", sid);
+                    localStorage.setItem("atlas.kv.key", keyB64);
+                } catch (e) {}
+                atlasSetLongCookie("atlas_kv_sid", sid);
+                atlasSetLongCookie("atlas_kv_key", keyB64);
+            } else {
+                // Mirror across whichever store is missing so a single wipe
+                // (only cookies, or only localStorage) doesn't lose us.
+                try {
+                    if (!localStorage.getItem("atlas.kv.sid")) localStorage.setItem("atlas.kv.sid", sid);
+                    if (!localStorage.getItem("atlas.kv.key")) localStorage.setItem("atlas.kv.key", keyB64);
+                } catch (e) {}
+                if (!atlasReadCookie("atlas_kv_sid")) atlasSetLongCookie("atlas_kv_sid", sid);
+                if (!atlasReadCookie("atlas_kv_key")) atlasSetLongCookie("atlas_kv_key", keyB64);
+            }
+
+            return { sid: sid, keyB64: keyB64 };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async function importAtlasProxyKvKey(keyB64) {
+        const raw = base64ToBytes(keyB64);
+        return crypto.subtle.importKey(
+            "raw",
+            raw,
+            { name: "AES-GCM" },
+            false,
+            ["encrypt", "decrypt"],
+        );
+    }
+
+    async function hydrateAtlasAuthFromProxyKv(apiKey, appName, localStore) {
+        if (!apiKey || !localStore || typeof localStore.getItem !== "function") return false;
+        const cfg = getAtlasProxyKvConfig();
+        if (!cfg) return false;
+        try {
+            const resp = await fetch(atlasProxyKvPath(cfg.sid), {
+                method: "GET",
+                credentials: "same-origin",
+            });
+            if (!resp.ok) return false;
+            const payload = await resp.json();
+            if (!payload || !payload.iv || !payload.ciphertext) return false;
+            const key = await importAtlasProxyKvKey(cfg.keyB64);
+            const plain = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: base64ToBytes(payload.iv) },
+                key,
+                base64ToBytes(payload.ciphertext),
+            );
+            const blob = new TextDecoder().decode(plain);
+            if (!blob) return false;
+            const names = ["[DEFAULT]", "atlas"];
+            if (appName && names.indexOf(appName) < 0) names.unshift(appName);
+            let wrote = false;
+            for (let i = 0; i < names.length; i++) {
+                const k = "firebase:authUser:" + apiKey + ":" + names[i];
+                try {
+                    if (!localStore.getItem(k)) {
+                        localStore.setItem(k, blob);
+                        wrote = true;
+                    }
+                } catch (e) {}
+            }
+            return wrote;
+        } catch (e) {
+            try { dbg("proxy KV hydrate failed: " + getErrMsg(e)); } catch (_) {}
+            return false;
+        }
+    }
+
+    async function backupAtlasAuthToProxyKv(apiKey, appName, localStore) {
+        if (!apiKey || !localStore || typeof localStore.getItem !== "function") return false;
+        const cfg = getAtlasProxyKvConfig();
+        if (!cfg) return false;
+        let blob = null;
+        const names = ["[DEFAULT]", "atlas"];
+        if (appName && names.indexOf(appName) < 0) names.unshift(appName);
+        for (let i = 0; i < names.length; i++) {
+            try {
+                const raw = localStore.getItem("firebase:authUser:" + apiKey + ":" + names[i]);
+                if (raw) { blob = raw; break; }
+            } catch (e) {}
+        }
+        if (!blob) return false;
+        try {
+            const key = await importAtlasProxyKvKey(cfg.keyB64);
+            const iv = new Uint8Array(12);
+            crypto.getRandomValues(iv);
+            const ct = await crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv },
+                key,
+                new TextEncoder().encode(blob),
+            );
+            const resp = await fetch(atlasProxyKvPath(cfg.sid), {
+                method: "PUT",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    iv: bytesToBase64(iv),
+                    ciphertext: bytesToBase64(new Uint8Array(ct)),
+                }),
+            });
+            return resp.ok;
+        } catch (e) {
+            try { dbg("proxy KV backup failed: " + getErrMsg(e)); } catch (_) {}
+            return false;
+        }
+    }
+
     async function ensureAnonymousAuth(auth) {
         if (!auth) throw new Error("Firebase auth is not ready");
         // Persistence restore is async. Signing in before it finishes
@@ -2330,7 +2673,13 @@
             try {
                 const tm = atlasTmStorage();
                 const appName = app && app.name ? app.name : "[DEFAULT]";
-                hydrateAtlasAuthFromTm(tm, FIREBASE_CONFIG.apiKey, appName, localStorage);
+                if (tm) {
+                    hydrateAtlasAuthFromTm(tm, FIREBASE_CONFIG.apiKey, appName, localStorage);
+                } else {
+                    // Proxy path: no Tampermonkey, restore from the Worker's
+                    // encrypted KV store before Firebase reads localStorage.
+                    await hydrateAtlasAuthFromProxyKv(FIREBASE_CONFIG.apiKey, appName, localStorage);
+                }
                 let auth;
                 try {
                     auth = initializeAuth(app, {
@@ -2341,7 +2690,12 @@
                 }
                 atlasFirebaseAuth = auth;
                 await ensureAnonymousAuth(auth);
-                backupAtlasAuthToTm(tm, FIREBASE_CONFIG.apiKey, appName, localStorage, auth && auth.currentUser);
+                if (tm) {
+                    backupAtlasAuthToTm(tm, FIREBASE_CONFIG.apiKey, appName, localStorage, auth && auth.currentUser);
+                } else {
+                    // Fire-and-forget. A failed backup doesn't block startup.
+                    backupAtlasAuthToProxyKv(FIREBASE_CONFIG.apiKey, appName, localStorage).catch(() => {});
+                }
             } catch (authErr) {
                 firebaseAuthUid = null;
                 firebaseAuthError = getErrMsg(authErr);
@@ -10036,8 +10390,68 @@
     if (_rgnfPanel) render(_rgnfPanel);
   }
 
+  // Recognise the stacked-layer emission pattern (base name followed by
+  // one or more <pos=…>…text…</color> blocks) so a reset / steal / paste
+  // lands as an editable base name + populated Layers cards, not a raw
+  // markup blob that concatenates every layer's text into one field.
+  function decodeLayeredRaw(raw) {
+    const src = String(raw || '');
+    const posRe = /<pos=[^>]*>/gi;
+    const boundaries = [];
+    let m;
+    while ((m = posRe.exec(src)) !== null) boundaries.push({ start: m.index, tagLen: m[0].length });
+    if (!boundaries.length) return null;
+    const basePart = src.slice(0, boundaries[0].start);
+    let baseName = basePart.replace(/<[^>]*>/g, '').trim();
+    const layers = [];
+    for (let i = 0; i < boundaries.length; i++) {
+      const start = boundaries[i].start + boundaries[i].tagLen;
+      const end = i + 1 < boundaries.length ? boundaries[i + 1].start : src.length;
+      let chunk = src.slice(start, end);
+      const ghostRe = /^<color=#[0-9A-Fa-f]{6}00>[\s\S]*?<\/color>/i;
+      if (ghostRe.test(chunk)) chunk = chunk.replace(ghostRe, '');
+      const spaceMatch = chunk.match(/^<space=([-\d.]+)em>/i);
+      const x = spaceMatch ? Number(spaceMatch[1]) : 0;
+      if (spaceMatch) chunk = chunk.slice(spaceMatch[0].length);
+      const colorMatch = chunk.match(/<color=(#[0-9A-Fa-f]{6,8})>/i);
+      const rawColor = colorMatch ? colorMatch[1] : '#ffffff';
+      const color = rawColor.length === 9 ? rawColor.slice(0, 7) : rawColor;
+      const voffsetMatch = chunk.match(/<voffset=(-?[\d.]+)em>/i);
+      const y = voffsetMatch ? Number(voffsetMatch[1]) : 0;
+      const bold = /<b>/i.test(chunk);
+      const sizeMatch = chunk.match(/<size=(\d+)%?>/i);
+      const sizePct = sizeMatch ? Number(sizeMatch[1]) : 100;
+      const text = chunk.replace(/<[^>]*>/g, '').trim();
+      if (!text) continue;
+      layers.push({ text, color, x, y, sizePct, bold });
+    }
+    if (!layers.length) return null;
+    // If a prior emit accidentally accumulated layer text into the base (e.g.
+    // "RIS3NRIS3NRIS3N" instead of "RIS3N"), collapse it back to one copy.
+    const layerTexts = layers.map(l => l.text).filter(Boolean);
+    if (baseName && layerTexts.length && layerTexts.every(t => t === layerTexts[0])) {
+      const one = layerTexts[0];
+      if (baseName.length % one.length === 0 && baseName === one.repeat(baseName.length / one.length)) {
+        baseName = one;
+      }
+    }
+    // Blank a layer's text when it matches the (now-canonical) base name so the
+    // Layers UI shows the "defaults to your name" placeholder.
+    for (const L of layers) if (L.text === baseName) L.text = '';
+    return { baseName, layers };
+  }
+
   function setRawSnapshot(raw) {
-    Object.assign(state, rawSnapshotFields(_stripTag(restorePreferredArtChars(raw))));
+    const cleaned = _stripTag(restorePreferredArtChars(raw));
+    Object.assign(state, rawSnapshotFields(cleaned));
+    const decoded = decodeLayeredRaw(cleaned);
+    if (decoded) {
+      state.rawCode = null;
+      if (decoded.baseName) state.name = decoded.baseName;
+      state.layers = decoded.layers;
+    } else {
+      state.layers = [];
+    }
     state.scoredMode = resolveScoredMode(state.scoredMode, readScoredDefault());
   }
 
@@ -12036,6 +12450,32 @@ _rgnfFab = fab; _rgnfPanel = panel;
   }
 
   function render(panel) {
+    // Catch legacy states persisted before decodeLayeredRaw existed: if we
+    // still have a layered rawCode sitting alongside an empty Layers array,
+    // decode it once so the editor lands with the right base + layer cards.
+    if (typeof state?.rawCode === 'string' && /<pos=/i.test(state.rawCode)
+        && (!Array.isArray(state.layers) || !state.layers.length)) {
+      const decoded = decodeLayeredRaw(state.rawCode);
+      if (decoded) {
+        state.rawCode = null;
+        if (decoded.baseName) state.name = decoded.baseName;
+        state.layers = decoded.layers;
+      }
+    }
+    // Rescue states where an earlier decoder version left a concatenated
+    // base name behind. If every layer's text is the same string and
+    // state.name is that string repeated, collapse it back to one copy.
+    if (Array.isArray(state?.layers) && state.layers.length && typeof state.name === 'string') {
+      const explicitTexts = state.layers.map(L => L?.text).filter(t => typeof t === 'string' && t.length);
+      if (explicitTexts.length && explicitTexts.every(t => t === explicitTexts[0])) {
+        const one = explicitTexts[0];
+        if (state.name !== one && state.name.length % one.length === 0
+            && state.name === one.repeat(state.name.length / one.length)) {
+          state.name = one;
+          for (const L of state.layers) if (L?.text === one) L.text = '';
+        }
+      }
+    }
     const savedScroll = captureForgeScroll(panel);
     panel.innerHTML = '';
     saveJSON(stateKey(), state);

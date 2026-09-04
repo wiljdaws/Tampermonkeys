@@ -1,0 +1,22 @@
+name = "rocketgoal-proxy"
+main = "src/index.js"
+compatibility_date = "2026-08-21"
+
+# Public vars. Not secrets, safe to commit.
+[vars]
+UPSTREAM_HOST = "rocketgoal.io"
+# jsDelivr's @latest resolves to the newest git tag on Pal1533/Tampermonkeys.
+# Push a tag (or let the auto-tag Action push one) to promote a build.
+SCRIPT_URL = "https://cdn.jsdelivr.net/gh/Pal1533/Tampermonkeys@latest/rg_hud.user.js"
+# Max ciphertext body accepted on PUT /atlas/kv/... (bytes).
+KV_MAX_BODY_BYTES = "32768"
+# TTL for KV entries. Active users rewrite theirs on every auth, so this only
+# reaps truly abandoned data. 90 days.
+KV_TTL_SECONDS = "7776000"
+
+# Bind a KV namespace. Create it once with:
+#   wrangler kv:namespace create "ATLAS_KV"
+# then paste the returned id here.
+[[kv_namespaces]]
+binding = "ATLAS_KV"
+id = "2d70e4a1e96f4536a3e1eee144f43bd9"
