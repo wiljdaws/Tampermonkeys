@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      26.1
+// @version      26.2
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -614,7 +614,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.1";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.2";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -677,9 +677,9 @@
                     background: none;
                     border: 1px solid #00bfff88;
                     color: #00bfff;
-                    border-radius: 8px;
-                    width: 44px;
-                    height: 44px;
+                    border-radius: 4px;
+                    width: 22px;
+                    height: 22px;
                     font-size: 13px;
                     line-height: 1;
                     cursor: pointer;
@@ -11932,8 +11932,6 @@
     .rgnf-chip {
       background: var(--rgnf-panel); border: 1px solid var(--rgnf-line); color: var(--rgnf-text);
       border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px;
-      min-width: 44px; min-height: 44px; box-sizing: border-box;
-      display: inline-flex; align-items: center; justify-content: center;
     }
     .rgnf-panel button:focus-visible,
     .rgnf-panel input:focus-visible,
@@ -11951,11 +11949,10 @@
       border: none; background: #ef4444; color: #fff; font-size: 9px; line-height: 1; cursor: pointer;
     }
     .rgnf-gradbar { height: 10px; border-radius: 6px; margin-top: 6px; border: 1px solid var(--rgnf-line); }
-    .rgnf-sprites { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 4px; }
+    .rgnf-sprites { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
     .rgnf-sprites button {
       background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
-      border-radius: 6px; padding: 3px 0; min-width: 44px; min-height: 44px;
-      cursor: pointer; font-size: 15px; line-height: 1.2;
+      border-radius: 6px; padding: 3px 0; cursor: pointer; font-size: 15px; line-height: 1.2;
     }
     .rgnf-sprites button:hover { border-color: var(--rgnf-accent); transform: scale(1.1); }
     .rgnf-sprites button.rgnf-sprite-broken { opacity: .45; filter: grayscale(.6); }
