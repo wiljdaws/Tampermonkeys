@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      25.9
+// @version      26.0
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -614,7 +614,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "25.7";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.0";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -1756,7 +1756,16 @@
         for (const mode of MODES_FOR_SNAPSHOTS) {
             const bs = statsOf(before, mode);
             const as = statsOf(after, mode);
-            if (as.matches <= bs.matches) continue; // no new match this mode
+            const matchesDelta = as.matches - bs.matches;
+            if (matchesDelta <= 0) continue; // no new match this mode
+            // Reconciliation guard: if more than one match closed since we
+            // last looked, this update is catching up on games the HUD
+            // didn't observe (mobile play, session paused, tab reloaded).
+            // Writing it would attribute all the missed MMR to one "match".
+            if (matchesDelta > 1) {
+                dbg(`match snapshot skipped: ${mode} matchesDelta=${matchesDelta} looks like a catch-up sync`);
+                continue;
+            }
             const outcome = outcomeFromDelta(bs, as);
             if (!outcome) continue;
             created.push({
@@ -11225,7 +11234,7 @@
     const nameCode = colorizeNamedArt(artName, s);
     const packedArt = isAsciiArtText(artName) || isAsciiArtText(s.name);
     const align = normalizeForgeAlign(s.align);
-    if (!packedArt) {
+    if (!packedArt && align !== "left") {
       open += `<align=${align}>`;
       close = `</align>${close}`;
     }
@@ -11789,7 +11798,7 @@
     .rgnf-sec { padding: 12px 16px; border-bottom: 1px solid var(--rgnf-line); }
     .rgnf-sec h4 {
       margin: 0 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
-      color: var(--rgnf-muted); font-weight: 600;
+      color: var(--rgnf-text); font-weight: 700;
     }
     .rgnf-hint { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--rgnf-muted); }
     .rgnf-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
@@ -11799,7 +11808,7 @@
       border: 1px solid var(--rgnf-line); border-radius: 8px; padding: 7px 9px; font-size: 13px;
     }
     .rgnf-panel input[type=color] {
-      width: 34px; height: 28px; padding: 0; border: 1px solid var(--rgnf-line);
+      width: 40px; height: 32px; padding: 0; border: 1px solid var(--rgnf-line);
       border-radius: 6px; background: none; cursor: pointer;
     }
     .rgnf-panel input[type=range] { flex: 1; accent-color: var(--rgnf-accent); }
@@ -11881,8 +11890,13 @@
     .rgnf-btn-apply {
       flex: 1; color: #06121a;
       background: linear-gradient(90deg, var(--rgnf-accent), var(--rgnf-accent-2));
+      transition: filter .12s ease, transform .12s ease;
     }
+    .rgnf-btn-apply:hover { filter: brightness(1.12) drop-shadow(0 0 6px rgba(34,211,238,.4)); transform: translateY(-1px); }
+    .rgnf-btn-apply:active { transform: translateY(0); filter: brightness(.95); }
+    .rgnf-btn-apply:disabled { opacity: .6; cursor: not-allowed; transform: none; filter: none; }
     .rgnf-btn-ghost { background: var(--rgnf-panel); color: var(--rgnf-text); border: 1px solid var(--rgnf-line); flex-shrink: 0; }
+    .rgnf-btn-ghost:hover { border-color: var(--rgnf-accent); color: var(--rgnf-accent); }
     /* wrap on narrow embeds so buttons stay on-screen */
     .rgnf-row { flex-wrap: wrap; }
     .rgnf-status { margin-top: 8px; font-size: 12px; min-height: 16px; }
@@ -12898,7 +12912,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     const fmt = (n) => (Number(n) || 0).toFixed(2);
     state.layers.forEach((L, idx) => {
       const card = el('div', {
-        style: 'border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;margin-top:8px;display:flex;flex-direction:column;gap:6px;',
+        style: 'border:1px solid var(--rgnf-line);border-radius:8px;padding:12px;margin-top:8px;display:flex;flex-direction:column;gap:8px;background:rgba(34,211,238,0.04);',
       });
 
       // header: label · color · bold · remove
