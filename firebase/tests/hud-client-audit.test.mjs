@@ -10,6 +10,18 @@ import {
   nickSafeColor as nickSafeColorFromModule,
   sanitizeNicknameColors as sanitizeNicknameColorsFromModule,
 } from "../../src/shared/nickname-color.js";
+import { clanMembers as clanMembersFromModule } from "../../src/clans/members.js";
+import { canonicalClanDirectory as canonicalClanDirectoryFromModule } from "../../src/clans/directory.js";
+import { sanitizeClanTag as sanitizeClanTagFromModule } from "../../src/clans/tag.js";
+import { escapeHtml as escapeHtmlFromModule } from "../../src/shared/html.js";
+import { hexToRgba as hexToRgbaFromModule } from "../../src/shared/color.js";
+import { cleanName as cleanNameFromModule } from "../../src/identity/names.js";
+import { resolveAtlasFirebaseApp as resolveAtlasFirebaseAppFromModule } from "../../src/firebase/app.js";
+import { truncateForDeny as truncateForDenyFromModule } from "../../src/firebase/deny.js";
+import { parseRosterInitLine as parseRosterInitLineFromModule } from "../../src/leaderboard/cache.js";
+import { normalizePopupPreferences as normalizePopupPreferencesFromModule } from "../../src/leaderboard/popups.js";
+import { isAtlasAdSrc as isAtlasAdSrcFromModule } from "../../src/ads.js";
+import { glickoOf as glickoOfFromModule } from "../../src/matches/glicko.js";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const workspace = path.resolve(testDirectory, "..");
@@ -97,6 +109,38 @@ test("Name Forge color sanitizing is a shared module", () => {
     sanitizeNicknameColorsFromModule("<#FFA600>"),
     "<#FFA700>",
   );
+});
+
+test("clan and popup helpers live in source modules", () => {
+  assert.deepEqual(
+    clanMembersFromModule({ members: { a: { name: "A" } } }),
+    [{ name: "A", userId: "a" }],
+  );
+  assert.equal(canonicalClanDirectoryFromModule([{ id: "z" }, { id: "a" }]).length, 2);
+  assert.equal(sanitizeClanTagFromModule("ab12!"), "AB");
+  assert.equal(escapeHtmlFromModule("<x>"), "&lt;x&gt;");
+  assert.equal(hexToRgbaFromModule("#00ff00", 0.5), "rgba(0,255,0,0.5)");
+  assert.equal(cleanNameFromModule("<#FF0000>Hi"), "Hi");
+  assert.equal(truncateForDenyFromModule("  a   b  ", 3), "a b");
+  const created = [];
+  const app = resolveAtlasFirebaseAppFromModule([], { projectId: "rgleaderboard" }, (config, name) => {
+    created.push(name || "[DEFAULT]");
+    return { name: name || "[DEFAULT]", options: config };
+  });
+  assert.equal(app.name, "[DEFAULT]");
+  assert.deepEqual(created, ["[DEFAULT]"]);
+  assert.equal(
+    normalizePopupPreferencesFromModule({ popupPosition: "bottom-left" }).position,
+    "bottom-left",
+  );
+  assert.equal(
+    parseRosterInitLineFromModule(
+      "Initialized stats for player Foo (UserId: abc, Team: Blue)",
+    )?.uid,
+    "abc",
+  );
+  assert.equal(isAtlasAdSrcFromModule("https://imasdk.googleapis.com/x.js"), true);
+  assert.equal(glickoOfFromModule({ ModesGlicko: { Casual: { rd: 80 } } }, "Casual").rd, 80);
 });
 
 test("release metadata and debug logging stay synchronized", () => {
