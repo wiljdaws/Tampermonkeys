@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      26.4
+// @version      26.5
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -1792,6 +1792,17 @@ function createNameForge(host = {}) {
     return out;
   }
 
+  // TMP <pos=0> is the start of the *current* line. Titles/subtitles live
+  // after <br>, so appending layers at the end of the string paints them
+  // over the extra line instead of the name.
+  function spliceLayersOnFirstLine(body, s, opts) {
+    const layers = layersMarkup(s, opts);
+    if (!layers) return body;
+    const match = /<br\s*\/?\s*>/i.exec(body);
+    if (!match) return body + layers;
+    return body.slice(0, match.index) + layers + body.slice(match.index);
+  }
+
   function buildCode(s) {
     let open = '';
     let close = '';
@@ -1865,7 +1876,7 @@ function createNameForge(host = {}) {
       }
     }
 
-    code += layersMarkup(s);
+    code = spliceLayersOnFirstLine(code, s);
 
     // trailing tags style whatever "Scored!" text the game appends.
     code += scoredSuffix(s);
@@ -1877,7 +1888,7 @@ function createNameForge(host = {}) {
     if (typeof s.rawCode === 'string') {
       const art = isAsciiArtText(s.rawCode) || isAsciiArtText(s.name);
       const raw = art ? packAsciiArt(s.rawCode, s.align) : preserveForgeNewlines(s.rawCode);
-      return raw + layersMarkup(s) + scoredSuffix(s);
+      return spliceLayersOnFirstLine(raw, s) + scoredSuffix(s);
     }
     return buildCode(s);
   }
@@ -3010,8 +3021,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
     const shownPfx = artPreviewText(pfx);
     const shownBody = artPreviewText(body);
     const hasLayers = !opts.skipLayers && Array.isArray(s?.layers) && s.layers.length;
-    const shownLayers = hasLayers ? layersMarkup(s, { noPrefixOffset: hasLayers && !!pfx }) : '';
+    const layerOpts = { noPrefixOffset: hasLayers && !!pfx };
+    const layeredBody = hasLayers ? spliceLayersOnFirstLine(shownBody, s, layerOpts) : shownBody;
     const shownTail = s?.scoredMode === "hide" ? "" : scoredSuffix(s) + " Scored!";
+    const nameLineChars = (/<br\s*\/?\s*>/i.exec(shownBody) || { index: shownBody.length }).index;
     let inner;
     if (hasLayers && pfx) {
       // Prefix as its own sibling so layer <pos=0> resets to the body's start,
@@ -3019,16 +3032,16 @@ _rgnfFab = fab; _rgnfPanel = panel;
       inner = document.createElement('div');
       inner.style.cssText = 'display:inline-flex;align-items:baseline;white-space:nowrap;';
       inner.appendChild(renderRawTMP(shownPfx));
-      inner.appendChild(renderRawTMP(shownBody + shownLayers + shownTail, {
+      inner.appendChild(renderRawTMP(layeredBody + shownTail, {
         paintName: s?.name,
         paintFrom: 0,
-        paintTo: shownBody.length,
+        paintTo: nameLineChars,
       }));
     } else {
-      inner = renderRawTMP(shownPfx + shownBody + shownLayers + shownTail, {
+      inner = renderRawTMP(shownPfx + layeredBody + shownTail, {
         paintName: s?.name,
         paintFrom: shownPfx.length,
-        paintTo: shownPfx.length + shownBody.length,
+        paintTo: shownPfx.length + (hasLayers ? nameLineChars : shownBody.length),
       });
     }
 
@@ -4054,17 +4067,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         groups[folder].forEach(({ p, idx }) => {
           const row = el('div', { class: 'rgnf-preset' });
           row.style.marginLeft = '10px';
-          const presetCell = el('span', { title: p.label });
-          presetCell.style.cssText = 'flex:1;overflow:hidden;max-height:50px;white-space:normal;';
-          const presetLabel = el('div', { text: p.label });
-          presetLabel.style.cssText = 'font-size:11px;color:var(--rgnf-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-          presetCell.appendChild(presetLabel);
-          const presetState = Object.assign(defaultState(), p.state || {});
-          const presetCode = typeof presetState.rawCode === 'string'
-            ? presetState.rawCode
-            : buildCode(presetState);
-          presetCell.appendChild(renderRawTMP(presetCode));
-          row.appendChild(presetCell);
+          row.appendChild(el('span', { text: p.label, title: p.label }));
           row.appendChild(el('button', {
             class: 'rgnf-chip',
             text: 'Load',
@@ -5194,7 +5197,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------

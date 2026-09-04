@@ -598,7 +598,7 @@ export function bootAtlas() {
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.4";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.5";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------

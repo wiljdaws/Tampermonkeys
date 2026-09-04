@@ -106,7 +106,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "26.4");
+  assert.equal(version, "26.5");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1204,6 +1204,11 @@ test("Name Forge keeps paint help readable and long TMP code scrollable", () => 
   );
 });
 
+test("Name Forge preset folders list labels, not TMP name previews", () => {
+  assert.match(hudSource, /el\('span', \{ text: p\.label, title: p\.label \}\)/);
+  assert.doesNotMatch(hudSource, /presetCell\.appendChild\(renderRawTMP/);
+});
+
 test("HUD input isolation yields embedded Name Forge shortcuts", () => {
   const isNameForgeInput = extractHudFunction("isNameForgeInput");
   assert.equal(
@@ -1302,6 +1307,59 @@ test("Name Forge can paint a highlighted slice without recoloring the rest", () 
   assert.equal(fromPadded[1].end, 2);
   assert.match(hudFunctionSource("commitNameColor"), /const range = namePaintRange/);
   assert.match(hudFunctionSource("commitNameColor"), /A lost highlight must not/);
+});
+
+test("Name Forge layers overlay the name, not a title on a later line", () => {
+  const spliceLayersOnFirstLine = extractHudFunction("spliceLayersOnFirstLine", {
+    layersMarkup: () => "<pos=0>LAYER",
+  });
+  assert.equal(
+    spliceLayersOnFirstLine(
+      "<b><align=center>RIS3N</align></b><br><br><#FF0000>test",
+      { layers: [{ text: "RIS3N" }] },
+    ),
+    "<b><align=center>RIS3N</align></b><pos=0>LAYER<br><br><#FF0000>test",
+  );
+  assert.equal(
+    spliceLayersOnFirstLine("RIS3N", { layers: [{}] }),
+    "RIS3N<pos=0>LAYER",
+  );
+
+  const buildCode = extractHudFunction("buildCode", {
+    restorePreferredArtChars: (value) => value,
+    brailleToAsciiArt: (value) => value,
+    colorizeNamedArt: (name) => name,
+    isAsciiArtText: () => false,
+    normalizeForgeAlign: () => "center",
+    packAsciiArt: (value) => value,
+    composeExtraLine: (_state, kind) => (
+      kind === "title" ? { line: "<#FF0000>test", visibleWidth: 4 } : null
+    ),
+    spliceLayersOnFirstLine,
+    scoredSuffix: () => "<size=0>",
+    alphaHex: () => "FF",
+  });
+  const code = buildCode({
+    name: "RIS3N",
+    rotateDeg: 0,
+    waveOn: false,
+    sizePct: 100,
+    markOn: false,
+    bold: true,
+    italic: false,
+    underline: false,
+    strike: false,
+    align: "center",
+    titleOn: true,
+    titleText: "test",
+    titleGapLines: 1,
+    subtitleOn: false,
+    layers: [{ text: "RIS3N" }],
+  });
+  const layerAt = code.indexOf("<pos=0>LAYER");
+  const titleAt = code.indexOf("<#FF0000>test");
+  assert.ok(layerAt >= 0 && titleAt >= 0, code);
+  assert.ok(layerAt < titleAt, code);
 });
 
 test("Name Forge treats dot art and tall ASCII as art, not a title", () => {
