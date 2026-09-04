@@ -86,7 +86,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "26.2");
+  assert.equal(version, "26.3");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 
@@ -1143,6 +1143,58 @@ test("popup preferences cover roles, safe corners, and reduced motion", () => {
     hudSource,
     /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none/,
   );
+});
+
+test("login response moves Name Forge onto the authenticated account", () => {
+  const calls = [];
+  const syncForgeFromLogin = extractHudFunction("syncForgeFromLogin", {
+    cleanName: (value) => value.replace(/<[^>]*>/g, "").trim(),
+    stripLeadingClanTagMarkup: (value) => value.replace(/^\[RG\]\s*/, ""),
+    RGNF: {
+      syncToCurrentPlayer: (...args) => calls.push(["sync", ...args]),
+      verifyStolenName: (...args) => calls.push(["verify", ...args]),
+    },
+  });
+  assert.equal(
+    syncForgeFromLogin({
+      Id: "player-2",
+      Nickname: "[RG] <#FFFFFF>RIS3N",
+    }),
+    true,
+  );
+  assert.deepEqual(calls, [
+    ["sync", "player-2", "RIS3N", "<#FFFFFF>RIS3N"],
+    ["verify", "[RG] <#FFFFFF>RIS3N"],
+  ]);
+  assert.equal(syncForgeFromLogin({ Nickname: "Missing id" }), false);
+});
+
+test("Name Forge keeps paint help readable and long TMP code scrollable", () => {
+  assert.match(
+    hudSource,
+    /\.rgnf-paintbar\s*\{[^}]*flex-wrap:\s*wrap/s,
+  );
+  assert.match(
+    hudSource,
+    /\.rgnf-code\s*\{[^}]*max-height:\s*180px/s,
+  );
+  assert.match(
+    hudSource,
+    /rawEdit\.style\.cssText\s*=\s*'[^']*overflow-y:auto/,
+  );
+});
+
+test("HUD input isolation yields embedded Name Forge shortcuts", () => {
+  const isNameForgeInput = extractHudFunction("isNameForgeInput");
+  assert.equal(
+    isNameForgeInput({
+      closest: (selector) => selector === ".rgnf-panel" ? {} : null,
+    }),
+    true,
+  );
+  assert.equal(isNameForgeInput({ closest: () => null }), false);
+  assert.equal(isNameForgeInput(null), false);
+  assert.match(hudSource, /if \(isNameForgeInput\(active\)\) return;/);
 });
 
 test("Name Forge can paint a highlighted slice without recoloring the rest", () => {

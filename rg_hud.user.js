@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      26.2
+// @version      26.3
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -614,7 +614,7 @@
     }
 
     // num form lets server rules do >= checks. never write 11.10 (parseFloat).
-    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.2";
+    const SCRIPT_VERSION = (typeof GM_info !== "undefined" && GM_info?.script?.version) || "26.3";
     const SCRIPT_VERSION_NUM = parseFloat(SCRIPT_VERSION) || 0;
 
     // ---------- HUD ----------
@@ -3219,6 +3219,10 @@
     // Unity swallows printable keys in capture phase. we intercept earlier
     // and stopImmediatePropagation while a HUD input is focused, so the
     // game never sees the event.
+    function isNameForgeInput(el) {
+        return Boolean(el?.closest?.(".rgnf-panel"));
+    }
+
     ["keydown", "keyup", "keypress"].forEach(type => {
         window.addEventListener(type, e => {
             const active = document.activeElement;
@@ -3240,6 +3244,10 @@
                 }
                 return;
             }
+            // Name Forge installs its own guard later in this same script. Let
+            // it handle undo/redo, Apply, and synthetic text editing before
+            // either event can reach the game.
+            if (isNameForgeInput(active)) return;
             const inHud = active && hud && hud.contains(active)
                 && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")
                 && active.type !== "checkbox" && active.type !== "range" && active.type !== "color";
@@ -5820,6 +5828,18 @@
         }
     }
 
+    function syncForgeFromLogin(loginData) {
+        const userId = String(loginData?.Id ?? "").trim();
+        if (!userId || typeof RGNF === "undefined") return false;
+        const rawNick = String(loginData?.Nickname ?? "");
+        const unprefixed = stripLeadingClanTagMarkup(rawNick);
+        if (RGNF.syncToCurrentPlayer) {
+            RGNF.syncToCurrentPlayer(userId, cleanName(unprefixed), unprefixed);
+        }
+        if (rawNick && RGNF.verifyStolenName) RGNF.verifyStolenName(rawNick);
+        return true;
+    }
+
     const API_HOST_FRAGMENT = "us-central1-rocketball-23c12.cloudfunctions.net";
 
     const gameWindow = pageWindow();
@@ -5886,16 +5906,12 @@
                 resetMatchPopupState();
             } else if (url.includes("/v0304_login/login")) {
                 tryParseAndUpdate(text);
-                // login carries the raw nickname before any local processing,
-                // ideal spot for the pending-steal verifier
                 try {
-                    const loginData = JSON.parse(text);
-                    const rawNick = loginData?.Nickname ?? "";
-                    if (rawNick && typeof RGNF !== "undefined" && RGNF.verifyStolenName) {
-                        RGNF.verifyStolenName(rawNick);
-                    }
+                    // Move Forge off its anonymous/default state even when the
+                    // player opened it before the login response arrived.
+                    syncForgeFromLogin(JSON.parse(text));
                 } catch (e) {
-                    dbg("login pending-steal check failed: " + getErrMsg(e));
+                    dbg("login Name Forge sync failed: " + getErrMsg(e));
                 }
             } else if (url.includes("/v0304_player/equipSkin")) {
                 // response is a bare quoted skin id, e.g. "body.2"
@@ -11973,6 +11989,7 @@
     .rgnf-preview-inner { user-select: none; cursor: text; }
     .rgnf-paintbar {
       display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+      flex-wrap: wrap;
       margin-bottom: 8px; text-align: left;
       position: sticky; top: 0; z-index: 2;
       background: linear-gradient(180deg, #101a3a 70%, transparent);
@@ -12007,7 +12024,7 @@
     .rgnf-code {
       margin-top: 8px; background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
       border-radius: 8px; padding: 8px; font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
-      color: var(--rgnf-code); word-break: break-all; max-height: 90px; overflow-y: auto; user-select: all;
+      color: var(--rgnf-code); word-break: break-all; max-height: 180px; overflow-y: auto; user-select: all;
     }
     .rgnf-meta { display: flex; justify-content: space-between; color: var(--rgnf-muted); font-size: 11px; margin-top: 4px; }
     .rgnf-btn {
@@ -12721,7 +12738,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // hand-editing either mode captures the text as rawCode and flips to raw
     // so subsequent rebuilds don't clobber the edit
     const rawEdit = el('textarea', { class: 'rgnf-code' });
-    rawEdit.style.cssText = 'display:block;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow:hidden;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:var(--rgnf-code);';
+    rawEdit.style.cssText = 'display:block;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow-y:auto;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:var(--rgnf-code);';
     // reset to auto first, scrollHeight won't shrink below the current height
     const autosizeRawEdit = () => {
       rawEdit.style.height = 'auto';
