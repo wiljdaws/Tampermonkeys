@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ATLAS
 // @namespace    https://rocketgoal.io
-// @version      25.8
+// @version      25.9
 // @description  The community-run live service for Rocket Goal — bearing the weight of a game the devs left behind. Full stats HUD, clan system with Clan Clash events, Name Forge for custom in-game names, leaderboard opponent popup, and anti-cheat that actually works.
 // @author       JesusDied4U
 // @icon         https://raw.githubusercontent.com/Pal1533/Tampermonkeys/refs/heads/main/atlas/atlas.png
@@ -113,6 +113,13 @@
     }
 
     (function installAtlasAdBlocker() {
+        // Quick off-switch for diagnosing false positives. Toggle from
+        // DevTools console:  localStorage.setItem('atlas.adblock.off','1');
+        // then reload. Set back to '0' or removeItem to re-enable.
+        try {
+            if (localStorage.getItem("atlas.adblock.off") === "1") return;
+        } catch (e) {}
+
         const selector = ATLAS_AD_SELECTORS.join(",");
 
         // CSS pass: hides matches so they can't flash before removal.
