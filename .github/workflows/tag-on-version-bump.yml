@@ -1,7 +1,7 @@
 name: tag-on-version-bump
 
 # When a push to main changes the @version line in rg_hud.user.js, push a
-# matching git tag so jsDelivr's @latest picks it up. Then purge jsDelivr's
+# matching git tag for immutable releases. Then purge jsDelivr's @main file
 # cache so proxy users see the update on their next reload instead of
 # waiting up to 12h for the CDN to expire it on its own.
 
@@ -51,7 +51,7 @@ jobs:
           git tag -a "${{ steps.v.outputs.tag }}" -m "ATLAS ${{ steps.v.outputs.version }}"
           git push origin "${{ steps.v.outputs.tag }}"
 
-      - name: Purge jsDelivr @latest cache
+      - name: Purge jsDelivr @main cache
         if: steps.check.outputs.skip == 'false'
         run: |
-          curl -fsS "https://purge.jsdelivr.net/gh/${{ github.repository }}@latest/rg_hud.user.js" || true
+          curl -fsS "https://purge.jsdelivr.net/gh/${{ github.repository }}@main/rg_hud.user.js" || true
