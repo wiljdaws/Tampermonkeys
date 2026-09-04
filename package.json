@@ -1,0 +1,10 @@
+{
+  "name": "atlas-userscript",
+  "private": true,
+  "type": "module",
+  "description": "ATLAS HUD userscript source and bundle",
+  "scripts": {
+    "build": "node scripts/build-hud.mjs",
+    "test:hud": "npm run build && npm --prefix firebase run test:hud-client"
+  }
+}

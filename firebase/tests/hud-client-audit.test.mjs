@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 import { JSDOM } from "jsdom";
+import {
+  nickSafeColor as nickSafeColorFromModule,
+  sanitizeNicknameColors as sanitizeNicknameColorsFromModule,
+} from "../../src/shared/nickname-color.js";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const workspace = path.resolve(testDirectory, "..");
@@ -13,6 +17,9 @@ const hudScriptPath = process.env.HUD_SCRIPT
   ? path.resolve(process.env.HUD_SCRIPT)
   : path.resolve(workspace, "../rg_hud.user.js");
 const hudSource = await readFile(hudScriptPath, "utf8");
+const { buildHudSource } = await import(
+  path.resolve(workspace, "../scripts/build-hud.mjs")
+);
 
 function extractHudFunction(name, context = {}) {
   const asyncStart = hudSource.indexOf(`async function ${name}(`);
@@ -79,6 +86,19 @@ const streakSnipeCandidates = extractHudFunction("streakSnipeCandidates", {
 const nameForgePresetKey = extractHudFunction("nameForgePresetKey");
 const stripClanTagPrefix = extractHudFunction("stripClanTagPrefix");
 
+test("shipped ATLAS userscript matches the modular source bundle", async () => {
+  const rebuilt = await buildHudSource();
+  assert.equal(hudSource, rebuilt);
+});
+
+test("Name Forge color sanitizing is a shared module", () => {
+  assert.equal(nickSafeColorFromModule("#FFA600"), "#FFA700");
+  assert.equal(
+    sanitizeNicknameColorsFromModule("<#FFA600>"),
+    "<#FFA700>",
+  );
+});
+
 test("release metadata and debug logging stay synchronized", () => {
   const version = hudSource.match(/^\/\/ @version\s+(.+)$/m)?.[1].trim();
   const fallback = hudSource.match(
@@ -86,7 +106,7 @@ test("release metadata and debug logging stay synchronized", () => {
   )?.[1];
   assert.ok(version, "missing userscript version");
   assert.equal(version.replace(/-dev$/, ""), fallback);
-  assert.equal(version, "26.3");
+  assert.equal(version, "26.4");
   assert.match(hudSource, /const RG_DEBUG = true;/);
 });
 

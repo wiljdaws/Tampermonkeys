@@ -2,4 +2,5 @@ todo.md
 .claude/
 .wrangler/
 .cursor/
+node_modules/
 tools/node_modules/
