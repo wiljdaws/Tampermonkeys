@@ -641,8 +641,9 @@
             ${pos.left ? `left:${pos.left};` : ""}
             right:${pos.right};
             width:max-content;
-            min-width:250px;
-            max-width:340px;
+            min-width:min(250px, calc(100vw - 16px));
+            max-width:min(340px, calc(100vw - 16px));
+            box-sizing:border-box;
             background:rgba(18,18,22,.88);
             color:white;
             border:2px solid #00bfff;
@@ -676,9 +677,9 @@
                     background: none;
                     border: 1px solid #00bfff88;
                     color: #00bfff;
-                    border-radius: 4px;
-                    width: 22px;
-                    height: 22px;
+                    border-radius: 8px;
+                    width: 44px;
+                    height: 44px;
                     font-size: 13px;
                     line-height: 1;
                     cursor: pointer;
@@ -1176,16 +1177,15 @@
         // hidden HUD returns zeros from getBoundingClientRect and we'd
         // persist top-left as the "corrected" pos. re-clamps on show.
         if (!isVisible(hud) || hud.offsetWidth === 0) return;
-        const rect = hud.getBoundingClientRect();
         const vw = window.innerWidth;
         const vh = window.innerHeight;
         const MARGIN = 40;
+        hud.style.maxWidth = Math.max(0, Math.min(340, vw - 16)) + "px";
+        const rect = hud.getBoundingClientRect();
 
-        let left = rect.left;
+        let left = Math.max(8, Math.min(rect.left, vw - rect.width - 8));
         let top = rect.top;
 
-        if (left + rect.width < MARGIN) left = MARGIN - rect.width;
-        if (left > vw - MARGIN) left = vw - MARGIN;
         if (top < 0) top = 0;
         if (top > vh - MARGIN) top = vh - MARGIN;
 
@@ -1239,7 +1239,7 @@
             let newTop = el.offsetTop - moveY;
             let newLeft = el.offsetLeft - moveX;
             newTop = Math.max(0, Math.min(newTop, window.innerHeight - MARGIN));
-            newLeft = Math.max(MARGIN - el.offsetWidth, Math.min(newLeft, window.innerWidth - MARGIN));
+            newLeft = Math.max(8, Math.min(newLeft, window.innerWidth - el.offsetWidth - 8));
             el.style.top = newTop + "px";
             el.style.left = newLeft + "px";
             el.style.right = "auto";
@@ -2252,6 +2252,7 @@
     const HUD_STATS_UPLOAD_INTERVAL_MS = 5 * 60 * 1000;
     let hudStatsUploadHandle = null;
     let hudStatsUploadInFlight = false;
+    let hudStatsPendingFinalFlush = false;
     let hudStatsLastPayloadKey = "";
 
     function hudStatsToday() {
@@ -2259,7 +2260,10 @@
     }
 
     async function uploadHudReadStats({ final = false } = {}) {
-        if (hudStatsUploadInFlight) return;
+        if (hudStatsUploadInFlight) {
+            if (final) hudStatsPendingFinalFlush = true;
+            return;
+        }
         const uid = firebaseAuthUid;
         const rgPlayerId = (typeof myUserId === "function") ? myUserId() : null;
         if (!uid) return; // no identity yet — can't authenticate the write
@@ -2306,6 +2310,10 @@
             dbg("uploadHudReadStats failed (non-fatal): " + getErrMsg(err));
         } finally {
             hudStatsUploadInFlight = false;
+            if (hudStatsPendingFinalFlush) {
+                hudStatsPendingFinalFlush = false;
+                uploadHudReadStats({ final: true }).catch(() => {});
+            }
         }
     }
 
@@ -5290,9 +5298,12 @@
             // only moves during an active event; join/leave/kick use
             // their own write paths.
             if (eventPhase() !== "active") {
-                const tag = myClan?.tag ?? "";
+                const currentClan = clanLoadedForAccount === uid ? myClan : null;
+                const tag = currentClan?.tag ?? "";
                 dbg("Clan MMR write skipped: no active event");
-                return myClan ? { tag, clanId: myClan.id, synced: false, mmr: null } : null;
+                return currentClan
+                    ? { tag, clanId: currentClan.id, synced: false, mmr: null }
+                    : null;
             }
             // A cached null can outlive a stale/missed directory read. Match-end
             // must retry discovery instead of silently abandoning contribution.
@@ -6174,7 +6185,8 @@
     }
 
     async function maybeCaptureEventBaseline(fb, uid, currentMMR) {
-        if (!myClan || eventPhase() !== "active") return;
+        if (!myClan || eventPhase() !== "active"
+            || !clanMembers(myClan).some(member => member.userId === uid)) return;
         const evId = currentEventId();
         if (myClan.eventId === evId
             && memberEventBaseline(myClan, uid) != null) return;
@@ -6191,6 +6203,7 @@
                     const snapshot = await tx.get(ref);
                     if (!snapshot.exists()) return;
                     const liveClan = snapshot.data();
+                    if (!clanMembers(liveClan).some(member => member.userId === uid)) return;
                     const baseline = liveClan.eventId === evId
                         ? { ...(liveClan.eventBaseline ?? {}) }
                         : {};
@@ -6489,6 +6502,8 @@
     let clanLoaded = false;
     let clanLoadedForAccount = null; // which account the above was loaded for
     let clanLoadInFlight = null;     // shared promise so parallel callers dedupe
+    let clanLoadInFlightAccount = null;
+    let clanLoadInFlightForce = false;
     let clanLoadFailedAt = 0;        // ms; skip retries until cooldown passes
     const CLAN_LOAD_FAILURE_COOLDOWN_MS = 60_000;
 
@@ -6888,12 +6903,25 @@
 
     async function loadClanData(force = false) {
         // Parallel callers (submit + updateMyClanMMR fire together at match-end)
-        // share one round trip instead of each issuing their own reads.
-        if (clanLoadInFlight) return clanLoadInFlight;
-        clanLoadInFlight = loadClanDataInner(force).finally(() => {
-            clanLoadInFlight = null;
+        // share one round trip, but never join a request from another account.
+        const uid = myUserId();
+        if (clanLoadInFlight && clanLoadInFlightAccount === uid) {
+            if (force && !clanLoadInFlightForce) {
+                return clanLoadInFlight.then(() => loadClanData(true));
+            }
+            return clanLoadInFlight;
+        }
+        const request = loadClanDataInner(force).finally(() => {
+            if (clanLoadInFlight === request) {
+                clanLoadInFlight = null;
+                clanLoadInFlightAccount = null;
+                clanLoadInFlightForce = false;
+            }
         });
-        return clanLoadInFlight;
+        clanLoadInFlight = request;
+        clanLoadInFlightAccount = uid;
+        clanLoadInFlightForce = force;
+        return request;
     }
 
     async function loadClanDataInner(force = false) {
@@ -6927,6 +6955,7 @@
             const useReservations = clanReservationsEnabled();
             const deviceId = getDeviceId();
             const previousClan = myClan;
+            let nextDirectory = [];
             let nextClan = null;
             let mine = null;
             let membership = null;
@@ -6941,20 +6970,24 @@
                     : null;
                 device = deviceSnap.exists() ? deviceSnap.data() : null;
                 const clanId = membership?.clanId || device?.clanId || null;
-                clanDirectory = await loadClanDirectoryLite(fb, clanId);
+                nextDirectory = await loadClanDirectoryLite(fb, clanId);
                 mine = clanId
-                    ? (clanDirectory.find(entry => entry.id === clanId)
+                    ? (nextDirectory.find(entry => entry.id === clanId)
                         || { id: clanId })
                     : null;
             } else {
                 const dirSnap = await fb.getDoc(
                     fb.doc(fb.db, "clans_directory", "index")
                 );
-                clanDirectory = canonicalClanDirectory(
+                nextDirectory = canonicalClanDirectory(
                     dirSnap.exists() ? (dirSnap.data().clans ?? []) : []
                 );
-                mine = findDirectoryMembership(clanDirectory, uid);
+                mine = findDirectoryMembership(nextDirectory, {
+                    userId: uid,
+                    deviceId,
+                });
             }
+            if (myUserId() !== uid) return;
             if (mine?.id) {
                 // Skip the one-shot fetch if the live clan listener is already
                 // streaming this clan — the in-memory myClan is fresher than
@@ -6975,13 +7008,12 @@
                     }
                 }
             }
-            myClan = nextClan;
-            if (myClan) {
-                const directoryEntry = clanDirectory.find(
-                    entry => entry.id === myClan.id
+            if (nextClan) {
+                const directoryEntry = nextDirectory.find(
+                    entry => entry.id === nextClan.id
                 ) || null;
                 const linkPlan = clanDeviceLinkPlan({
-                    clan: myClan,
+                    clan: nextClan,
                     uid,
                     deviceId,
                     membership,
@@ -6990,14 +7022,14 @@
                     useReservations,
                 });
                 if (linkPlan.conflictClanId) {
-                    const sameClan = linkPlan.conflictClanId === myClan.id;
-                    const other = clanDirectory.find(
+                    const sameClan = linkPlan.conflictClanId === nextClan.id;
+                    const other = nextDirectory.find(
                         entry => entry?.id === linkPlan.conflictClanId
                     );
                     await showDialog({
                         message: sameClan
-                            ? `This ATLAS device is already linked to another account in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. One of the accounts must leave the clan.`
-                            : `This ATLAS device is already linked to ${other?.tag ? `[${other.tag}] ` : ""}${other?.name || "another clan"}. This account is also in ${myClan.tag ? `[${myClan.tag}] ` : ""}${myClan.name}. Leave one clan before using another account on this device.`,
+                            ? `This ATLAS device is already linked to another account in ${nextClan.tag ? `[${nextClan.tag}] ` : ""}${nextClan.name}. One of the accounts must leave the clan.`
+                            : `This ATLAS device is already linked to ${other?.tag ? `[${other.tag}] ` : ""}${other?.name || "another clan"}. This account is also in ${nextClan.tag ? `[${nextClan.tag}] ` : ""}${nextClan.name}. Leave one clan before using another account on this device.`,
                         okLabel: "OK",
                         cancelLabel: "Close",
                     });
@@ -7005,17 +7037,20 @@
                     try {
                         const linkResult = await linkCurrentClanDevice(
                             fb,
-                            myClan,
+                            nextClan,
                             uid,
                             deviceId
                         );
-                        if (linkResult?.clan) myClan = sanitizeClanDoc(linkResult.clan);
-                        if (linkResult?.directory) clanDirectory = linkResult.directory;
+                        if (linkResult?.clan) nextClan = sanitizeClanDoc(linkResult.clan);
+                        if (linkResult?.directory) nextDirectory = linkResult.directory;
                     } catch (linkErr) {
                         dbg("linkCurrentClanDevice failed: " + getErrMsg(linkErr));
                     }
                 }
             }
+            if (myUserId() !== uid) return;
+            myClan = nextClan;
+            clanDirectory = nextDirectory;
             clanLoaded = true;
             clanLoadedForAccount = uid;
             clanLoadFailedAt = 0;
@@ -10089,7 +10124,7 @@
     }
     const normalized = value.replace(/\r\n/g, "\n").replace(/<br\s*\/?\s*>/gi, "\n");
     const lines = normalized.split("\n");
-    const hasTmp = /<(size|color|b|i|u|s|mark|sprite|sub|sup|\/|#)/i.test(normalized)
+    const hasTmp = /<(size|color|b|i|u|s|mark|sprite|sub|sup|align|space|mspace|rotate|pos|voffset|line-height|\/|#)/i.test(normalized)
       || /<#[0-9A-Fa-f]{3,8}>/.test(normalized);
     const stats = artLineStats(normalized);
     let body = lines.map((line) => {
@@ -10468,6 +10503,8 @@
     } else {
       state.layers = [];
     }
+    namePaintSel = { start: 0, end: 0 };
+    state.colorSpans = [];
     state.scoredMode = resolveScoredMode(state.scoredMode, readScoredDefault());
   }
 
@@ -10475,6 +10512,84 @@
   if (state.rawCode) {
     setRawSnapshot(state.rawCode);
     saveJSON(stateKey(), state);
+  }
+
+  const FORGE_HISTORY_LIMIT = 30;
+  let forgeUndoStack = [];
+  let forgeRedoStack = [];
+  let forgeHistoryRestoring = false;
+
+  function forgeSnapshot() {
+    return {
+      state: JSON.parse(JSON.stringify(state)),
+      namePaintSel: { ...namePaintSel },
+      previewZoom,
+    };
+  }
+
+  function forgeSnapshotKey(snapshot) {
+    return JSON.stringify(snapshot);
+  }
+
+  let forgeHistoryCurrent = forgeSnapshot();
+  let forgeHistoryCurrentKey = forgeSnapshotKey(forgeHistoryCurrent);
+
+  function syncForgeHistoryButtons(panel = _rgnfPanel) {
+    const undo = panel?.querySelector?.('[data-rgnf-undo]');
+    const redo = panel?.querySelector?.('[data-rgnf-redo]');
+    if (undo) undo.disabled = forgeUndoStack.length === 0;
+    if (redo) redo.disabled = forgeRedoStack.length === 0;
+  }
+
+  function commitForgeHistory() {
+    if (forgeHistoryRestoring) return false;
+    const next = forgeSnapshot();
+    const nextKey = forgeSnapshotKey(next);
+    if (nextKey === forgeHistoryCurrentKey) return false;
+    forgeUndoStack.push(forgeHistoryCurrent);
+    if (forgeUndoStack.length > FORGE_HISTORY_LIMIT) forgeUndoStack.shift();
+    forgeRedoStack = [];
+    forgeHistoryCurrent = next;
+    forgeHistoryCurrentKey = nextKey;
+    syncForgeHistoryButtons();
+    return true;
+  }
+
+  function restoreForgeHistorySnapshot(snapshot) {
+    forgeHistoryRestoring = true;
+    try {
+      state = Object.assign(defaultState(), JSON.parse(JSON.stringify(snapshot.state || {})));
+      if (!Array.isArray(state.colorSpans)) state.colorSpans = [];
+      state.align = normalizeForgeAlign(state.align);
+      namePaintSel = { start: 0, end: 0, ...(snapshot.namePaintSel || {}) };
+      previewZoom = clampPreviewZoom(snapshot.previewZoom ?? 1);
+      forgeHistoryCurrent = forgeSnapshot();
+      forgeHistoryCurrentKey = forgeSnapshotKey(forgeHistoryCurrent);
+      if (_rgnfPanel) render(_rgnfPanel);
+    } finally {
+      forgeHistoryRestoring = false;
+    }
+    syncForgeHistoryButtons();
+  }
+
+  function undoForge() {
+    if (!forgeUndoStack.length) return;
+    forgeRedoStack.push(forgeHistoryCurrent);
+    restoreForgeHistorySnapshot(forgeUndoStack.pop());
+  }
+
+  function redoForge() {
+    if (!forgeRedoStack.length) return;
+    forgeUndoStack.push(forgeHistoryCurrent);
+    restoreForgeHistorySnapshot(forgeRedoStack.pop());
+  }
+
+  function resetForgeHistory() {
+    forgeUndoStack = [];
+    forgeRedoStack = [];
+    forgeHistoryCurrent = forgeSnapshot();
+    forgeHistoryCurrentKey = forgeSnapshotKey(forgeHistoryCurrent);
+    syncForgeHistoryButtons();
   }
 
   function hexToRgb(hex) {
@@ -11077,7 +11192,7 @@
   // chars, but <sprite=N> tags stay as single tokens
   function tokenize(text) {
     const tokens = [];
-    const re = /<sprite=\d+>/g;
+    const re = /<sprite=\d+\s*>/gi;
     let lastIndex = 0;
     let m;
     while ((m = re.exec(text)) !== null) {
@@ -11752,6 +11867,7 @@
       --rgnf-line: #23294d;
       --rgnf-text: #e2e8f0;
       --rgnf-muted: #8b93b8;
+      --rgnf-code: #9fb3ff;
       --rgnf-accent: #22d3ee;
       --rgnf-accent-2: #e94fff;
     }
@@ -11816,6 +11932,16 @@
     .rgnf-chip {
       background: var(--rgnf-panel); border: 1px solid var(--rgnf-line); color: var(--rgnf-text);
       border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px;
+      min-width: 44px; min-height: 44px; box-sizing: border-box;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .rgnf-panel button:focus-visible,
+    .rgnf-panel input:focus-visible,
+    .rgnf-panel textarea:focus-visible,
+    .rgnf-panel select:focus-visible,
+    .rgnf-fab:focus-visible {
+      outline: 2px solid var(--rgnf-accent);
+      outline-offset: 2px;
     }
     .rgnf-chip.rgnf-on { border-color: var(--rgnf-accent); color: var(--rgnf-accent); box-shadow: 0 0 0 1px rgba(34,211,238,.25) inset; }
     .rgnf-stops { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -11825,10 +11951,11 @@
       border: none; background: #ef4444; color: #fff; font-size: 9px; line-height: 1; cursor: pointer;
     }
     .rgnf-gradbar { height: 10px; border-radius: 6px; margin-top: 6px; border: 1px solid var(--rgnf-line); }
-    .rgnf-sprites { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+    .rgnf-sprites { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 4px; }
     .rgnf-sprites button {
       background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
-      border-radius: 6px; padding: 3px 0; cursor: pointer; font-size: 15px; line-height: 1.2;
+      border-radius: 6px; padding: 3px 0; min-width: 44px; min-height: 44px;
+      cursor: pointer; font-size: 15px; line-height: 1.2;
     }
     .rgnf-sprites button:hover { border-color: var(--rgnf-accent); transform: scale(1.1); }
     .rgnf-sprites button.rgnf-sprite-broken { opacity: .45; filter: grayscale(.6); }
@@ -11855,7 +11982,10 @@
       padding-bottom: 4px;
     }
     .rgnf-paintbar-label { color: var(--rgnf-muted); font-size: 11px; line-height: 1.35; flex: 1; }
-    .rgnf-paintbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .rgnf-paintbar-actions {
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 6px; flex-wrap: wrap; width: 100%; min-width: 0;
+    }
     .rgnf-zoom { display: flex; align-items: center; gap: 4px; }
     .rgnf-zoom-label { min-width: 46px; text-align: center; }
     .rgnf-paint-on {
@@ -11880,7 +12010,7 @@
     .rgnf-code {
       margin-top: 8px; background: var(--rgnf-panel); border: 1px solid var(--rgnf-line);
       border-radius: 8px; padding: 8px; font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
-      color: #9fb3ff; word-break: break-all; max-height: 90px; overflow-y: auto; user-select: all;
+      color: var(--rgnf-code); word-break: break-all; max-height: 90px; overflow-y: auto; user-select: all;
     }
     .rgnf-meta { display: flex; justify-content: space-between; color: var(--rgnf-muted); font-size: 11px; margin-top: 4px; }
     .rgnf-btn {
@@ -11904,7 +12034,7 @@
     .rgnf-status.err { color: #f87171; }
     .rgnf-presets { display: flex; flex-direction: column; gap: 6px; }
     .rgnf-preset { display: flex; align-items: center; gap: 6px; }
-    .rgnf-preset span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rgnf-preset > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rgnf-picker-backdrop {
       position: absolute; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
       background: rgba(4,6,12,.6); border-radius: 12px;
@@ -11919,6 +12049,11 @@
     .rgnf-picker-select, .rgnf-picker-input {
       width: 100%; box-sizing: border-box; background: var(--rgnf-bg); color: var(--rgnf-text);
       border: 1px solid var(--rgnf-line); border-radius: 8px; padding: 8px; font-size: 13px;
+    }
+    @media (max-width: 420px) {
+      .rgnf-preset { flex-wrap: wrap; }
+      .rgnf-preset > span { flex-basis: 100%; }
+      .rgnf-layer-head { flex-wrap: wrap; }
     }
   `;
 
@@ -12003,6 +12138,10 @@
 
     const fab = el('button', { class: 'rgnf-fab', title: 'Name Forge (Alt+N) — drag to move', text: '🎨' });
     const panel = el('div', { class: 'rgnf-panel' });
+    const commitAfterEvent = () => queueMicrotask(() => commitForgeHistory());
+    panel.addEventListener('input', commitAfterEvent);
+    panel.addEventListener('click', commitAfterEvent);
+    panel.addEventListener('pointerup', commitAfterEvent);
 
 
     const savedPos = loadJSON(FABPOS_KEY, null);
@@ -12497,14 +12636,29 @@ _rgnfFab = fab; _rgnfPanel = panel;
         }
       }
     }
+    commitForgeHistory();
     const savedScroll = captureForgeScroll(panel);
     panel.innerHTML = '';
     saveJSON(stateKey(), state);
 
     // ---- header (draggable in fly-out mode; inert inside HUD tab) ----
-    const head = el('div', { class: 'rgnf-head' }, [
-      el('b', { text: 'Name Forge' }),
-    ]);
+    const head = el('div', { class: 'rgnf-head' });
+    head.appendChild(el('b', { text: 'Name Forge' }));
+    const historyActions = el('div', { class: 'rgnf-row' });
+    historyActions.style.margin = '0';
+    const undoBtn = el('button', {
+      class: 'rgnf-chip', text: '↶', title: 'Undo (Ctrl/Cmd+Z)',
+      'data-rgnf-undo': '',
+      onclick: undoForge,
+    });
+    const redoBtn = el('button', {
+      class: 'rgnf-chip', text: '↷', title: 'Redo (Ctrl/Cmd+Shift+Z)',
+      'data-rgnf-redo': '',
+      onclick: redoForge,
+    });
+    historyActions.appendChild(undoBtn);
+    historyActions.appendChild(redoBtn);
+    head.appendChild(historyActions);
     makeDraggable(panel, head);
     panel.appendChild(head);
 
@@ -12570,7 +12724,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     // hand-editing either mode captures the text as rawCode and flips to raw
     // so subsequent rebuilds don't clobber the edit
     const rawEdit = el('textarea', { class: 'rgnf-code' });
-    rawEdit.style.cssText = 'display:block;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow:hidden;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:#9fb3ff;';
+    rawEdit.style.cssText = 'display:block;width:100%;box-sizing:border-box;min-height:34px;resize:none;overflow:hidden;background:var(--rgnf-panel);border:1px solid var(--rgnf-line);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace, Menlo, Consolas, monospace;color:var(--rgnf-code);';
     // reset to auto first, scrollHeight won't shrink below the current height
     const autosizeRawEdit = () => {
       rawEdit.style.height = 'auto';
@@ -12580,6 +12734,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
       autosizeRawEdit();
       // capturing text as rawCode flips us into raw mode (refreshPreview keys off it)
       setRawSnapshot(rawEdit.value);
+      const renderedNameInput = panel.querySelector('.rgnf-name-input');
+      if (renderedNameInput && renderedNameInput.value !== state.name) renderedNameInput.value = state.name;
       const rawPfx = _prefix();
       const rawEffective = rawPfx + effectiveForgeCode(state);
       pv.replaceChildren(renderRawPreview(rawPfx + state.rawCode, state));
@@ -12624,6 +12780,8 @@ _rgnfFab = fab; _rgnfPanel = panel;
         const rawEffective = rawPfx + effectiveForgeCode(state);
         pv.replaceChildren(renderRawPreview(rawPfx + state.rawCode, state));
         if (rawEdit.value !== state.rawCode) rawEdit.value = state.rawCode;
+        const renderedNameInput = panel.querySelector('.rgnf-name-input');
+        if (renderedNameInput && renderedNameInput.value !== state.name) renderedNameInput.value = state.name;
         autosizeRawEdit();
         charSpan.textContent = `${rawEffective.length} chars`;
         const plainLetters = state.rawCode.replace(/<[^>]*>/g, "").replace(/\s+/g, "");
@@ -12710,6 +12868,11 @@ _rgnfFab = fab; _rgnfPanel = panel;
           const start = nameInput.selectionStart ?? state.name.length;
           const end = nameInput.selectionEnd ?? state.name.length;
           state.name = state.name.slice(0, start) + tag + state.name.slice(end);
+          if (typeof state.rawCode === 'string') {
+            state.rawCode = replaceRawNameText(state.rawCode, state.name);
+          }
+          state.colorSpans = [];
+          namePaintSel = { start: 0, end: 0 };
           nameInput.value = state.name;
           const pos = start + tag.length;
           nameInput.focus();
@@ -12916,10 +13079,33 @@ _rgnfFab = fab; _rgnfPanel = panel;
       });
 
       // header: label · color · bold · remove
-      const header = el('div', { style: 'display:flex;align-items:center;gap:8px;' });
+      const header = el('div', {
+        class: 'rgnf-layer-head',
+        style: 'display:flex;align-items:center;gap:8px;',
+      });
       header.appendChild(el('span', {
         text: `Layer ${idx + 1}`, style: 'font-size:12px;opacity:.8;flex:1;',
       }));
+      const moveEarlier = el('button', {
+        class: 'rgnf-chip', text: '↑', title: 'Move earlier in the stack (behind)',
+        onclick: () => {
+          if (idx <= 0) return;
+          [state.layers[idx - 1], state.layers[idx]] = [state.layers[idx], state.layers[idx - 1]];
+          render(panel);
+        },
+      });
+      if (idx === 0) moveEarlier.disabled = true;
+      header.appendChild(moveEarlier);
+      const moveLater = el('button', {
+        class: 'rgnf-chip', text: '↓', title: 'Move later in the stack (in front)',
+        onclick: () => {
+          if (idx >= state.layers.length - 1) return;
+          [state.layers[idx], state.layers[idx + 1]] = [state.layers[idx + 1], state.layers[idx]];
+          render(panel);
+        },
+      });
+      if (idx === state.layers.length - 1) moveLater.disabled = true;
+      header.appendChild(moveLater);
       const colorInput = el('input', {
         type: 'color', value: L.color || '#ffffff', title: 'Color',
         style: 'width:32px;height:24px;padding:0;cursor:pointer;',
@@ -13340,6 +13526,10 @@ _rgnfFab = fab; _rgnfPanel = panel;
           p.state.name = derived;
           presetsDirty = true;
         }
+        if (Array.isArray(p.state.colorSpans) && p.state.colorSpans.length) {
+          p.state.colorSpans = [];
+          presetsDirty = true;
+        }
       }
     }
     if (presetsDirty) saveJSON(presetKey(), presets);
@@ -13407,12 +13597,47 @@ _rgnfFab = fab; _rgnfPanel = panel;
         groups[folder].forEach(({ p, idx }) => {
           const row = el('div', { class: 'rgnf-preset' });
           row.style.marginLeft = '10px';
-          row.appendChild(el('span', { text: p.label }));
+          const presetCell = el('span', { title: p.label });
+          presetCell.style.cssText = 'flex:1;overflow:hidden;max-height:50px;white-space:normal;';
+          const presetLabel = el('div', { text: p.label });
+          presetLabel.style.cssText = 'font-size:11px;color:var(--rgnf-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          presetCell.appendChild(presetLabel);
+          const presetState = Object.assign(defaultState(), p.state || {});
+          const presetCode = typeof presetState.rawCode === 'string'
+            ? presetState.rawCode
+            : buildCode(presetState);
+          presetCell.appendChild(renderRawTMP(presetCode));
+          row.appendChild(presetCell);
           row.appendChild(el('button', {
             class: 'rgnf-chip',
             text: 'Load',
             onclick: () => {
               applyLoadedForgeName(p.state);
+            },
+          }));
+          row.appendChild(el('button', {
+            class: 'rgnf-chip', text: '✏️', title: 'Rename preset',
+            onclick: () => {
+              openFolderPicker(panel, {
+                title: 'Rename preset "' + p.label + '"',
+                nameField: true,
+                nameOnly: true,
+                nameDefault: p.label,
+                existing: [],
+                current: '',
+                onPick: ({ name }) => {
+                  const nextLabel = String(name || '').trim();
+                  if (!nextLabel || nextLabel === p.label) return;
+                  if (presets.some((candidate, candidateIdx) =>
+                    candidateIdx !== idx && candidate.label === nextLabel)) {
+                    alert('A preset with that name already exists.');
+                    return;
+                  }
+                  presets[idx].label = nextLabel;
+                  saveJSON(presetKey(), presets);
+                  render(panel);
+                },
+              });
             },
           }));
           row.appendChild(el('button', {
@@ -13450,6 +13675,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
         if (snap.rawCode) {
           snap.rawCode = _stripTag(snap.rawCode);
           snap.name = editableFieldsFromRaw(snap.rawCode).name;
+          snap.colorSpans = [];
         }
         const defaultName = (snap.name || state.name).replace(/<[^>]*>/g, '').slice(0, 30) || 'Preset';
         openFolderPicker(panel, {
@@ -13655,6 +13881,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     const statusLine = el('div', { class: 'rgnf-status' });
     const applyBtn = el('button', {
       class: 'rgnf-btn rgnf-btn-apply', text: 'Apply nickname',
+      title: 'Apply nickname (Ctrl/Cmd+Enter)',
       onclick: async () => {
         applyBtn.disabled = true;
         applyBtn.textContent = 'Applying…';
@@ -13702,6 +13929,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
     secActions.appendChild(statusLine);
     panel.appendChild(secActions);
     restoreForgeScroll(savedScroll);
+    syncForgeHistoryButtons(panel);
   }
 
   function sliderRow(panel, label, key, min, max, unit) {
@@ -13757,6 +13985,20 @@ _rgnfFab = fab; _rgnfPanel = panel;
 
       // always hide the event from the game's global handlers
       e.stopImmediatePropagation();
+
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === 'Enter') {
+        e.preventDefault();
+        const apply = t.closest('.rgnf-panel')?.querySelector('.rgnf-btn-apply');
+        if (apply && !apply.disabled) apply.click();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'KeyZ') {
+        e.preventDefault();
+        if (e.shiftKey) redoForge();
+        else undoForge();
+        return;
+      }
 
       if (!isTextField(t) || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
 
@@ -13866,6 +14108,7 @@ _rgnfFab = fab; _rgnfPanel = panel;
               if (displayName) state.name = String(displayName).trim();
               saveJSON(stateKey(), state);
             }
+            resetForgeHistory();
           }
           // Same account: do not overwrite with the live nameplate. That
           // flipped the editor into raw TMP and dropped highlight / paint
