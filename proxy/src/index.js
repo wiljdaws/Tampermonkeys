@@ -95,6 +95,11 @@ const PROXY_AD_SELECTORS = [
   'script[src*="googleadservices"]',
   'script[src*="adservice.google"]',
   'script[src*="imasdk.googleapis.com"]',
+  // PlayGama serves the romance-comic banners we were seeing.
+  'script[src*="playgama.com"]',
+  'iframe[src*="playgama"]',
+  '[id*="playgama"]',
+  "[data-pgm]",
 ];
 
 class Remover {
@@ -103,15 +108,163 @@ class Remover {
   }
 }
 
+// Two runtime patches, both inlined so they execute before rocketgoal.io's own
+// scripts run.
+//
+// (1) Firebase authorizedDomains bypass. rocketgoal.io's Firebase project
+//     (rocketball-23c12) doesn't list our worker domain, and we don't own the
+//     project so we can't edit it. The SDK reads authorizedDomains from either
+//     identitytoolkit.googleapis.com/v1/projects/... (modular v10) or
+//     www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig
+//     (compat v10 / legacy). Splice our hostname into whichever fires.
+//
+// (2) Ad-network script suppression. HTMLRewriter only sees the initial HTML,
+//     but Unity's Emscripten runtime injects PlayGama, DoubleClick, and IMA
+//     script tags at runtime via document.createElement("script"). Intercept
+//     the src setter so those tags never load.
+const RUNTIME_PATCH = `
+(function(){
+  // (0) Hostname spoof. The auth iframe at rocketball-23c12.firebaseapp.com
+  // reads window.location.hostname (via referrer or postMessage) and warns /
+  // blocks OAuth if it's not on the authorizedDomains list. Making hostname
+  // return the auth-domain itself sidesteps the check. Storage and cookies
+  // are keyed by browser to the real origin, not the JS-visible value, so
+  // this only affects code that reads location.hostname directly.
+  var SPOOF = "rocketball-23c12.firebaseapp.com";
+  try {
+    Object.defineProperty(window.location, "hostname", {
+      configurable: true, get: function(){ return SPOOF; },
+    });
+  } catch(_) {
+    try {
+      Object.defineProperty(Location.prototype, "hostname", {
+        configurable: true, get: function(){ return SPOOF; },
+      });
+    } catch(__) {}
+  }
+
+  // (1) authorizedDomains splice. Firebase v10 modular uses fetch; the compat
+  // build uses XHR against a legacy endpoint. Patch both, plus JSONP as a
+  // last-resort fallback.
+  var re = /(identitytoolkit\\.googleapis\\.com\\/v1\\/projects\\/|googleapis\\.com\\/identitytoolkit\\/v3\\/relyingparty\\/getProjectConfig)/;
+  function spliceHostname(body){
+    try {
+      if (body && Array.isArray(body.authorizedDomains)) {
+        var h = window.location.hostname;
+        if (h && body.authorizedDomains.indexOf(h) === -1) {
+          body.authorizedDomains.push(h);
+        }
+      }
+    } catch(_) {}
+    return body;
+  }
+
+  // fetch path (modular SDK).
+  var of = window.fetch;
+  if (of) {
+    window.fetch = function(input, init){
+      return of.apply(this, arguments).then(function(res){
+        try {
+          var u = (typeof input === "string") ? input : (input && input.url) || "";
+          if (!re.test(u) || !res.ok) return res;
+          return res.clone().json().then(function(body){
+            spliceHostname(body);
+            var hdr = new Headers(res.headers);
+            hdr.delete("content-encoding");
+            hdr.set("content-type", "application/json");
+            return new Response(JSON.stringify(body), {
+              status: res.status, statusText: res.statusText, headers: hdr,
+            });
+          }).catch(function(){ return res; });
+        } catch(_) { return res; }
+      });
+    };
+  }
+
+  // XHR path (compat SDK's fireauth.XmlHttpRequestRelyingParty). Override
+  // responseText's getter on the prototype so any consumer, including the
+  // SDK's own onload handler, sees the mutated body regardless of listener
+  // ordering.
+  try {
+    var origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url){
+      this.__fbInterceptUrl = url;
+      return origOpen.apply(this, arguments);
+    };
+    var origRT = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, "responseText");
+    var origR = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, "response");
+    function wrap(orig){
+      return {
+        configurable: true,
+        get: function(){
+          var raw = orig.get.call(this);
+          if (!this.__fbInterceptUrl || !re.test(String(this.__fbInterceptUrl))) return raw;
+          if (this.__fbCached !== undefined) return this.__fbCached;
+          try {
+            var parsed = (typeof raw === "string") ? JSON.parse(raw) : raw;
+            spliceHostname(parsed);
+            var out = (typeof raw === "string") ? JSON.stringify(parsed) : parsed;
+            this.__fbCached = out;
+            return out;
+          } catch(_) { return raw; }
+        },
+      };
+    }
+    if (origRT && origRT.get) Object.defineProperty(XMLHttpRequest.prototype, "responseText", wrap(origRT));
+    if (origR && origR.get) Object.defineProperty(XMLHttpRequest.prototype, "response", wrap(origR));
+  } catch(_) {}
+
+  // (2) Block ad-network scripts from loading, no matter how they're injected.
+  var BLOCKED = [
+    "playgama.com",
+    "doubleclick.net",
+    "googlesyndication",
+    "googletagservices",
+    "googleadservices",
+    "adservice.google",
+    "imasdk.googleapis.com",
+    "unityads.unity3d.com",
+    "applovin.com",
+    "id5-sync.com",
+  ];
+  function blocked(u){
+    if (!u) return false;
+    for (var i=0;i<BLOCKED.length;i++) if (u.indexOf(BLOCKED[i]) >= 0) return true;
+    return false;
+  }
+  try {
+    var d = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, "src")
+         || Object.getOwnPropertyDescriptor(HTMLElement.prototype, "src");
+    if (d && d.set) {
+      Object.defineProperty(HTMLScriptElement.prototype, "src", {
+        configurable: true,
+        enumerable: d.enumerable,
+        get: d.get,
+        set: function(v){
+          if (blocked(String(v))) return;
+          return d.set.call(this, v);
+        },
+      });
+    }
+    var sa = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function(name, value){
+      if (this.tagName === "SCRIPT" && String(name).toLowerCase() === "src" && blocked(String(value))) return;
+      return sa.apply(this, arguments);
+    };
+  } catch(_) {}
+})();
+`;
+
 class ScriptInjector {
   constructor(scriptUrl) {
     this.scriptUrl = scriptUrl;
   }
   element(element) {
-    // Prepend so ATLAS runs before the game's own scripts, matching
-    // Tampermonkey's @run-at document-start.
+    // Prepend so ATLAS and the auth-domain bypass run before the game's own
+    // scripts, matching Tampermonkey's @run-at document-start.
     element.prepend(
-      `<script src="${escapeHtmlAttr(this.scriptUrl)}"></script>`,
+      `<script>${RUNTIME_PATCH}</script>`
+      + `<script src="${escapeHtmlAttr(this.scriptUrl)}"></script>`,
       { html: true },
     );
   }
